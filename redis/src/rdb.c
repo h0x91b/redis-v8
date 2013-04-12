@@ -722,6 +722,7 @@ int rdbSaveBackground(char *filename) {
     if (server.rdb_child_pid != -1) return REDIS_ERR;
 
     server.dirty_before_bgsave = server.dirty;
+    server.lastbgsave_try = time(NULL);
 
     start = ustime();
     if ((childpid = fork()) == 0) {
@@ -1067,11 +1068,8 @@ int rdbLoad(char *filename) {
     FILE *fp;
     rio rdb;
 
-    fp = fopen(filename,"r");
-    if (!fp) {
-        errno = ENOENT;
-        return REDIS_ERR;
-    }
+    if ((fp = fopen(filename,"r")) == NULL) return REDIS_ERR;
+
     rioInitWithFile(&rdb,fp);
     if (server.rdb_checksum)
         rdb.update_cksum = rioGenericUpdateChecksum;

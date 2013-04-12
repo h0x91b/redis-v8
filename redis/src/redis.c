@@ -116,7 +116,7 @@ struct redisCommand *commandTable;
  */
 struct redisCommand redisCommandTable[] = {
     {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
-    {"set",setCommand,3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
+    {"set",setCommand,-3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
     {"setnx",setnxCommand,3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
     {"setex",setexCommand,4,"wm",0,noPreloadGetKeys,1,1,1,0,0},
     {"psetex",psetexCommand,4,"wm",0,noPreloadGetKeys,1,1,1,0,0},
@@ -199,7 +199,7 @@ struct redisCommand redisCommandTable[] = {
     {"mset",msetCommand,-3,"wm",0,NULL,1,-1,2,0,0},
     {"msetnx",msetnxCommand,-3,"wm",0,NULL,1,-1,2,0,0},
     {"randomkey",randomkeyCommand,1,"rR",0,NULL,0,0,0,0,0},
-    {"select",selectCommand,2,"r",0,NULL,0,0,0,0,0},
+    {"select",selectCommand,2,"rl",0,NULL,0,0,0,0,0},
     {"move",moveCommand,3,"w",0,NULL,1,1,1,0,0},
     {"rename",renameCommand,3,"w",0,renameGetKeys,1,2,1,0,0},
     {"renamenx",renamenxCommand,3,"w",0,renameGetKeys,1,2,1,0,0},
@@ -239,7 +239,7 @@ struct redisCommand redisCommandTable[] = {
     {"unsubscribe",unsubscribeCommand,-1,"rpslt",0,NULL,0,0,0,0,0},
     {"psubscribe",psubscribeCommand,-2,"rpslt",0,NULL,0,0,0,0,0},
     {"punsubscribe",punsubscribeCommand,-1,"rpslt",0,NULL,0,0,0,0,0},
-    {"publish",publishCommand,3,"pflt",0,NULL,0,0,0,0,0},
+    {"publish",publishCommand,3,"pfltr",0,NULL,0,0,0,0,0},
     {"watch",watchCommand,-2,"rs",0,noPreloadGetKeys,1,-1,1,0,0},
     {"unwatch",unwatchCommand,1,"rs",0,NULL,0,0,0,0,0},
     {"cluster",clusterCommand,-2,"ar",0,NULL,0,0,0,0,0},
@@ -597,36 +597,32 @@ int htNeedsResize(dict *dict) {
 
 /* If the percentage of used slots in the HT reaches REDIS_HT_MINFILL
  * we resize the hash table to save memory */
-void tryResizeHashTables(void) {
-    int j;
-
-    for (j = 0; j < server.dbnum; j++) {
-        if (htNeedsResize(server.db[j].dict))
-            dictResize(server.db[j].dict);
-        if (htNeedsResize(server.db[j].expires))
-            dictResize(server.db[j].expires);
-    }
+void tryResizeHashTables(int dbid) {
+    if (htNeedsResize(server.db[dbid].dict))
+        dictResize(server.db[dbid].dict);
+    if (htNeedsResize(server.db[dbid].expires))
+        dictResize(server.db[dbid].expires);
 }
 
 /* Our hash table implementation performs rehashing incrementally while
  * we write/read from the hash table. Still if the server is idle, the hash
  * table will use two tables for a long time. So we try to use 1 millisecond
- * of CPU time at every serverCron() loop in order to rehash some key. */
-void incrementallyRehash(void) {
-    int j;
-
-    for (j = 0; j < server.dbnum; j++) {
-        /* Keys dictionary */
-        if (dictIsRehashing(server.db[j].dict)) {
-            dictRehashMilliseconds(server.db[j].dict,1);
-            break; /* already used our millisecond for this loop... */
-        }
-        /* Expires */
-        if (dictIsRehashing(server.db[j].expires)) {
-            dictRehashMilliseconds(server.db[j].expires,1);
-            break; /* already used our millisecond for this loop... */
-        }
+ * of CPU time at every call of this function to perform some rehahsing.
+ *
+ * The function returns 1 if some rehashing was performed, otherwise 0
+ * is returned. */
+int incrementallyRehash(int dbid) {
+    /* Keys dictionary */
+    if (dictIsRehashing(server.db[dbid].dict)) {
+        dictRehashMilliseconds(server.db[dbid].dict,1);
+        return 1; /* already used our millisecond for this loop... */
     }
+    /* Expires */
+    if (dictIsRehashing(server.db[dbid].expires)) {
+        dictRehashMilliseconds(server.db[dbid].expires,1);
+        return 1; /* already used our millisecond for this loop... */
+    }
+    return 0;
 }
 
 /* This function is called once a background process of some kind terminates,
@@ -647,28 +643,57 @@ void updateDictResizePolicy(void) {
 /* Try to expire a few timed out keys. The algorithm used is adaptive and
  * will use few CPU cycles if there are few expiring keys, otherwise
  * it will get more aggressive to avoid that too much memory is used by
- * keys that can be removed from the keyspace. */
+ * keys that can be removed from the keyspace.
+ *
+ * No more than REDIS_DBCRON_DBS_PER_CALL databases are tested at every
+ * iteration. */
 void activeExpireCycle(void) {
-    int j, iteration = 0;
+    /* This function has some global state in order to continue the work
+     * incrementally across calls. */
+    static unsigned int current_db = 0; /* Last DB tested. */
+    static int timelimit_exit = 0;      /* Time limit hit in previous call? */
+
+    unsigned int j, iteration = 0;
+    unsigned int dbs_per_call = REDIS_DBCRON_DBS_PER_CALL;
     long long start = ustime(), timelimit;
+
+    /* We usually should test REDIS_DBCRON_DBS_PER_CALL per iteration, with
+     * two exceptions:
+     *
+     * 1) Don't test more DBs than we have.
+     * 2) If last time we hit the time limit, we want to scan all DBs
+     * in this iteration, as there is work to do in some DB and we don't want
+     * expired keys to use memory for too much time. */
+    if (dbs_per_call > server.dbnum || timelimit_exit)
+        dbs_per_call = server.dbnum;
 
     /* We can use at max REDIS_EXPIRELOOKUPS_TIME_PERC percentage of CPU time
      * per iteration. Since this function gets called with a frequency of
      * server.hz times per second, the following is the max amount of
      * microseconds we can spend in this function. */
     timelimit = 1000000*REDIS_EXPIRELOOKUPS_TIME_PERC/server.hz/100;
+    timelimit_exit = 0;
     if (timelimit <= 0) timelimit = 1;
 
-    for (j = 0; j < server.dbnum; j++) {
+    for (j = 0; j < dbs_per_call; j++) {
         int expired;
-        redisDb *db = server.db+j;
+        redisDb *db = server.db+(current_db % server.dbnum);
+
+        /* Increment the DB now so we are sure if we run out of time
+         * in the current DB we'll restart from the next. This allows to
+         * distribute the time evenly across DBs. */
+        current_db++;
 
         /* Continue to expire if at the end of the cycle more than 25%
          * of the keys were expired. */
         do {
-            unsigned long num = dictSize(db->expires);
-            unsigned long slots = dictSlots(db->expires);
-            long long now = mstime();
+            unsigned long num, slots;
+            long long now;
+
+            /* If there is nothing to expire try next DB ASAP. */
+            if ((num = dictSize(db->expires)) == 0) break;
+            slots = dictSlots(db->expires);
+            now = mstime();
 
             /* When there are less than 1% filled slots getting random
              * keys is expensive, so stop here waiting for better times...
@@ -704,8 +729,12 @@ void activeExpireCycle(void) {
              * expire. So after a given amount of milliseconds return to the
              * caller waiting for the other active expire cycle. */
             iteration++;
-            if ((iteration & 0xf) == 0 && /* check once every 16 cycles. */
-                (ustime()-start) > timelimit) return;
+            if ((iteration & 0xf) == 0 && /* check once every 16 iterations. */
+                (ustime()-start) > timelimit)
+            {
+                timelimit_exit = 1;
+                return;
+            }
         } while (expired > REDIS_EXPIRELOOKUPS_PER_CRON/4);
     }
 }
@@ -819,6 +848,51 @@ void clientsCron(void) {
     }
 }
 
+/* This function handles 'background' operations we are required to do
+ * incrementally in Redis databases, such as active key expiring, resizing,
+ * rehashing. */
+void databasesCron(void) {
+    /* Expire keys by random sampling. Not required for slaves
+     * as master will synthesize DELs for us. */
+    if (server.active_expire_enabled && server.masterhost == NULL)
+        activeExpireCycle();
+
+    /* Perform hash tables rehashing if needed, but only if there are no
+     * other processes saving the DB on disk. Otherwise rehashing is bad
+     * as will cause a lot of copy-on-write of memory pages. */
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1) {
+        /* We use global counters so if we stop the computation at a given
+         * DB we'll be able to start from the successive in the next
+         * cron loop iteration. */
+        static unsigned int resize_db = 0;
+        static unsigned int rehash_db = 0;
+        unsigned int dbs_per_call = REDIS_DBCRON_DBS_PER_CALL;
+        unsigned int j;
+
+        /* Don't test more DBs than we have. */
+        if (dbs_per_call > server.dbnum) dbs_per_call = server.dbnum;
+
+        /* Resize */
+        for (j = 0; j < dbs_per_call; j++) {
+            tryResizeHashTables(resize_db % server.dbnum);
+            resize_db++;
+        }
+
+        /* Rehash */
+        if (server.activerehashing) {
+            for (j = 0; j < dbs_per_call; j++) {
+                int work_done = incrementallyRehash(rehash_db % server.dbnum);
+                rehash_db++;
+                if (work_done) {
+                    /* If the function did some work, stop here, we'll do
+                     * more at the next cron loop. */
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /* This is our timer interrupt, called server.hz times per second.
  * Here is where we do a number of things that need to be done asynchronously.
  * For instance:
@@ -897,17 +971,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* We don't want to resize the hash tables while a background saving
-     * is in progress: the saving child is created using fork() that is
-     * implemented with a copy-on-write semantic in most modern systems, so
-     * if we resize the HT while there is the saving child at work actually
-     * a lot of memory movements in the parent will cause a lot of pages
-     * copied. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1) {
-        tryResizeHashTables();
-        if (server.activerehashing) incrementallyRehash();
-    }
-
     /* Show information about connected clients */
     if (!server.sentinel_mode) {
         run_with_period(5000) {
@@ -921,6 +984,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* We need to do a few operations on clients asynchronously. */
     clientsCron();
+
+    /* Handle background operations on Redis databases. */
+    databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
@@ -958,8 +1024,16 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
          for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
+            /* Save if we reached the given amount of changes,
+             * the given amount of seconds, and if the latest bgsave was
+             * successful or if, in case of an error, at least
+             * REDIS_BGSAVE_RETRY_DELAY seconds already elapsed. */
             if (server.dirty >= sp->changes &&
-                server.unixtime-server.lastsave > sp->seconds) {
+                server.unixtime-server.lastsave > sp->seconds &&
+                (server.unixtime-server.lastbgsave_try >
+                 REDIS_BGSAVE_RETRY_DELAY ||
+                 server.lastbgsave_status == REDIS_OK))
+            {
                 redisLog(REDIS_NOTICE,"%d changes in %d seconds. Saving...",
                     sp->changes, (int)sp->seconds);
                 rdbSaveBackground(server.rdb_filename);
@@ -987,11 +1061,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* If we postponed an AOF buffer flush, let's try to do it every time the
      * cron function is called. */
     if (server.aof_flush_postponed_start) flushAppendOnlyFile(0);
-
-    /* Expire a few keys per cycle, only if this is a master.
-     * On slaves we wait for DEL operations synthesized by the master
-     * in order to guarantee a strict consistency. */
-    if (server.masterhost == NULL) activeExpireCycle();
 
     /* Close clients that need to be closed asynchronous */
     freeClientsInAsyncFreeQueue();
@@ -1143,6 +1212,7 @@ void initServerConfig() {
     server.verbosity = REDIS_NOTICE;
     server.maxidletime = REDIS_MAXIDLETIME;
     server.tcpkeepalive = 0;
+    server.active_expire_enabled = 1;
     server.client_max_querybuf_len = REDIS_MAX_QUERYBUF_LEN;
     server.saveparams = NULL;
     server.loading = 0;
@@ -1172,6 +1242,7 @@ void initServerConfig() {
     server.requirepass = NULL;
     server.rdb_compression = 1;
     server.rdb_checksum = 1;
+    server.stop_writes_on_bgsave_err = 1;
     server.activerehashing = 1;
     server.notify_keyspace_events = 0;
     server.maxclients = REDIS_MAX_CLIENTS;
@@ -1190,6 +1261,7 @@ void initServerConfig() {
     server.repl_ping_slave_period = REDIS_REPL_PING_SLAVE_PERIOD;
     server.repl_timeout = REDIS_REPL_TIMEOUT;
     server.cluster_enabled = 0;
+    server.cluster_node_timeout = REDIS_CLUSTER_DEFAULT_NODE_TIMEOUT;
     server.cluster_configfile = zstrdup("nodes.conf");
     server.lua_caller = NULL;
     server.lua_time_limit = REDIS_LUA_TIME_LIMIT;
@@ -1214,7 +1286,7 @@ void initServerConfig() {
     server.repl_syncio_timeout = REDIS_REPL_SYNCIO_TIMEOUT;
     server.repl_serve_stale_data = 1;
     server.repl_slave_ro = 1;
-    server.repl_down_since = time(NULL);
+    server.repl_down_since = 0; /* Never connected, repl is down since EVER. */
     server.repl_disable_tcp_nodelay = 0;
     server.slave_priority = REDIS_DEFAULT_SLAVE_PRIORITY;
     server.master_repl_offset = 0;
@@ -1376,7 +1448,8 @@ void initServer() {
     server.aof_child_pid = -1;
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
-    server.lastsave = time(NULL);
+    server.lastsave = time(NULL); /* At startup we consider the DB saved. */
+    server.lastbgsave_try = 0;    /* At startup we never tried to BGSAVE. */
     server.rdb_save_time_last = -1;
     server.rdb_save_time_start = -1;
     server.dirty = 0;
@@ -1399,7 +1472,6 @@ void initServer() {
     server.ops_sec_last_sample_ops = 0;
     server.unixtime = time(NULL);
     server.lastbgsave_status = REDIS_OK;
-    server.stop_writes_on_bgsave_err = 1;
     if(aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         redisPanic("Can't create the serverCron time event.");
         exit(1);
@@ -2681,7 +2753,7 @@ void loadDataFromDisk(void) {
             redisLog(REDIS_NOTICE,"DB loaded from disk: %.3f seconds",
                 (float)(ustime()-start)/1000000);
         } else if (errno != ENOENT) {
-            redisLog(REDIS_WARNING,"Fatal error loading the DB. Exiting.");
+            redisLog(REDIS_WARNING,"Fatal error loading the DB: %s. Exiting.",strerror(errno));
             exit(1);
         }
     }

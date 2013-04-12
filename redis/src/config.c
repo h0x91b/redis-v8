@@ -387,6 +387,11 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"cluster-config-file") && argc == 2) {
             zfree(server.cluster_configfile);
             server.cluster_configfile = zstrdup(argv[1]);
+        } else if (!strcasecmp(argv[0],"cluster-node-timeout") && argc == 2) {
+            server.cluster_node_timeout = atoi(argv[1]);
+            if (server.cluster_node_timeout <= 0) {
+                err = "cluster node timeout must be 1 or greater"; goto loaderr;
+            }
         } else if (!strcasecmp(argv[0],"lua-time-limit") && argc == 2) {
             server.lua_time_limit = strtoll(argv[1],NULL,10);
         } else if (!strcasecmp(argv[0],"slowlog-log-slower-than") &&
@@ -779,6 +784,10 @@ void configSetCommand(redisClient *c) {
         if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
             ll <= 0) goto badfmt;
         server.slave_priority = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-node-timeout")) {
+        if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
+            ll <= 0) goto badfmt;
+        server.cluster_node_timeout = ll;
     } else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
@@ -829,7 +838,7 @@ void configGetCommand(redisClient *c) {
     /* String values */
     config_get_string_field("dbfilename",server.rdb_filename);
     config_get_string_field("requirepass",server.requirepass);
-    config_get_string_field("masterauth",server.requirepass);
+    config_get_string_field("masterauth",server.masterauth);
     config_get_string_field("bind",server.bindaddr);
     config_get_string_field("unixsocket",server.unixsocket);
     config_get_string_field("logfile",server.logfile);
@@ -873,6 +882,7 @@ void configGetCommand(redisClient *c) {
     config_get_numerical_field("watchdog-period",server.watchdog_period);
     config_get_numerical_field("slave-priority",server.slave_priority);
     config_get_numerical_field("hz",server.hz);
+    config_get_numerical_field("cluster-node-timeout",server.cluster_node_timeout);
 
     /* Bool (yes/no) values */
     config_get_bool_field("no-appendfsync-on-rewrite",

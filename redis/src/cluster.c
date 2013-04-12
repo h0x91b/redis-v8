@@ -40,6 +40,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void clusterSendPing(clusterLink *link, int type);
 void clusterSendFail(char *nodename);
+void clusterSendFailoverAuthIfNeeded(clusterNode *sender);
 void clusterUpdateState(void);
 int clusterNodeGetSlotBit(clusterNode *n, int slot);
 sds clusterGenNodesDescription(void);
@@ -47,7 +48,9 @@ clusterNode *clusterLookupNode(char *name);
 int clusterNodeAddSlave(clusterNode *master, clusterNode *slave);
 int clusterAddSlot(clusterNode *n, int slot);
 int clusterDelSlot(int slot);
+int clusterDelNodeSlots(clusterNode *node);
 int clusterNodeSetSlotBit(clusterNode *n, int slot);
+void clusterSetMaster(clusterNode *n);
 int bitmapTestBit(unsigned char *bitmap, int pos);
 
 /* -----------------------------------------------------------------------------
@@ -112,6 +115,8 @@ int clusterLoadConfig(char *filename) {
                 n->flags |= REDIS_NODE_HANDSHAKE;
             } else if (!strcasecmp(s,"noaddr")) {
                 n->flags |= REDIS_NODE_NOADDR;
+            } else if (!strcasecmp(s,"promoted")) {
+                n->flags |= REDIS_NODE_PROMOTED;
             } else if (!strcasecmp(s,"noflags")) {
                 /* nothing to do */
             } else {
@@ -226,7 +231,8 @@ void clusterInit(void) {
     server.cluster->state = REDIS_CLUSTER_FAIL;
     server.cluster->size = 1;
     server.cluster->nodes = dictCreate(&clusterNodesDictType,NULL);
-    server.cluster->node_timeout = 15;
+    server.cluster->failover_auth_time = 0;
+    server.cluster->failover_auth_count = 0;
     memset(server.cluster->migrating_slots_to,0,
         sizeof(server.cluster->migrating_slots_to));
     memset(server.cluster->importing_slots_from,0,
@@ -343,8 +349,6 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     node->slaveof = NULL;
     node->ping_sent = node->pong_received = 0;
     node->fail_time = 0;
-    node->configdigest = NULL;
-    node->configdigest_ts = 0;
     node->link = NULL;
     memset(node->ip,0,sizeof(node->ip));
     node->port = 0;
@@ -398,7 +402,8 @@ void clusterNodeCleanupFailureReports(clusterNode *node) {
     listNode *ln;
     listIter li;
     clusterNodeFailReport *fr;
-    time_t maxtime = server.cluster->node_timeout*2;
+    time_t maxtime = server.cluster_node_timeout *
+                     REDIS_CLUSTER_FAIL_REPORT_VALIDITY_MULT;
     time_t now = time(NULL);
 
     listRewind(l,&li);
@@ -606,10 +611,7 @@ void markNodeAsFailingIfNeeded(clusterNode *node) {
 
 /* This function is called only if a node is marked as FAIL, but we are able
  * to reach it again. It checks if there are the conditions to undo the FAIL
- * state.
- *
- * Currently we only revert the FAIL state if there are no slaves for this
- * node, so that no election was possible. */
+ * state. */
 void clearNodeFailureIfNeeded(clusterNode *node) {
     int changes = 0;
     time_t now = time(NULL);
@@ -627,12 +629,17 @@ void clearNodeFailureIfNeeded(clusterNode *node) {
     }
 
     /* If it is a master and...
-     * 1) The FAIL state was set more than 2 times the node timeout + 10 sec.
+     * 1) The FAIL state is old enough. We use our node timeout multiplicator
+     *    plus some additional fixed time. The additional time is useful when
+     *    the node timeout is extremely short and the reaction time of
+     *    the cluster may be longer, so wait at least a few seconds always.
      * 2) It is yet serving slots from our point of view (not failed over).
      * Apparently no one is going to fix these slots, clear the FAIL flag. */
     if (node->flags & REDIS_NODE_MASTER &&
         node->numslots > 0 &&
-        (now - node->fail_time) > (server.cluster->node_timeout*2+10))
+        (now - node->fail_time) >
+        (server.cluster_node_timeout * REDIS_CLUSTER_FAIL_UNDO_TIME_MULT +
+                                        REDIS_CLUSTER_FAIL_UNDO_TIME_ADD))
     {
         redisLog(REDIS_NOTICE,
             "Clear FAIL state for node %.40s: is reachable again and nobody is serving its slots after some time.",
@@ -670,6 +677,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
         if (flags & REDIS_NODE_FAIL) ci = sdscat(ci,"fail,");
         if (flags & REDIS_NODE_HANDSHAKE) ci = sdscat(ci,"handshake,");
         if (flags & REDIS_NODE_NOADDR) ci = sdscat(ci,"noaddr,");
+        if (flags & REDIS_NODE_PROMOTED) ci = sdscat(ci,"promoted,");
         if (ci[sdslen(ci)-1] == ',') ci[sdslen(ci)-1] = ' ';
 
         redisLog(REDIS_DEBUG,"GOSSIP %.40s %s:%d %s",
@@ -762,6 +770,7 @@ int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
     uint32_t totlen = ntohl(hdr->totlen);
     uint16_t type = ntohs(hdr->type);
+    uint16_t flags = ntohs(hdr->flags);
     clusterNode *sender;
 
     redisLog(REDIS_DEBUG,"--- Processing packet of type %d, %lu bytes",
@@ -779,19 +788,22 @@ int clusterProcessPacket(clusterLink *link) {
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
         explen += (sizeof(clusterMsgDataGossip)*count);
         if (totlen != explen) return 1;
-    }
-    if (type == CLUSTERMSG_TYPE_FAIL) {
+    } else if (type == CLUSTERMSG_TYPE_FAIL) {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         explen += sizeof(clusterMsgDataFail);
         if (totlen != explen) return 1;
-    }
-    if (type == CLUSTERMSG_TYPE_PUBLISH) {
+    } else if (type == CLUSTERMSG_TYPE_PUBLISH) {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         explen += sizeof(clusterMsgDataPublish) +
                 ntohl(hdr->data.publish.msg.channel_len) +
                 ntohl(hdr->data.publish.msg.message_len);
+        if (totlen != explen) return 1;
+    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST ||
+               type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK) {
+        uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
+
         if (totlen != explen) return 1;
     }
 
@@ -846,6 +858,7 @@ int clusterProcessPacket(clusterLink *link) {
                 redisLog(REDIS_DEBUG,"Handshake with node %.40s completed.",
                     link->node->name);
                 link->node->flags &= ~REDIS_NODE_HANDSHAKE;
+                link->node->flags |= flags&(REDIS_NODE_MASTER|REDIS_NODE_SLAVE);
                 update_config = 1;
             } else if (memcmp(link->node->name,hdr->sender,
                         REDIS_CLUSTER_NAMELEN) != 0)
@@ -867,31 +880,85 @@ int clusterProcessPacket(clusterLink *link) {
                 return 0;
             }
         }
+
         /* Update our info about the node */
         if (link->node) link->node->pong_received = time(NULL);
 
-        /* Update master/slave info */
+        /* Update master/slave state */
         if (sender) {
             if (!memcmp(hdr->slaveof,REDIS_NODE_NULL_NAME,
                 sizeof(hdr->slaveof)))
             {
-                sender->flags &= ~REDIS_NODE_SLAVE;
-                sender->flags |= REDIS_NODE_MASTER;
-                sender->slaveof = NULL;
+                /* Node is a master. */
+                if (sender->flags & REDIS_NODE_SLAVE) {
+                    /* Slave turned into master! */
+                    clusterNode *oldmaster = sender->slaveof;
+
+                    /* Reconfigure node as master. */
+                    if (sender->slaveof)
+                        clusterNodeRemoveSlave(sender->slaveof,sender);
+                    sender->flags &= ~REDIS_NODE_SLAVE;
+                    sender->flags |= REDIS_NODE_MASTER;
+                    sender->slaveof = NULL;
+
+                    /* If this node used to be our slave, and now has the
+                     * PROMOTED flag set. We'll turn ourself into a slave
+                     * of the new master. */
+                    if (flags & REDIS_NODE_PROMOTED &&
+                        oldmaster == server.cluster->myself)
+                    {
+                        redisLog(REDIS_WARNING,"One of my slaves took my place. Reconfiguring myself as a replica of %.40s", sender->name);
+                        clusterDelNodeSlots(server.cluster->myself);
+                        clusterSetMaster(sender);
+                    }
+
+                    /* If we are a slave, and this node used to be a slave
+                     * of our master, and now has the PROMOTED flag set, we
+                     * need to switch our replication setup over it. */
+                    if (flags & REDIS_NODE_PROMOTED &&
+                        server.cluster->myself->flags & REDIS_NODE_SLAVE &&
+                        server.cluster->myself->slaveof == oldmaster)
+                    {
+                        redisLog(REDIS_WARNING,"One of the slaves failed over my master. Reconfiguring myself as a replica of %.40s", sender->name);
+                        clusterDelNodeSlots(server.cluster->myself);
+                        clusterSetMaster(sender);
+                    }
+
+                    /* Update config and state. */
+                    update_state = 1;
+                    update_config = 1;
+                }
             } else {
+                /* Node is a slave. */
                 clusterNode *master = clusterLookupNode(hdr->slaveof);
 
-                sender->flags &= ~REDIS_NODE_MASTER;
-                sender->flags |= REDIS_NODE_SLAVE;
-                if (sender->numslaves) clusterNodeResetSlaves(sender);
-                if (master) {
+                if (sender->flags & REDIS_NODE_MASTER) {
+                    /* Master turned into a slave! Reconfigure the node. */
+                    clusterDelNodeSlots(sender);
+                    sender->flags &= ~REDIS_NODE_MASTER;
+                    sender->flags |= REDIS_NODE_SLAVE;
+
+                    /* Remove the list of slaves from the node. */
+                    if (sender->numslaves) clusterNodeResetSlaves(sender);
+
+                    /* Update config and state. */
+                    update_state = 1;
+                    update_config = 1;
+                }
+
+                /* Master node changed for this slave? */
+                if (sender->slaveof != master) {
+                    if (sender->slaveof)
+                        clusterNodeRemoveSlave(sender->slaveof,sender);
                     clusterNodeAddSlave(master,sender);
                     sender->slaveof = master;
                 }
             }
         }
 
-        /* Update our info about served slots. */
+        /* Update our info about served slots.
+         * Note: this MUST happen after we update the master/slave state
+         * so that REDIS_NODE_MASTER flag will be set. */
         if (sender && sender->flags & REDIS_NODE_MASTER) {
             int changes, j;
 
@@ -902,7 +969,7 @@ int clusterProcessPacket(clusterLink *link) {
                     if (bitmapTestBit(hdr->myslots,j)) {
                         /* If this slot was not served, or served by a node
                          * in FAIL state, update the table with the new node
-                         * caliming to serve the slot. */
+                         * claiming to serve the slot. */
                         if (server.cluster->slots[j] == sender) continue;
                         if (server.cluster->slots[j] == NULL ||
                             server.cluster->slots[j]->flags & REDIS_NODE_FAIL)
@@ -958,6 +1025,17 @@ int clusterProcessPacket(clusterLink *link) {
             decrRefCount(channel);
             decrRefCount(message);
         }
+    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST) {
+        if (!sender) return 0;  /* We don't know that node. */
+        /* If we are not a master, ignore that message at all. */
+        if (!(server.cluster->myself->flags & REDIS_NODE_MASTER)) return 0;
+        clusterSendFailoverAuthIfNeeded(sender);
+    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK) {
+        if (!sender) return 0;  /* We don't know that node. */
+        /* If this is a master, increment the number of acknowledges
+         * we received so far. */
+        if (sender->flags & REDIS_NODE_MASTER)
+            server.cluster->failover_auth_count++;
     } else {
         redisLog(REDIS_WARNING,"Received unknown packet type: %d", type);
     }
@@ -1067,7 +1145,8 @@ void clusterSendMessage(clusterLink *link, unsigned char *msg, size_t msglen) {
     link->sndbuf = sdscatlen(link->sndbuf, msg, msglen);
 }
 
-/* Send a message to all the nodes with a reliable link */
+/* Send a message to all the nodes that are part of the cluster having
+ * a connected link. */
 void clusterBroadcastMessage(void *buf, size_t len) {
     dictIterator *di;
     dictEntry *de;
@@ -1077,7 +1156,8 @@ void clusterBroadcastMessage(void *buf, size_t len) {
         clusterNode *node = dictGetVal(de);
 
         if (!node->link) continue;
-        if (node->flags & (REDIS_NODE_MYSELF|REDIS_NODE_NOADDR)) continue;
+        if (node->flags & (REDIS_NODE_MYSELF|REDIS_NODE_HANDSHAKE))
+            continue;
         clusterSendMessage(node->link,buf,len);
     }
     dictReleaseIterator(di);
@@ -1098,8 +1178,8 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
                                     REDIS_CLUSTER_NAMELEN);
     }
     hdr->port = htons(server.port);
+    hdr->flags = htons(server.cluster->myself->flags);
     hdr->state = server.cluster->state;
-    memset(hdr->configdigest,0,32); /* FIXME: set config digest */
 
     if (type == CLUSTERMSG_TYPE_FAIL) {
         totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
@@ -1173,6 +1253,27 @@ void clusterSendPing(clusterLink *link, int type) {
     clusterSendMessage(link,buf,totlen);
 }
 
+/* Send a PING packet to every connected node that's not in handshake state.
+ *
+ * Usually cluster nodes will ping just another node every second, however
+ * in Redis Cluster pings are not just used for failure detection, but also
+ * to carry important configuration informations. So broadcasting a ping is
+ * useful when something changes in the configuration and we want to make
+ * the cluster aware ASAP (for instance after a slave promotion). */
+void clusterBroadcastPing(void) {
+    dictIterator *di;
+    dictEntry *de;
+
+    di = dictGetIterator(server.cluster->nodes);
+    while((de = dictNext(di)) != NULL) {
+        clusterNode *node = dictGetVal(de);
+
+        if (node->flags & (REDIS_NODE_MYSELF|REDIS_NODE_HANDSHAKE)) continue;
+        clusterSendPing(node->link,CLUSTERMSG_TYPE_PONG);
+    }
+    dictReleaseIterator(di);
+}
+
 /* Send a PUBLISH message.
  *
  * If link is NULL, then the message is broadcasted to the whole cluster. */
@@ -1240,6 +1341,151 @@ void clusterSendFail(char *nodename) {
  * -------------------------------------------------------------------------- */
 void clusterPropagatePublish(robj *channel, robj *message) {
     clusterSendPublish(NULL, channel, message);
+}
+
+/* -----------------------------------------------------------------------------
+ * SLAVE node specific functions
+ * -------------------------------------------------------------------------- */
+
+/* This function sends a FAILOVE_AUTH_REQUEST message to every node in order to
+ * see if there is the quorum for this slave instance to failover its failing
+ * master.
+ *
+ * Note that we send the failover request to everybody, master and slave nodes,
+ * but only the masters are supposed to reply to our query. */
+void clusterRequestFailoverAuth(void) {
+    unsigned char buf[4096];
+    clusterMsg *hdr = (clusterMsg*) buf;
+    uint32_t totlen;
+
+    clusterBuildMessageHdr(hdr,CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST);
+    totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
+    hdr->totlen = htonl(totlen);
+    clusterBroadcastMessage(buf,totlen);
+}
+
+/* Send a FAILOVER_AUTH_ACK message to the specified node. */
+void clusterSendFailoverAuth(clusterNode *node) {
+    unsigned char buf[4096];
+    clusterMsg *hdr = (clusterMsg*) buf;
+    uint32_t totlen;
+
+    if (!node->link) return;
+    clusterBuildMessageHdr(hdr,CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK);
+    totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
+    hdr->totlen = htonl(totlen);
+    clusterSendMessage(node->link,buf,totlen);
+}
+
+/* If we believe 'node' is the "first slave" of it's master, reply with
+ * a FAILOVER_AUTH_GRANTED packet.
+ *
+ * To be a first slave the sender must:
+ * 1) Be a slave.
+ * 2) Its master should be in FAIL state.
+ * 3) Ordering all the slaves IDs for its master by run-id, it should be the
+ *    first (the smallest) among the ones not in FAIL / PFAIL state.
+ */
+void clusterSendFailoverAuthIfNeeded(clusterNode *node) {
+    char first[REDIS_CLUSTER_NAMELEN];
+    clusterNode *master = node->slaveof;
+    int j;
+
+    /* Node is a slave? Its master is down? */
+    if (!(node->flags & REDIS_NODE_SLAVE) ||
+        master == NULL ||
+        !(master->flags & REDIS_NODE_FAIL)) return;
+
+    /* Iterate all the master slaves to check what's the first one. */
+    memset(first,0xff,sizeof(first));
+    for (j = 0; j < master->numslaves; j++) {
+        clusterNode *slave = master->slaves[j];
+
+        if (slave->flags & (REDIS_NODE_FAIL|REDIS_NODE_PFAIL)) continue;
+        if (memcmp(slave->name,first,sizeof(first)) < 0) {
+            memcpy(first,slave->name,sizeof(first));
+        }
+    }
+
+    /* Is 'node' the first slave? */
+    if (memcmp(node->name,first,sizeof(first)) != 0) return;
+
+    /* We can send the packet. */
+    clusterSendFailoverAuth(node);
+}
+
+/* This function is called if we are a slave node and our master serving
+ * a non-zero amount of hash slots is in FAIL state.
+ *
+ * The gaol of this function is:
+ * 1) To check if we are able to perform a failover, is our data updated?
+ * 2) Ask reachable masters the authorization to perform the failover.
+ * 3) Check if there is the majority of masters agreeing we should failover.
+ * 4) Perform the failover informing all the other nodes.
+ */
+void clusterHandleSlaveFailover(void) {
+    time_t data_age = server.unixtime - server.repl_down_since;
+    time_t auth_age = server.unixtime - server.cluster->failover_auth_time;
+    int needed_quorum = (server.cluster->size / 2) + 1;
+    int j;
+
+    /* Check if our data is recent enough. For now we just use a fixed
+     * constant of ten times the node timeout since the cluster should
+     * react much faster to a master down. */
+    if (data_age >
+        server.cluster_node_timeout * REDIS_CLUSTER_SLAVE_VALIDITY_MULT)
+        return;
+
+    /* TODO: check if we are the first slave as well? Or just rely on the
+     * master authorization? */
+
+    /* Ask masters if we are authorized to perform the failover. If there
+     * is a pending auth request that's too old, reset it. */
+    if (server.cluster->failover_auth_time == 0 ||
+        auth_age >
+        server.cluster_node_timeout * REDIS_CLUSTER_FAILOVER_AUTH_RETRY_MULT)
+    {
+        redisLog(REDIS_WARNING,"Asking masters if I can failover...");
+        server.cluster->failover_auth_time = time(NULL);
+        server.cluster->failover_auth_count = 0;
+        clusterRequestFailoverAuth();
+        return; /* Wait for replies. */
+    }
+
+    /* Check if we reached the quorum. */
+    if (server.cluster->failover_auth_count >= needed_quorum) {
+        clusterNode *oldmaster = server.cluster->myself->slaveof;
+
+        redisLog(REDIS_WARNING,
+            "Masters quorum reached: failing over my (failing) master.");
+        /* We have the quorum, perform all the steps to correctly promote
+         * this slave to a master.
+         *
+         * 1) Turn this node into a master. */
+        clusterNodeRemoveSlave(server.cluster->myself->slaveof,
+                               server.cluster->myself);
+        server.cluster->myself->flags &= ~REDIS_NODE_SLAVE;
+        server.cluster->myself->flags |= REDIS_NODE_MASTER;
+        server.cluster->myself->flags |= REDIS_NODE_PROMOTED;
+        server.cluster->myself->slaveof = NULL;
+        replicationUnsetMaster();
+
+        /* 2) Claim all the slots assigned to our master. */
+        for (j = 0; j < REDIS_CLUSTER_SLOTS; j++) {
+            if (clusterNodeGetSlotBit(oldmaster,j)) {
+                clusterDelSlot(j);
+                clusterAddSlot(server.cluster->myself,j);
+            }
+        }
+
+        /* 3) Ping all the other nodes so that they can update the state
+         *    accordingly and detect that we switched to master role. */
+        clusterBroadcastPing();
+
+        /* 4) Update state and save config. */
+        clusterUpdateState();
+        clusterSaveConfigOrDie();
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -1317,19 +1563,19 @@ void clusterCron(void) {
             (REDIS_NODE_MYSELF|REDIS_NODE_NOADDR|REDIS_NODE_HANDSHAKE))
                 continue;
 
-        /* Check only if we already sent a ping and did not received
-         * a reply yet. */
-        if (node->ping_sent == 0 ||
-            node->ping_sent <= node->pong_received) continue;
-
         /* If our ping is older than half the cluster timeout (may happen
          * in a cluster with many nodes), send a new ping. */
         if (node->link &&
-            (now - node->ping_sent) > server.cluster->node_timeout/2)
+            (now - node->ping_sent) > server.cluster_node_timeout/2)
         {
             clusterSendPing(node->link, CLUSTERMSG_TYPE_PING);
             continue;
         }
+
+        /* Check only if we already sent a ping and did not received
+         * a reply yet. */
+        if (node->ping_sent == 0 ||
+            node->ping_sent <= node->pong_received) continue;
 
         /* If we never received a pong, use the ping time to compute
          * the delay. */
@@ -1339,7 +1585,7 @@ void clusterCron(void) {
             delay = now - node->ping_sent;
         }
 
-        if (delay < server.cluster->node_timeout) {
+        if (delay < server.cluster_node_timeout) {
             /* The PFAIL condition can be reversed without external
              * help if it is not transitive (that is, if it does not
              * turn into a FAIL state).
@@ -1375,6 +1621,22 @@ void clusterCron(void) {
     {
         replicationSetMaster(server.cluster->myself->slaveof->ip,
                              server.cluster->myself->slaveof->port);
+    }
+
+    /* If we are a slave and our master is down, but is serving slots,
+     * call the function that handles the failover.
+     * This function is called with a small delay in order to let the
+     * FAIL message to propagate after failure detection, this is not
+     * strictly required but makes 99.99% of failovers mechanically
+     * simpler. */
+    if (server.cluster->myself->flags & REDIS_NODE_SLAVE &&
+        server.cluster->myself->slaveof &&
+        server.cluster->myself->slaveof->flags & REDIS_NODE_FAIL &&
+        (server.unixtime - server.cluster->myself->slaveof->fail_time) >
+         REDIS_CLUSTER_FAILOVER_DELAY &&
+        server.cluster->myself->slaveof->numslots != 0)
+    {
+        clusterHandleSlaveFailover();
     }
 
     if (update_state) clusterUpdateState();
@@ -1448,6 +1710,18 @@ int clusterDelSlot(int slot) {
     redisAssert(clusterNodeClearSlotBit(n,slot) == 1);
     server.cluster->slots[slot] = NULL;
     return REDIS_OK;
+}
+
+/* Delete all the slots associated with the specified node.
+ * The number of deleted slots is returned. */
+int clusterDelNodeSlots(clusterNode *node) {
+    int deleted = 0, j;
+
+    for (j = 0; j < REDIS_CLUSTER_SLOTS; j++) {
+        if (clusterNodeGetSlotBit(node,j)) clusterDelSlot(j);
+        deleted++;
+    }
+    return deleted;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1581,16 +1855,21 @@ int verifyClusterConfigWithData(void) {
  * SLAVE nodes handling
  * -------------------------------------------------------------------------- */
 
-/* Set the specified node 'n' as master. */
+/* Set the specified node 'n' as master. Setup the node as a slave if
+ * needed. */
 void clusterSetMaster(clusterNode *n) {
     clusterNode *myself = server.cluster->myself;
 
     redisAssert(n != myself);
+    redisAssert(myself->numslots == 0);
 
     if (myself->flags & REDIS_NODE_MASTER) {
         myself->flags &= ~REDIS_NODE_MASTER;
         myself->flags |= REDIS_NODE_SLAVE;
     }
+    /* Clear the promoted flag anyway if we are a slave, to ensure it will
+     * be set only when the node turns into a master because of fail over. */
+    myself->flags &= ~REDIS_NODE_PROMOTED;
     myself->slaveof = n;
     replicationSetMaster(n->ip, n->port);
 }
@@ -1624,6 +1903,7 @@ sds clusterGenNodesDescription(void) {
         if (node->flags & REDIS_NODE_FAIL) ci = sdscat(ci,"fail,");
         if (node->flags & REDIS_NODE_HANDSHAKE) ci =sdscat(ci,"handshake,");
         if (node->flags & REDIS_NODE_NOADDR) ci = sdscat(ci,"noaddr,");
+        if (node->flags & REDIS_NODE_PROMOTED) ci = sdscat(ci,"promoted,");
         if (ci[sdslen(ci)-1] == ',') ci[sdslen(ci)-1] = ' ';
 
         /* Slave of... or just "-" */
@@ -1730,6 +2010,16 @@ void clusterCommand(redisClient *c) {
         o = createObject(REDIS_STRING,ci);
         addReplyBulk(c,o);
         decrRefCount(o);
+    } else if (!strcasecmp(c->argv[1]->ptr,"flushslots") && c->argc == 2) {
+        /* CLUSTER FLUSHSLOTS */
+        if (dictSize(server.db[0].dict) != 0) {
+            addReplyError(c,"DB must be empty to perform CLUSTER FLUSHSLOTS.");
+            return;
+        }
+        clusterDelNodeSlots(server.cluster->myself);
+        clusterUpdateState();
+        clusterSaveConfigOrDie();
+        addReply(c,shared.ok);
     } else if ((!strcasecmp(c->argv[1]->ptr,"addslots") ||
                !strcasecmp(c->argv[1]->ptr,"delslots")) && c->argc >= 3)
     {

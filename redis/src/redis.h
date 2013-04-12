@@ -78,6 +78,7 @@
 #define REDIS_CONFIGLINE_MAX    1024
 #define REDIS_EXPIRELOOKUPS_PER_CRON    10 /* lookup 10 expires per loop */
 #define REDIS_EXPIRELOOKUPS_TIME_PERC   25 /* CPU max % for keys collection */
+#define REDIS_DBCRON_DBS_PER_CALL 16
 #define REDIS_MAX_WRITE_PER_EVENT (1024*64)
 #define REDIS_SHARED_SELECT_CMDS 10
 #define REDIS_SHARED_INTEGERS 10000
@@ -98,6 +99,7 @@
 #define REDIS_DEFAULT_REPL_BACKLOG_SIZE (1024*1024)    /* 1mb */
 #define REDIS_DEFAULT_REPL_BACKLOG_TIME_LIMIT (60*60)  /* 1 hour */
 #define REDIS_REPL_BACKLOG_MIN_SIZE (1024*16)          /* 16k */
+#define REDIS_BGSAVE_RETRY_DELAY 5 /* Wait a few secs before trying again. */
 
 /* Protocol and I/O related defines */
 #define REDIS_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
@@ -523,6 +525,16 @@ typedef struct redisOpArray {
 #define REDIS_CLUSTER_NAMELEN 40    /* sha1 hex length */
 #define REDIS_CLUSTER_PORT_INCR 10000 /* Cluster port = baseport + PORT_INCR */
 
+/* The following defines are amunt of time, sometimes expressed as
+ * multiplicators of the node timeout value (when ending with MULT). */
+#define REDIS_CLUSTER_DEFAULT_NODE_TIMEOUT 15
+#define REDIS_CLUSTER_FAIL_REPORT_VALIDITY_MULT 2 /* Fail report validity. */
+#define REDIS_CLUSTER_FAIL_UNDO_TIME_MULT 2 /* Undo fail if master is back. */
+#define REDIS_CLUSTER_FAIL_UNDO_TIME_ADD 10 /* Some additional time. */
+#define REDIS_CLUSTER_SLAVE_VALIDITY_MULT 10 /* Slave data validity. */
+#define REDIS_CLUSTER_FAILOVER_AUTH_RETRY_MULT 1 /* Auth request retry time. */
+#define REDIS_CLUSTER_FAILOVER_DELAY 5 /* Seconds */
+
 struct clusterNode;
 
 /* clusterLink encapsulates everything needed to talk with a remote node. */
@@ -542,6 +554,7 @@ typedef struct clusterLink {
 #define REDIS_NODE_HANDSHAKE 32 /* We have still to exchange the first ping */
 #define REDIS_NODE_NOADDR   64  /* We don't know the address of this node */
 #define REDIS_NODE_MEET 128     /* Send a MEET message to this node */
+#define REDIS_NODE_PROMOTED 256 /* Master was a slave propoted by failover */
 #define REDIS_NODE_NULL_NAME "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000"
 
 /* This structure represent elements of node->fail_reports. */
@@ -561,8 +574,6 @@ struct clusterNode {
     time_t ping_sent;       /* Unix time we sent latest ping */
     time_t pong_received;   /* Unix time we received the pong */
     time_t fail_time;       /* Unix time when FAIL flag was set */
-    char *configdigest;         /* Configuration digest of this node */
-    time_t configdigest_ts;     /* Configuration digest timestamp */
     char ip[16];                /* Latest known IP address of this node */
     int port;                   /* Latest known port of this node */
     clusterLink *link;          /* TCP/IP link with this node */
@@ -574,12 +585,13 @@ typedef struct {
     clusterNode *myself;  /* This node */
     int state;            /* REDIS_CLUSTER_OK, REDIS_CLUSTER_FAIL, ... */
     int size;             /* Num of master nodes with at least one slot */
-    int node_timeout;
     dict *nodes;          /* Hash table of name -> clusterNode structures */
     clusterNode *migrating_slots_to[REDIS_CLUSTER_SLOTS];
     clusterNode *importing_slots_from[REDIS_CLUSTER_SLOTS];
     clusterNode *slots[REDIS_CLUSTER_SLOTS];
     zskiplist *slots_to_keys;
+    int failover_auth_time;     /* Time at which we sent the AUTH request. */
+    int failover_auth_count;    /* Number of authorizations received. */
 } clusterState;
 
 /* Redis cluster messages header */
@@ -593,6 +605,8 @@ typedef struct {
 #define CLUSTERMSG_TYPE_MEET 2          /* Meet "let's join" message */
 #define CLUSTERMSG_TYPE_FAIL 3          /* Mark node xxx as failing */
 #define CLUSTERMSG_TYPE_PUBLISH 4       /* Pub/Sub Publish propagation */
+#define CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST 5 /* May I failover? */
+#define CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK 6     /* Yes, you can failover. */
 
 /* Initially we don't know our "name", but we'll find it once we connect
  * to the first node, using the getsockname() function. Then we'll use this
@@ -642,10 +656,11 @@ typedef struct {
     char sender[REDIS_CLUSTER_NAMELEN]; /* Name of the sender node */
     unsigned char myslots[REDIS_CLUSTER_SLOTS/8];
     char slaveof[REDIS_CLUSTER_NAMELEN];
-    char configdigest[32];
+    char notused1[32];  /* 32 bytes reserved for future usage. */
     uint16_t port;      /* Sender TCP base port */
+    uint16_t flags;     /* Sender node flags */
     unsigned char state; /* Cluster state from the POV of the sender */
-    unsigned char notused[5]; /* Reserved for future use. For alignment. */
+    unsigned char notused2[3]; /* Reserved for future use. For alignment. */
     union clusterMsgData data;
 } clusterMsg;
 
@@ -722,6 +737,7 @@ struct redisServer {
     int verbosity;                  /* Loglevel in redis.conf */
     int maxidletime;                /* Client timeout in seconds */
     int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
+    int active_expire_enabled;      /* Can be disabled for testing purposes. */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
     int dbnum;                      /* Total number of configured DBs */
     int daemonize;                  /* True if running as a daemon */
@@ -757,6 +773,7 @@ struct redisServer {
     int rdb_compression;            /* Use compression in RDB? */
     int rdb_checksum;               /* Use RDB checksum? */
     time_t lastsave;                /* Unix time of last successful save */
+    time_t lastbgsave_try;          /* Unix time of last attempted bgsave */
     time_t rdb_save_time_last;      /* Time used by last RDB save run. */
     time_t rdb_save_time_start;     /* Current RDB save start time. */
     int lastbgsave_status;          /* REDIS_OK or REDIS_ERR */
@@ -835,6 +852,7 @@ struct redisServer {
                                    xor of REDIS_NOTIFY... flags. */
     /* Cluster */
     int cluster_enabled;      /* Is cluster enabled? */
+    int cluster_node_timeout; /* Cluster node timeout. */
     char *cluster_configfile; /* Cluster auto-generated config file name. */
     clusterState *cluster;  /* State of the cluster */
     /* Scripting */
