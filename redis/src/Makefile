@@ -166,7 +166,7 @@ CXX=g++
 # CC=g++
 CXXFLAGS=-m32 -g -rdynamic -ggdb -I../deps/v8/src -I../deps/lua/src
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	g++ -m32 -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/ia32.release/libv8_{base,snapshot}.a $(FINAL_LIBS) -lpthread
+	g++ -m32 -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/ia32.release/libv8_base.ia32.a ../deps/v8/out/ia32.release/libv8_snapshot.a $(FINAL_LIBS) -lpthread
 
 # redis-sentinel
 $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)
