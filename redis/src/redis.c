@@ -2697,6 +2697,9 @@ void redisAsciiArt(void) {
     zfree(buf);
 	passPointerToRedisLogRaw(redisLogRaw);
 	passPointerToCreateClient(createClient);
+	passPointerTolookupCommandByCString(lookupCommandByCString);
+	passPointerTocreateStringObject(createStringObject);
+	passPointerTocall(call);
 	funccpp(1,'d',1.3);
 }
 
