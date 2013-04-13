@@ -1,5 +1,5 @@
-v8scripting.o: v8scripting.cc v8scripting.h ../deps/lua/src/lua.h \
-  ../deps/lua/src/luaconf.h zmalloc.h
+v8scripting.o: v8scripting.cc redis.c v8scripting.h ../deps/lua/src/lua.h \
+  ../deps/lua/src/luaconf.h
 adlist.o: adlist.c adlist.h zmalloc.h
 ae.o: ae.c ae.h zmalloc.h config.h ae_kqueue.c
 ae_epoll.o: ae_epoll.c

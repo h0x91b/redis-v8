@@ -20,6 +20,14 @@ redisCommand* (*lookupCommandByCStringPtr)(char*);
 void (*callPtr)(redisClient*,int);
 //robj *createStringObject(char *ptr, size_t len) {
 robj* (*createStringObjectPtr)(char*,size_t);
+//sds sdsempty(void)
+sds (*sdsemptyPtr)();
+//sds sdscatlen(sds s, const void *t, size_t len)
+sds (*sdscatlenPtr)(sds, const void *,size_t);
+//size_t sdslen(const sds s)
+size_t (*sdslenPtr)(const sds);
+//void listDelNode(list *list, listNode *node)
+void (*listDelNodePtr)(list*,listNode*);
 
 redisClient *client=NULL;
 
@@ -200,23 +208,35 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	c->argv = argv;
 	c->argc = argc;
 	
-	printf("command lookup\n");
 	/* Command lookup */
 	cmd = lookupCommandByCStringPtr((sds)argv[0]->ptr);
 	if(!cmd){
 		printf("no cmd '%s'!!!\n",argv[0]->ptr);
 		return v8::Undefined();
 	}
-	printf("cmd ok\n");
 	
 	/* Run the command */
 	c->cmd = cmd;
-	printf("call cmd()\n");
-	callPtr(c,0);
+	callPtr(c,REDIS_CALL_SLOWLOG | REDIS_CALL_STATS);
+	
+	reply = sdsemptyPtr();
+		
+	if (c->bufpos) {
+		reply = sdscatlenPtr(reply,c->buf,c->bufpos);
+		c->bufpos = 0;
+	}
+	
+	while(listLength(c->reply)) {
+		robj *o = (robj*)listNodeValue(listFirst(c->reply));
+
+		reply = sdscatlenPtr(reply,o->ptr,sdslenPtr((const sds)o->ptr));
+		listDelNodePtr(c->reply,listFirst(c->reply));
+	}
 	
 	
-	printf(") executed\n");
-	return v8::Undefined();
+	printf(") executed returns \"%s\"\n",(char*)reply);
+	
+	return v8::String::New(reply);
 }
 
 const char* ToCString(const v8::String::Utf8Value& value) {
@@ -263,7 +283,7 @@ void hello_world(){
 	Context::Scope context_scope(context);
 	
 	// Create a string containing the JavaScript source code.
-	Handle<String> source = String::New("test(new Array(100).join('Hello from v8! '));test(1,2,3);redis.test(3,2,1);redis.run('INCR','KV:V8TEST');redis.run('INCR','KV:V8TEST');redis.run('INCRBY','KV:V8TEST',10);");
+	Handle<String> source = String::New("test(new Array(100).join('Hello from v8! '));test(1,2,3);redis.test(3,2,1);redis.run('INCR','KV:V8TEST');redis.run('INCR','KV:V8TEST');redis.run('INCRBY','KV:V8TEST',10);redis.run('set','hello','world');redis.run('get','hello'); redis.run('hmset','HSET:V8','hello','world','id',15);redis.run('hgetall','HSET:V8');");
 	
 	// Compile the source code.
 	Handle<Script> script = Script::Compile(source);
@@ -289,6 +309,7 @@ extern "C"
 		
 		redisLogRawPtr(100,"Making redisClient\n");
 		client = redisCreateClientPtr(-1);
+		client->flags |= REDIS_LUA_CLIENT;
 		
 		hello_world();
 		redisLogRawPtr(100,"!!!\n\n\nHey hey hey\n\n\n");
@@ -323,5 +344,25 @@ extern "C"
 	void passPointerTocreateStringObject(robj* (*functionPtr)(char*,size_t)){
 		printf("passPointerTocreateStringObject\n");
 		createStringObjectPtr = functionPtr;
+	}
+	
+	void passPointerTosdsempty(sds (*functionPtr)()){
+		printf("passPointerTosdsempty\n");
+		sdsemptyPtr = functionPtr;
+	}
+	
+	void passPointerTosdscatlen(sds (*functionPtr)(sds, const void *,size_t)){
+		printf("passPointerTosdscatlen\n");
+		sdscatlenPtr = functionPtr;
+	}
+	
+	void passPointerTosdslen(size_t (*functionPtr)(const sds)){
+		printf("passPointerTosdslen\n");
+		sdslenPtr = functionPtr;
+	}
+	
+	void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*)){
+		printf("passPointerTolistDelNode\n");
+		listDelNodePtr = functionPtr;
 	}
 }

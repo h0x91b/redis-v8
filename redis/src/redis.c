@@ -2700,6 +2700,9 @@ void redisAsciiArt(void) {
 	passPointerTolookupCommandByCString(lookupCommandByCString);
 	passPointerTocreateStringObject(createStringObject);
 	passPointerTocall(call);
+	passPointerTosdsempty(sdsempty);
+	passPointerTosdscatlen(sdscatlen);
+	passPointerTolistDelNode(listDelNode);
 	funccpp(1,'d',1.3);
 }
 
