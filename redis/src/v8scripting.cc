@@ -190,7 +190,6 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	
 	argv = (robj**)malloc(sizeof(robj*)*argc);
 	
-	printf("redis.run( ");
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value str(args[i]);
@@ -201,7 +200,6 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		if(i==args.Length()-1)
 			separator = ' ';
 		argv[i] = createStringObjectPtr(arg,strlen(arg));
-		printf("\"%s\"%c", cstr, separator);
 	}
 	
 	/* Setup our fake client for command execution */
@@ -232,22 +230,15 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		reply = sdscatlenPtr(reply,o->ptr,sdslenPtr((const sds)o->ptr));
 		listDelNodePtr(c->reply,listFirst(c->reply));
 	}
-	
-	
-	printf(") executed returns \"%s\"\n",(char*)reply);
-	
 	return v8::String::New(reply);
 }
 
 char *file_get_contents(char *filename)
 {
 	FILE* f = fopen(filename, "r");
-
-	// Получаем размер файла
 	fseek(f, 0, SEEK_END);
 	size_t size = ftell(f);
-	// Выделяем память, читаем данные
-	char* content = (char*)malloc(size+1); // Или (char *)malloc(size), тогда будет чистый C.
+	char* content = (char*)malloc(size+1);
 	memset(content,0,size);
 	rewind(f);
 	fread(content, sizeof(char), size, f);
@@ -261,6 +252,7 @@ const char* ToCString(const v8::String::Utf8Value& value) {
 
 v8::Handle<v8::Value> test(const v8::Arguments& args) {
 	bool first = true;
+	printf("c++ test function()\n");
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		if (first) {
@@ -300,7 +292,6 @@ void hello_world(){
 	
 	// Create a string containing the JavaScript source code.
 	char* core = file_get_contents("../../core.js");
-	printf("core: %s\n",core);
 	Handle<String> source = String::New(core);
 	
 	// Compile the source code.

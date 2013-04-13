@@ -1,17 +1,3 @@
-/*
-"*4
-$5
-hello
-$11
-hello
-world
-$2
-id
-:15
-"
-*/
-//var test = "*4\n$5\nhello\n$11\nhello\nworld\n$2\nid\n:15\n";
-//redis = {};
 redis.run = function(){
 	var str = redis.__run.apply(this,arguments);
 	var bufindex = 0;
@@ -63,16 +49,13 @@ redis.hgetall = function(key){
 }
 //redis.run();
 
-test(new Array(100).join('Hello from v8! '));
-
-test(1,2,3);
 redis.test(3,2,1);
-redis.run('INCR','KV:V8TEST');
-redis.run('INCR','KV:V8TEST');
-redis.run('INCRBY','KV:V8TEST',10);
-redis.run('set','hello','world');
-redis.run('get','hello');
-redis.run('hmset','HSET:V8','hello','hello\nworld','id',15,'title','test title');
+test(redis.run('INCR','KV:V8TEST'));
+test(redis.run('INCR','KV:V8TEST'));
+test(redis.run('INCRBY','KV:V8TEST',10));
+test(redis.run('set','hello','world'));
+test(redis.run('get','hello'));
+test(redis.run('hmset','HSET:V8','hello','hello\nworld','id',15,'title','test title'));
 var hgetall = redis.hgetall('HSET:V8');
 for(var k in hgetall){
 	test("key '"+k+"'='"+hgetall[k]+"'");
