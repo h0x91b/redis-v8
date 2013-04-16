@@ -1013,6 +1013,8 @@ void addReplyStatus(redisClient *c, char *status);
 void addReplyDouble(redisClient *c, double d);
 void addReplyLongLong(redisClient *c, long long ll);
 void addReplyMultiBulkLen(redisClient *c, long length);
+void addReplyString(redisClient *c, char *s, size_t len);
+void addReplyBulkLen(redisClient *c, robj *obj);
 void copyClientOutputBuffer(redisClient *dst, redisClient *src);
 void *dupClientReplyValue(void *o);
 void getClientsMaxBuffers(unsigned long *longest_output_list,
@@ -1298,6 +1300,7 @@ char *redisGitDirty(void);
 uint64_t redisBuildId(void);
 
 /* Commands prototypes */
+void v8Command(redisClient *c);
 void authCommand(redisClient *c);
 void pingCommand(redisClient *c);
 void echoCommand(redisClient *c);

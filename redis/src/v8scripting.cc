@@ -3,6 +3,10 @@
 #include "v8scripting.h"
 
 using namespace v8;
+//using namespace v8::internal;
+//using v8::internal::Runtime;
+
+v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
 
@@ -28,6 +32,26 @@ sds (*sdscatlenPtr)(sds, const void *,size_t);
 size_t (*sdslenPtr)(const sds);
 //void listDelNode(list *list, listNode *node)
 void (*listDelNodePtr)(list*,listNode*);
+//void decrRefCount(robj *o)
+void (*decrRefCountPtr)(robj*);
+//void sdsfree(sds s)
+void (*sdsfreePtr)(sds);
+//void *zmalloc(size_t size)
+void* (*zmallocPtr)(size_t);
+//void zfree(void *ptr)
+void (*zfreePtr)(void*);
+//void redisLog(int level, const char *fmt, ...)
+void (*redisLogPtr)(int,const char*,...);
+//void addReply(redisClient *c, robj *obj)
+void (*addReplyPtr)(redisClient *, robj *);
+//sds sdsnew(const char *init)
+sds (*sdsnewPtr)(const char*);
+//robj *createObject(int type, void *ptr)
+robj* (*createObjectPtr)(int,void*);
+//void addReplyString(redisClient *c, char *s, size_t len)
+void (*addReplyStringPtr)(redisClient*,char *,size_t);
+//void addReplyBulk(redisClient *c, robj *obj)
+void (*addReplyBulkPtr)(redisClient*,robj*);
 
 redisClient *client=NULL;
 
@@ -182,17 +206,22 @@ redisClient *client=NULL;
 
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
+	//return v8::String::New("$11\nhello\nworld\n");
+	//return v8::String::New("+OK");
 	int argc = args.Length();
 	redisCommand *cmd;
 	robj **argv;
 	redisClient *c = client;
 	sds reply;
 	
-	argv = (robj**)malloc(sizeof(robj*)*argc);
+	//argv = (robj**)malloc(sizeof(robj*)*argc);
+	argv = (robj**)zmallocPtr(sizeof(robj*)*argc);
 	
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value str(args[i]);
+		
+		/*
 		const char* cstr = ToCString(str);
 		char *arg = (char*)malloc(strlen(cstr));
 		strcpy(arg,cstr);
@@ -200,6 +229,11 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		if(i==args.Length()-1)
 			separator = ' ';
 		argv[i] = createStringObjectPtr(arg,strlen(arg));
+		*/
+		argv[i] = createStringObjectPtr((char*)ToCString(str),strlen(ToCString(str)));
+		//		 argv[j] = createStringObject((char*)lua_tostring(lua,j+1),
+		//									  lua_strlen(lua,j+1));
+		
 	}
 	
 	/* Setup our fake client for command execution */
@@ -230,7 +264,17 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		reply = sdscatlenPtr(reply,o->ptr,sdslenPtr((const sds)o->ptr));
 		listDelNodePtr(c->reply,listFirst(c->reply));
 	}
-	return v8::String::New(reply);
+	
+	v8::Local<v8::String> v8reply = v8::String::New(reply);
+	
+	sdsfreePtr(reply);
+	c->reply_bytes = 0;
+	
+	for (int j = 0; j < c->argc; j++)
+		decrRefCountPtr(c->argv[j]);
+	zfreePtr(c->argv);
+	
+	return v8reply;
 }
 
 char *file_get_contents(char *filename)
@@ -248,6 +292,15 @@ char *file_get_contents(char *filename)
 
 const char* ToCString(const v8::String::Utf8Value& value) {
 	return *value ? *value : "<string conversion failed>";
+}
+
+v8::Handle<v8::Value> optimize(const v8::Arguments& args) {
+	printf("optimize call\n");
+	v8::Persistent<v8::Function> fn = v8::Persistent<v8::Function>::New(v8::Handle<v8::Function>::Cast(args[0]));
+	//Runtime::Runtime_OptimizeFunctionOnNextCall(fn,1);
+	//fn->MarkForLazyRecompilation();
+	//Handle<JSFunction> fun(JSFunction::cast(v8::Handle<v8::Object>::Cast(args[0])));
+	return v8::Undefined();
 }
 
 v8::Handle<v8::Value> test(const v8::Arguments& args) {
@@ -269,11 +322,16 @@ v8::Handle<v8::Value> test(const v8::Arguments& args) {
 	return v8::Undefined();
 }
 
-
-void hello_world(){
-	printf("Hello world v8\n");
-	// Create a stack-allocated handle scope.
-	HandleScope handle_scope;
+void initV8(){
+	v8::V8::SetFlagsFromString(
+		"--trace_opt --trace_deopt --allow_natives_syntax",
+		strlen(
+		"--trace_opt --trace_deopt --allow_natives_syntax"
+		)
+	);
+	i::FLAG_allow_natives_syntax = true;
+	
+	v8::HandleScope handle_scope;
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
@@ -281,35 +339,127 @@ void hello_world(){
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
 	
 	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
+	global->Set(v8::String::New("optimize"), v8::FunctionTemplate::New(optimize));
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.
-	Persistent<Context> context = Context::New(NULL,global);
+	v8_context = v8::Context::New(NULL,global);
 	
 	// Enter the created context for compiling and
 	// running the hello world script. 
-	Context::Scope context_scope(context);
+	v8::Context::Scope context_scope(v8_context);
 	
 	// Create a string containing the JavaScript source code.
 	char* core = file_get_contents("../../core.js");
-	Handle<String> source = String::New(core);
+	v8::Handle<v8::String> source = v8::String::New(core);
+	free(core);
 	
 	// Compile the source code.
-	Handle<Script> script = Script::Compile(source);
+	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	
 	// Run the script to get the result.
-	Handle<Value> result = script->Run();
+	v8::Handle<v8::Value> result = script->Run();
+	
+	// Dispose the persistent context.
+	//context.Dispose();
+	
+	// Convert the result to an ASCII string and print it.
+	v8::String::AsciiValue ascii(result);
+	printf("core.js return %s\n", *ascii);
+}
+
+void run_corejs_test(){
+	v8::HandleScope handle_scope;
+	v8::Context::Scope context_scope(v8_context);
+	char* core = file_get_contents("../../coretest.js");
+	v8::Handle<v8::String> source = v8::String::New(core);
+	v8::Handle<v8::Script> script = v8::Script::Compile(source);
+	v8::Handle<v8::Value> result = script->Run();
+	free(core);
+	v8::String::AsciiValue ascii(result);
+	printf("%s\n", *ascii);
+}
+
+char* run_js(char *code){
+	v8::HandleScope handle_scope;
+	v8::Context::Scope context_scope(v8_context);
+	v8::Handle<v8::String> source = v8::String::New(code);
+	v8::Handle<v8::Script> script = v8::Script::Compile(source);
+	v8::Handle<v8::Value> result = script->Run();
+	v8::String::AsciiValue ascii(result);
+	printf("run_js '%s'\n", *ascii);
+	int size = strlen(*ascii);
+	char *rez= (char*)malloc(size);
+	memset(rez,0,size);
+	strcpy(rez,*ascii);
+	return rez;
+}
+
+void hello_world(){
+	printf("Hello world v8\n");
+	
+	/*
+	static const char v8Flags [ ] = "--expose-gc";
+	V8::SetFlagsFromString (v8Flags, sizeof (v8Flags) - 1);
+	*/
+	v8::V8::SetFlagsFromString(
+		"--trace_opt --trace_deopt --allow_natives_syntax",
+		strlen(
+		"--trace_opt --trace_deopt --allow_natives_syntax"
+		)
+	);
+	i::FLAG_allow_natives_syntax = true;
+	
+	// Create a stack-allocated handle scope.
+	v8::HandleScope handle_scope;
+	
+	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
+	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
+	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
+	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
+	
+	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
+	global->Set(v8::String::New("optimize"), v8::FunctionTemplate::New(optimize));
+	global->Set(v8::String::New("redis"), redis);
+	
+	// Create a new context.
+	v8::Persistent<v8::Context> context = v8::Context::New(NULL,global);
+	
+	// Enter the created context for compiling and
+	// running the hello world script. 
+	v8::Context::Scope context_scope(context);
+	
+	// Create a string containing the JavaScript source code.
+	char* core = file_get_contents("../../core.js");
+	v8::Handle<v8::String> source = v8::String::New(core);
+	
+	// Compile the source code.
+	v8::Handle<v8::Script> script = v8::Script::Compile(source);
+	
+	// Run the script to get the result.
+	v8::Handle<v8::Value> result = script->Run();
 	
 	// Dispose the persistent context.
 	context.Dispose();
 	
 	// Convert the result to an ASCII string and print it.
-	String::AsciiValue ascii(result);
+	v8::String::AsciiValue ascii(result);
 	printf("%s\n", *ascii);
 }
 
 extern "C"
 {
+	void v8_exec(redisClient *c,char* code){
+		printf("v8_exec %s\n",code);
+		char *json = run_js(code);
+		//addReplyStringPtr(c,json,strlen(json));
+		//void addReplyBulkLen(redisClient *c, robj *obj)
+		robj *obj = createStringObjectPtr(json,strlen(json));
+		addReplyBulkPtr(c,obj);
+		free(json);
+		decrRefCountPtr(obj);
+		//addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8\r\n")));
+	}
 	void funccpp(int i, char c, float x)
 	{
 		int r=0;
@@ -320,9 +470,13 @@ extern "C"
 		client = redisCreateClientPtr(-1);
 		client->flags |= REDIS_LUA_CLIENT;
 		
-		hello_world();
-		redisLogRawPtr(100,"!!!\n\n\nHey hey hey\n\n\n");
-		//redisLogRaw(1,"!!!!!!!!fdsfdsfsd!!!!!");
+		//hello_world();
+		initV8();
+		//run_corejs_test();
+		//run_corejs_test();
+		//run_corejs_test();
+		
+		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 	}
 	
 	//void (*redisLogRawPtr)(int,const char);
@@ -373,5 +527,55 @@ extern "C"
 	void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*)){
 		printf("passPointerTolistDelNode\n");
 		listDelNodePtr = functionPtr;
+	}
+	
+	void passPointerTodecrRefCount(void (*functionPtr)(robj*)){
+		printf("passPointerTodecrRefCount\n");
+		decrRefCountPtr = functionPtr;
+	}
+	
+	void passPointerTosdsfree(void (*functionPtr)(sds)){
+		printf("passPointerTosdsfree\n");
+		sdsfreePtr = functionPtr;
+	}
+	
+	void passPointerTozmalloc(void* (*functionPtr)(size_t)){
+		printf("passPointerTozmalloc\n");
+		zmallocPtr = functionPtr;
+	}
+	
+	void passPointerTozfree(void (*functionPtr)(void*)){
+		printf("passPointerTozfree\n");
+		zfreePtr = functionPtr;
+	}
+	
+	void passPointerToredisLog(void (*functionPtr)(int,const char*,...)){
+		printf("passPointerToredisLog\n");
+		redisLogPtr = functionPtr;
+	}
+	
+	void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *)){
+		printf("passPointerToaddReply\n");
+		addReplyPtr = functionPtr;
+	}
+	
+	void passPointerTosdsnew(sds (*functionPtr)(const char*)){
+		printf("passPointerTosdsnew\n");
+		sdsnewPtr = functionPtr;
+	}
+	
+	void passPointerTocreateObject(robj* (*functionPtr)(int,void*)){
+		printf("passPointerTocreateObject\n");
+		createObjectPtr = functionPtr;
+	}
+	
+	void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t)){
+		printf("passPointerToaddReplyString\n");
+		addReplyStringPtr = functionPtr;
+	}
+	
+	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
+		printf("passPointerToaddReplyBulkLen\n");
+		addReplyBulkPtr = functionPtr;
 	}
 }

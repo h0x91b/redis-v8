@@ -115,6 +115,7 @@ struct redisCommand *commandTable;
  *    accepted in cluster mode if the slot is marked as 'importing'.
  */
 struct redisCommand redisCommandTable[] = {
+	{"v8",v8Command,2,"r",0,NULL,1,1,1,0,0},
     {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
     {"set",setCommand,-3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
     {"setnx",setnxCommand,3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
@@ -1986,6 +1987,10 @@ void authCommand(redisClient *c) {
       addReplyError(c,"invalid password");
     }
 }
+void v8Command(redisClient *c){
+	v8_exec(c,(char*)c->argv[1]->ptr);
+	//addReply(c,createObject(REDIS_STRING,sdsnew("+V8\r\n")));
+}
 
 void pingCommand(redisClient *c) {
     addReply(c,shared.pong);
@@ -2695,15 +2700,6 @@ void redisAsciiArt(void) {
     );
     redisLogRaw(REDIS_NOTICE|REDIS_LOG_RAW,buf);
     zfree(buf);
-	passPointerToRedisLogRaw(redisLogRaw);
-	passPointerToCreateClient(createClient);
-	passPointerTolookupCommandByCString(lookupCommandByCString);
-	passPointerTocreateStringObject(createStringObject);
-	passPointerTocall(call);
-	passPointerTosdsempty(sdsempty);
-	passPointerTosdscatlen(sdscatlen);
-	passPointerTolistDelNode(listDelNode);
-	funccpp(1,'d',1.3);
 }
 
 static void sigtermHandler(int sig) {
@@ -2763,6 +2759,24 @@ void loadDataFromDisk(void) {
             exit(1);
         }
     }
+	passPointerToRedisLogRaw(redisLogRaw);
+	passPointerToCreateClient(createClient);
+	passPointerTolookupCommandByCString(lookupCommandByCString);
+	passPointerTocreateStringObject(createStringObject);
+	passPointerTocall(call);
+	passPointerTosdsempty(sdsempty);
+	passPointerTosdscatlen(sdscatlen);
+	passPointerTolistDelNode(listDelNode);
+	passPointerTodecrRefCount(decrRefCount);
+	passPointerTosdsfree(sdsfree);
+	passPointerTozmalloc(zmalloc);
+	passPointerTozfree(zfree);
+	passPointerToaddReply(addReply);
+	passPointerTosdsnew(sdsnew);
+	passPointerTocreateObject(createObject);
+	passPointerToaddReplyString(addReplyString);
+	passPointerToaddReplyBulk(addReplyBulk);
+	funccpp(1,'d',1.3);
 }
 
 void redisOutOfMemoryHandler(size_t allocation_size) {
