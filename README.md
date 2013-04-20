@@ -41,17 +41,25 @@ Speed
 On my machine v8 works 2.75 ~ 6.7 times faster than redis-benchmark on socket:
 
 PING: 
+	
 	V8: 487000
-	redis-benchmark: 75187.97
+	
+	redis-benchmark: 75187
 
 INCR:
+	
 	V8: 307800
+	
 	redis-benchmark: 72992
 
 GET:
+	
 	V8: 251800
+	
 	redis-benchmark: 74626
 
 SET:
+	
 	V8: 190100
+	
 	redis-benchmark: 69400
