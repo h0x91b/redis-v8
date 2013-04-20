@@ -1,39 +1,9 @@
-redis_v8
+redis-v8
 ========
 
-experiment
+Experiment, Redis (2.9.9) with built in google v8 JS engine
 
 Currently tested only on OSX
-
-
-Compiling
-=========
-
-You will need v8 =)
-
-<code>cd redis/deps/</code>
-
-<code>git clone git@github.com:v8/v8.git</code>
-
-<code>make dependencies</code>
-
-Now you can make a redis
-
-<code>cd redis/</code>
-
-<code>make</code>
-
-Start server
-
-<code>cd src/; ./redis-server ../redis.conf</code>
-
-Using
-=====
-
-<code> ./redis-cli JS "redis.hmset('HSET:TEST',{title:'hello', body: 'world'}); return redis.hgetall('HSET:TEST')" </code>
-
-
-<code> time ./redis-cli JS "for(var i=0; i< 1000000; i++) redis.set('KV:TEST'+i,'hello world '+i);" </code>
 
 Speed
 =====
@@ -63,3 +33,34 @@ SET:
 	V8: 190100
 	
 	redis-benchmark: 69400
+
+Using
+=====
+
+	<code> ./redis-cli JS "redis.hmset('HSET:TEST',{title:'hello', body: 'world'}); return redis.hgetall('HSET:TEST')" </code>
+
+
+	<code> time ./redis-cli JS "for(var i=0; i< 1000000; i++) redis.set('KV:TEST'+i,'hello world '+i);" </code>
+
+
+
+Compiling
+=========
+
+You will need v8 =)
+
+<code>cd redis/deps/</code>
+
+<code>git clone git@github.com:v8/v8.git</code>
+
+<code>make dependencies</code>
+
+Now you can make a redis
+
+<code>cd redis/</code>
+
+<code>make</code>
+
+Start server
+
+<code>cd src/; ./redis-server ../redis.conf</code>
