@@ -15,6 +15,8 @@
 CC=gcc
 CC=clang
 
+V8_LIBS_LOCATION=../deps/v8/out/native/libv8_{base.x64,snapshot}.a
+
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 OPTIMIZATION?=-O2
@@ -129,7 +131,7 @@ all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCH
 include Makefile.dep
 
 dep:
-	gcc -m32 -pedantic -Wall -Wno-write-strings -O2 -g -rdynamic -ggdb -m32  -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
+	gcc -pedantic -Wall -Wno-write-strings -O2 -g -rdynamic -ggdb   -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
 	$(REDIS_CC) -MM *.c >> Makefile.dep
 
 .PHONY: dep
@@ -166,10 +168,10 @@ endif
 CXX=g++
 CXX=clang++
 # CC=g++
-CXXFLAGS=-m32 -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
+CXXFLAGS= -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	clang++ -m32 -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
-	clang++ -m32 -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/ia32.release/libv8_base.ia32.a ../deps/v8/out/ia32.release/libv8_snapshot.a $(FINAL_LIBS) -lpthread
+	clang++  -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
+	clang++  -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(V8_LIBS_LOCATION) $(FINAL_LIBS) -lpthread
 
 # redis-sentinel
 $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)
@@ -228,6 +230,7 @@ bench: $(REDIS_BENCHMARK_NAME)
 	@echo ""
 	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
 	@echo ""
+	V8_LIBS_LOCATION=../deps/v8/out/native/libv8_{base.x32,snapshot}.a
 	$(MAKE) CFLAGS="-m32" LDFLAGS="-m32"
 
 gcov:

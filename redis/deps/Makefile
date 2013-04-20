@@ -44,7 +44,7 @@ distclean:
 
 v8: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	cd v8 && $(MAKE) ia32.release -j 4 debuggersupport=off
+	cd v8 && $(MAKE) native -j 4 debuggersupport=off
 
 .PHONY: v8
 
