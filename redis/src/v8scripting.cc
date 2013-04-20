@@ -454,8 +454,30 @@ char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	v8::Handle<v8::String> source = v8::String::New(code);
+	v8::TryCatch trycatch;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
+	if(script.IsEmpty()){
+		Handle<Value> exception = trycatch.Exception();
+		String::AsciiValue exception_str(exception);
+		printf("V8 Exception: %s\n", *exception_str);
+		char *errBuf = (char*)malloc(4096);
+		memset(errBuf,0,4096);
+		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
+		printf("errBuf is '%s'\n",errBuf);
+		return errBuf;
+	}
 	v8::Handle<v8::Value> result = script->Run();
+	printf("script->Run()\n");
+	if (result.IsEmpty()) {  
+		Handle<Value> exception = trycatch.Exception();
+		String::AsciiValue exception_str(exception);
+		printf("Exception: %s\n", *exception_str);
+		char *errBuf = (char*)malloc(4096);
+		memset(errBuf,0,4096);
+		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+		return errBuf;
+	}
+	
 	v8::String::AsciiValue ascii(result);
 	//printf("run_js '%s'\n", *ascii);
 	int size = strlen(*ascii);
