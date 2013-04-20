@@ -9,6 +9,7 @@ using namespace v8;
 v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
+v8::Handle<v8::Value> parse_response();
 
 //void (*pingCommandPtr)(redisClient *c);
 //void (*pingCommandPtr)(redisClient);
@@ -202,7 +203,82 @@ redisClient *client=NULL;
 //	 }
 //	 return 1;
 // }
-// 
+//
+
+char *redisReply = NULL;
+char bufForString[4096] = {0};
+char lastError[4096] = {0};
+
+v8::Handle<v8::Value> parse_string(char *replyPtr){
+	//printf("parse_line_ok replyPtr[0]='%c' string length:%i\n",replyPtr[0],atoi(replyPtr));
+	int strlength = atoi(replyPtr);
+	int len = strstr(replyPtr,"\r\n")-replyPtr;
+	replyPtr+=len+2;
+	if(strlength<4096){
+		memset(bufForString,0,4096);
+		strncpy(bufForString,replyPtr,strlength);
+		replyPtr+=strlength+2;
+		bufForString[strlength]='\0';
+		//printf("line is '%s'\n",buff);
+		v8::Local<v8::String> ret = v8::String::New(bufForString);
+		redisReply = replyPtr;
+		return ret;
+	}
+	char *buff= (char*)malloc(strlength+1);
+	strncpy(buff,replyPtr,strlength);
+	replyPtr+=strlength+2;
+	buff[strlength]='\0';
+	//printf("line is '%s'\n",buff);
+	v8::Local<v8::String> ret = v8::String::New(buff);
+	free(buff);
+	redisReply = replyPtr;
+	return ret;
+}
+
+v8::Handle<v8::Value> parse_error(char *replyPtr){
+	int len = strstr(replyPtr,"\r\n")-replyPtr;
+	memset(lastError,0,4096);
+	strncpy(lastError,replyPtr,len);
+	replyPtr+=len+2;
+	redisReply = replyPtr;
+	printf("lastError set to '%s'\n",lastError);
+	return v8::Boolean::New(false);
+}
+
+v8::Handle<v8::Value> parse_bulk(char *replyPtr){
+	int arr_length = atoi(replyPtr);
+	int len = strstr(replyPtr,"\r\n")-replyPtr;
+	replyPtr+=len+2;
+	redisReply = replyPtr;
+	v8::Local<v8::Array> ret = v8::Array::New(arr_length);
+	for(int i=0;i<arr_length;i++){
+		ret->Set(v8::Number::New(i), parse_response());
+	}
+	return ret;
+}
+
+
+v8::Handle<v8::Value> parse_response(){
+	char *replyPtr = redisReply;
+	printf("replyPtr[0]='%c' reply='%s'\n",replyPtr[0],replyPtr);
+	switch(replyPtr[0]){
+		case '+':
+			return v8::Boolean::New(true);
+		case '-':
+			return parse_error(++replyPtr);
+		case ':':
+			return v8::Integer::New(atoi(++replyPtr));
+		case '$':
+			return parse_string(++replyPtr);
+		case '*':
+			return parse_bulk(++replyPtr);
+	}
+	return v8::Undefined();
+}
+
+v8::Handle<v8::Value> getLastError(const v8::Arguments& args) {
+	return v8::String::New(lastError);
+}
 
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
@@ -243,7 +319,7 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	/* Command lookup */
 	cmd = lookupCommandByCStringPtr((sds)argv[0]->ptr);
 	if(!cmd){
-		printf("no cmd '%s'!!!\n",argv[0]->ptr);
+		printf("no cmd '%s'!!!\n",(char*)argv[0]->ptr);
 		return v8::Undefined();
 	}
 	
@@ -265,6 +341,8 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		listDelNodePtr(c->reply,listFirst(c->reply));
 	}
 	
+	redisReply = reply;
+	v8::Handle<v8::Value> ret_value= parse_response();
 	v8::Local<v8::String> v8reply = v8::String::New(reply);
 	
 	sdsfreePtr(reply);
@@ -274,7 +352,8 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		decrRefCountPtr(c->argv[j]);
 	zfreePtr(c->argv);
 	
-	return v8reply;
+	return ret_value;
+	//return v8reply;
 }
 
 char *file_get_contents(char *filename)
@@ -292,15 +371,6 @@ char *file_get_contents(char *filename)
 
 const char* ToCString(const v8::String::Utf8Value& value) {
 	return *value ? *value : "<string conversion failed>";
-}
-
-v8::Handle<v8::Value> optimize(const v8::Arguments& args) {
-	printf("optimize call\n");
-	v8::Persistent<v8::Function> fn = v8::Persistent<v8::Function>::New(v8::Handle<v8::Function>::Cast(args[0]));
-	//Runtime::Runtime_OptimizeFunctionOnNextCall(fn,1);
-	//fn->MarkForLazyRecompilation();
-	//Handle<JSFunction> fun(JSFunction::cast(v8::Handle<v8::Object>::Cast(args[0])));
-	return v8::Undefined();
 }
 
 v8::Handle<v8::Value> test(const v8::Arguments& args) {
@@ -337,9 +407,9 @@ void initV8(){
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
 	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
+	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError));
 	
 	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
-	global->Set(v8::String::New("optimize"), v8::FunctionTemplate::New(optimize));
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.
@@ -387,7 +457,7 @@ char* run_js(char *code){
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	v8::Handle<v8::Value> result = script->Run();
 	v8::String::AsciiValue ascii(result);
-	printf("run_js '%s'\n", *ascii);
+	//printf("run_js '%s'\n", *ascii);
 	int size = strlen(*ascii);
 	char *rez= (char*)malloc(size);
 	memset(rez,0,size);
@@ -419,7 +489,6 @@ void hello_world(){
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
 	
 	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
-	global->Set(v8::String::New("optimize"), v8::FunctionTemplate::New(optimize));
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.

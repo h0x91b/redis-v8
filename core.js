@@ -1,5 +1,6 @@
-redis.str = '';
+redis.str = {};//'';
 redis.bufindex = 0;
+redis.last_error = '';
 
 redis.ok_return = function(){
 	redis.bufindex = redis.str.indexOf('\n',redis.bufindex)+1;
@@ -9,7 +10,9 @@ redis.ok_return = function(){
 
 redis.err_return = function(){
 	//str = redis.str.substr(redis.str.indexOf('\n')+1);
-	redis.bufindex = redis.str.indexOf('\n',redis.bufindex)+1;
+	var pos = redis.str.indexOf('\n',redis.bufindex)+1;
+	redis.last_error = redis.str.substr(redis.bufindex+1,pos-3);
+	redis.bufindex = pos;
 	return false;
 }
 
@@ -61,22 +64,39 @@ redis.parse = function(){
 
 redis.run = function(){
 	//'*6\n$5\nhello\n$11\nhello\nworld\n$2\nid\n:15\n$5\ntitle\n$10\ntest title\n'
+	redis.last_error = '';
 	redis.str = redis.__run.apply(this,arguments);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	//test('reply',redis.str);
 	redis.bufindex = 0;
-	return JSON.stringify({ret:redis.parse()});
+	return JSON.stringify({ret:redis.str,last_error: redis.last_error});
+	//return JSON.stringify({ret:redis.parse(),last_error: redis.last_error});
+}
+
+redis.hmset = function(key, obj){
+	var f = ['HMSET',key];
+	for(var k in obj){
+		f.push(k);
+		f.push(obj[k]);
+	}
+	return this.run.apply(this,f);
 }
 
 redis.hgetall = function(key){
+	redis.last_error = '';
 	redis.str = redis.__run.apply(this,['HGETALL',key]);
 	redis.bufindex = 0;
 	
-	var resp = redis.parse();//redis.run.call(this,'HGETALL',key);
-	test(resp);
+	//var resp = redis.parse();//redis.run.call(this,'HGETALL',key);
+	var resp = redis.str;
+	//test(resp);
 	var ret = {};
 	for(var i=0; i<resp.length; i+=2){
 		ret[resp[i]] = resp[i+1];
 	}
-	return JSON.stringify({ret:ret});
+	return JSON.stringify({ret:ret,last_error:redis.last_error});
 	//return ret;
 }
 

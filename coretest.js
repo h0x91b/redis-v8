@@ -19,6 +19,10 @@ for(var i=0;i<10000;i++){
 for(var i=0;i<10000;i++){
 	redis.run('get','test'+i,i);
 }
+for(var i=0;i<10000;i++){
+	redis.run('ping');
+}
+
 
 //start test
 test('start test');
@@ -44,3 +48,10 @@ for(var i=0;i<1000000;i++){
 }
 tm = new Date().getTime()-tm;
 test('1 000 000 dels in '+(tm/1000)+' seconds ('+Math.round(1000000/(tm/1000))+' per second)');
+
+var tm = new Date().getTime();
+for(var i=0;i<1000000;i++){
+	redis.run('PING');
+}
+tm = new Date().getTime()-tm;
+test('1 000 000 pings in '+(tm/1000)+' seconds ('+Math.round(1000000/(tm/1000))+' per second)');
