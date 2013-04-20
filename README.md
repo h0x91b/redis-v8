@@ -32,12 +32,14 @@ Using
 
 <code> ./redis-cli JS "redis.hmset('HSET:TEST',{title:'hello', body: 'world'}); return redis.hgetall('HSET:TEST')" </code>
 
-<code> time ./redis-cli JS "for(var i=0;i<1000000;i++) redis.set('KV:TEST'+i,'hello world '+i);" </code>
+
+<code> time ./redis-cli JS "for(var i=0; i< 1000000; i++) redis.set('KV:TEST'+i,'hello world '+i);" </code>
 
 Speed
 =====
 
 On my machine v8 works 2.75 ~ 6.7 times faster than redis-benchmark on socket:
+
 PING: 
 	V8: 487000
 	redis-benchmark: 75187.97
