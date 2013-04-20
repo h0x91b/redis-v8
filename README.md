@@ -11,6 +11,8 @@ You will need v8 =)
 
 <code>git clone git@github.com:v8/v8.git</code>
 
+<code>make dependencies</code>
+
 Now you can make a redis
 
 <code>cd redis/</code>

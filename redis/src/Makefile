@@ -13,6 +13,7 @@
 # Just use 'make dep', but this is only needed by developers.
 
 CC=gcc
+CC=clang
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
@@ -128,7 +129,7 @@ all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCH
 include Makefile.dep
 
 dep:
-	gcc -m32 -pedantic -Wall -O2 -g -rdynamic -ggdb -m32  -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
+	gcc -m32 -pedantic -Wall -Wno-write-strings -O2 -g -rdynamic -ggdb -m32  -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
 	$(REDIS_CC) -MM *.c >> Makefile.dep
 
 .PHONY: dep
@@ -163,11 +164,12 @@ endif
 
 # redis-server
 CXX=g++
+CXX=clang++
 # CC=g++
-CXXFLAGS=-m32 -g -rdynamic -ggdb -I../deps/v8/src -I../deps/lua/src
+CXXFLAGS=-m32 -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	g++ -m32 -g -rdynamic -ggdb -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
-	g++ -m32 -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/ia32.release/libv8_base.ia32.a ../deps/v8/out/ia32.release/libv8_snapshot.a $(FINAL_LIBS) -lpthread
+	clang++ -m32 -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
+	clang++ -m32 -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/ia32.release/libv8_base.ia32.a ../deps/v8/out/ia32.release/libv8_snapshot.a $(FINAL_LIBS) -lpthread
 
 # redis-sentinel
 $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)

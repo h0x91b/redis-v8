@@ -1996,8 +1996,6 @@ void pingCommand(redisClient *c) {
     addReply(c,shared.pong);
 }
 
-pingCommandPtr = &pingCommand;
-
 void echoCommand(redisClient *c) {
     addReplyBulk(c,c->argv[1]);
 }

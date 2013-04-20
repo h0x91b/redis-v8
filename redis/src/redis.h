@@ -1465,4 +1465,28 @@ extern void funccpp(int i, char c, float x);
 #define redisDebugMark() \
     printf("-- MARK %s:%d --\n", __FILE__, __LINE__)
 
+
+/*V8 section*/
+
+void passPointerTolookupCommandByCString(struct redisCommand* (*functionPtr)(char*));
+void passPointerToRedisLogRaw(void (*functionPtr)(int,const char*));
+void passPointerToCreateClient(redisClient* (*functionPtr)(int));
+void passPointerTocall(void (*functionPtr)(redisClient*,int));
+void passPointerTocreateStringObject(robj* (*functionPtr)(char*,size_t));
+void passPointerTosdsempty(sds (*functionPtr)());
+void passPointerTosdscatlen(sds (*functionPtr)(sds, const void *,size_t));
+void passPointerTosdslen(size_t (*functionPtr)(const sds));
+void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*));
+void passPointerTodecrRefCount(void (*functionPtr)(robj*));
+void passPointerTosdsfree(void (*functionPtr)(sds));
+void passPointerTozmalloc(void* (*functionPtr)(size_t));
+void passPointerTozfree(void (*functionPtr)(void*));
+void passPointerToredisLog(void (*functionPtr)(int,const char*,...));
+void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *));
+void passPointerTosdsnew(sds (*functionPtr)(const char*));
+void passPointerTocreateObject(robj* (*functionPtr)(int,void*));
+void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t));
+void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*));
+void v8_exec(redisClient *c,char* code);
+
 #endif
