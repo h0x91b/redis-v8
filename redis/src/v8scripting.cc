@@ -3,8 +3,6 @@
 #include "v8scripting.h"
 
 using namespace v8;
-//using namespace v8::internal;
-//using v8::internal::Runtime;
 
 v8::Persistent<v8::Context> v8_context;
 
@@ -12,11 +10,6 @@ const char* ToCString(const v8::String::Utf8Value& value);
 v8::Handle<v8::Value> parse_response();
 char *js_dir;
 
-//void (*pingCommandPtr)(redisClient *c);
-//void (*pingCommandPtr)(redisClient);
-//extern void pingCommand(redisClient *c);
-//void redisLogRaw(int level, const char *msg) {
-//extern void redisLogRaw(int level, const char *msg);
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
 //redisClient *createClient(int fd) {
@@ -56,155 +49,6 @@ void (*addReplyStringPtr)(redisClient*,char *,size_t);
 void (*addReplyBulkPtr)(redisClient*,robj*);
 
 redisClient *client=NULL;
-
-
-
-// 
-// int luaRedisGenericCommand(lua_State *lua, int raise_error) {
-//	 int j, argc = lua_gettop(lua);
-//	 struct redisCommand *cmd;
-//	 robj **argv;
-//	 redisClient *c = server.lua_client;
-//	 sds reply;
-// 
-//	 /* Require at least one argument */
-//	 if (argc == 0) {
-//		 luaPushError(lua,
-//			 "Please specify at least one argument for redis.call()");
-//		 return 1;
-//	 }
-// 
-//	 /* Build the arguments vector */
-//	 argv = zmalloc(sizeof(robj*)*argc);
-//	 for (j = 0; j < argc; j++) {
-//		 if (!lua_isstring(lua,j+1)) break;
-//		 argv[j] = createStringObject((char*)lua_tostring(lua,j+1),
-//									  lua_strlen(lua,j+1));
-//	 }
-//	 
-//	 /* Check if one of the arguments passed by the Lua script
-//	  * is not a string or an integer (lua_isstring() return true for
-//	  * integers as well). */
-//	 if (j != argc) {
-//		 j--;
-//		 while (j >= 0) {
-//			 decrRefCount(argv[j]);
-//			 j--;
-//		 }
-//		 zfree(argv);
-//		 luaPushError(lua,
-//			 "Lua redis() command arguments must be strings or integers");
-//		 return 1;
-//	 }
-// 
-//	 /* Setup our fake client for command execution */
-//	 c->argv = argv;
-//	 c->argc = argc;
-// 
-//	 /* Command lookup */
-//	 cmd = lookupCommand(argv[0]->ptr);
-//	 if (!cmd || ((cmd->arity > 0 && cmd->arity != argc) ||
-//					(argc < -cmd->arity)))
-//	 {
-//		 if (cmd)
-//			 luaPushError(lua,
-//				 "Wrong number of args calling Redis command From Lua script");
-//		 else
-//			 luaPushError(lua,"Unknown Redis command called from Lua script");
-//		 goto cleanup;
-//	 }
-// 
-//	 /* There are commands that are not allowed inside scripts. */
-//	 if (cmd->flags & REDIS_CMD_NOSCRIPT) {
-//		 luaPushError(lua, "This Redis command is not allowed from scripts");
-//		 goto cleanup;
-//	 }
-// 
-//	 /* Write commands are forbidden against read-only slaves, or if a
-//	  * command marked as non-deterministic was already called in the context
-//	  * of this script. */
-//	 if (cmd->flags & REDIS_CMD_WRITE) {
-//		 if (server.lua_random_dirty) {
-//			 luaPushError(lua,
-//				 "Write commands not allowed after non deterministic commands");
-//			 goto cleanup;
-//		 } else if (server.masterhost && server.repl_slave_ro &&
-//					!(server.lua_caller->flags & REDIS_MASTER))
-//		 {
-//			 luaPushError(lua, shared.roslaveerr->ptr);
-//			 goto cleanup;
-//		 } else if (server.stop_writes_on_bgsave_err &&
-//					server.saveparamslen > 0 &&
-//					server.lastbgsave_status == REDIS_ERR)
-//		 {
-//			 luaPushError(lua, shared.bgsaveerr->ptr);
-//			 goto cleanup;
-//		 }
-//	 }
-// 
-//	 /* If we reached the memory limit configured via maxmemory, commands that
-//	  * could enlarge the memory usage are not allowed, but only if this is the
-//	  * first write in the context of this script, otherwise we can't stop
-//	  * in the middle. */
-//	 if (server.maxmemory && server.lua_write_dirty == 0 &&
-//		 (cmd->flags & REDIS_CMD_DENYOOM))
-//	 {
-//		 if (freeMemoryIfNeeded() == REDIS_ERR) {
-//			 luaPushError(lua, shared.oomerr->ptr);
-//			 goto cleanup;
-//		 }
-//	 }
-// 
-//	 if (cmd->flags & REDIS_CMD_RANDOM) server.lua_random_dirty = 1;
-//	 if (cmd->flags & REDIS_CMD_WRITE) server.lua_write_dirty = 1;
-// 
-//	 /* Run the command */
-//	 c->cmd = cmd;
-//	 call(c,REDIS_CALL_SLOWLOG | REDIS_CALL_STATS);
-// 
-//	 /* Convert the result of the Redis command into a suitable Lua type.
-//	  * The first thing we need is to create a single string from the client
-//	  * output buffers. */
-//	 reply = sdsempty();
-//	 if (c->bufpos) {
-//		 reply = sdscatlen(reply,c->buf,c->bufpos);
-//		 c->bufpos = 0;
-//	 }
-//	 while(listLength(c->reply)) {
-//		 robj *o = listNodeValue(listFirst(c->reply));
-// 
-//		 reply = sdscatlen(reply,o->ptr,sdslen(o->ptr));
-//		 listDelNode(c->reply,listFirst(c->reply));
-//	 }
-//	 if (raise_error && reply[0] != '-') raise_error = 0;
-//	 redisProtocolToLuaType(lua,reply);
-//	 /* Sort the output array if needed, assuming it is a non-null multi bulk
-//	  * reply as expected. */
-//	 if ((cmd->flags & REDIS_CMD_SORT_FOR_SCRIPT) &&
-//		 (reply[0] == '*' && reply[1] != '-')) {
-//			 luaSortArray(lua);
-//	 }
-//	 sdsfree(reply);
-//	 c->reply_bytes = 0;
-// 
-// cleanup:
-//	 /* Clean up. Command code may have changed argv/argc so we use the
-//	  * argv/argc of the client instead of the local variables. */
-//	 for (j = 0; j < c->argc; j++)
-//		 decrRefCount(c->argv[j]);
-//	 zfree(c->argv);
-// 
-//	 if (raise_error) {
-//		 /* If we are here we should have an error in the stack, in the
-//		  * form of a table with an "err" field. Extract the string to
-//		  * return the plain error. */
-//		 lua_pushstring(lua,"err");
-//		 lua_gettable(lua,-2);
-//		 return lua_error(lua);
-//	 }
-//	 return 1;
-// }
-//
 
 char *redisReply = NULL;
 char bufForString[4096] = {0};
@@ -492,57 +336,6 @@ char* run_js(char *code){
 	return rez;
 }
 
-void hello_world(){
-	printf("Hello world v8\n");
-	
-	/*
-	static const char v8Flags [ ] = "--expose-gc";
-	V8::SetFlagsFromString (v8Flags, sizeof (v8Flags) - 1);
-	*/
-	v8::V8::SetFlagsFromString(
-		"--trace_opt --trace_deopt --allow_natives_syntax",
-		strlen(
-		"--trace_opt --trace_deopt --allow_natives_syntax"
-		)
-	);
-	i::FLAG_allow_natives_syntax = true;
-	
-	// Create a stack-allocated handle scope.
-	v8::HandleScope handle_scope;
-	
-	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
-	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
-	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
-	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
-	
-	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
-	global->Set(v8::String::New("redis"), redis);
-	
-	// Create a new context.
-	v8::Persistent<v8::Context> context = v8::Context::New(NULL,global);
-	
-	// Enter the created context for compiling and
-	// running the hello world script. 
-	v8::Context::Scope context_scope(context);
-	
-	// Create a string containing the JavaScript source code.
-	char* core = file_get_contents("../../core.js");
-	v8::Handle<v8::String> source = v8::String::New(core);
-	
-	// Compile the source code.
-	v8::Handle<v8::Script> script = v8::Script::Compile(source);
-	
-	// Run the script to get the result.
-	v8::Handle<v8::Value> result = script->Run();
-	
-	// Dispose the persistent context.
-	//context.Dispose();
-	
-	// Convert the result to an ASCII string and print it.
-	v8::String::AsciiValue ascii(result);
-	printf("%s\n", *ascii);
-}
-
 extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
@@ -566,26 +359,20 @@ extern "C"
 		client = redisCreateClientPtr(-1);
 		client->flags |= REDIS_LUA_CLIENT;
 		
-		//hello_world();
 		initV8();
 		// run_corejs_test();
 		// run_corejs_test();
 		// run_corejs_test();
-		printf("config js_dir %s\n",js_dir);
 		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 	}
 	
-	//void (*redisLogRawPtr)(int,const char);
-	void passPointerToRedisLogRaw(void (*functionPtr)(int, char*))
-	{
+	void passPointerToRedisLogRaw(void (*functionPtr)(int, char*)){
 		printf("passPointerToRedisLogRaw\n");
 		redisLogRawPtr = functionPtr;
 	}
 	
-	//redisClient *createClient(int fd) {
-	void passPointerToCreateClient(redisClient* (*functionPtr)(int))
-	{
+	void passPointerToCreateClient(redisClient* (*functionPtr)(int)){
 		printf("passPointerToCreateClient\n");
 		redisCreateClientPtr = functionPtr;
 	}
