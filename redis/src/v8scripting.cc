@@ -10,6 +10,7 @@ v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
 v8::Handle<v8::Value> parse_response();
+char *js_dir;
 
 //void (*pingCommandPtr)(redisClient *c);
 //void (*pingCommandPtr)(redisClient);
@@ -570,6 +571,7 @@ extern "C"
 		// run_corejs_test();
 		// run_corejs_test();
 		// run_corejs_test();
+		printf("config js_dir %s\n",js_dir);
 		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 	}
@@ -672,5 +674,8 @@ extern "C"
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
 		printf("passPointerToaddReplyBulkLen\n");
 		addReplyBulkPtr = functionPtr;
+	}
+	
+	void config_js_dir(char *js_dir){
 	}
 }

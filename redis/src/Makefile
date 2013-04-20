@@ -168,9 +168,9 @@ endif
 CXX=g++
 CXX=clang++
 # CC=g++
-CXXFLAGS= -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
+CXXFLAGS= -g -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	clang++  -g -rdynamic -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
+	clang++  -g -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
 	clang++  -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(V8_LIBS_LOCATION) $(FINAL_LIBS) -lpthread
 
 # redis-sentinel
