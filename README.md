@@ -16,5 +16,3 @@ Now you can make a redis
 <code>cd redis/</code>
 
 <code>make V=1 32bit</code>
-
-<code>make V=1 32bit #yeah twice, have some problem in makefile...</code>
