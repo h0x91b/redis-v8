@@ -453,7 +453,12 @@ void run_corejs_test(){
 char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
-	v8::Handle<v8::String> source = v8::String::New(code);
+	int code_length = strlen(code);
+	char *wrapcodebuf = (char*)malloc(code_length+93);
+	memset(wrapcodebuf,0,code_length);
+	sprintf(wrapcodebuf,"(function(){ return JSON.stringify({ret:(function(){%s})(),last_error:redis.last_error}) })();",code);
+	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
+	free(wrapcodebuf);
 	v8::TryCatch trycatch;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	if(script.IsEmpty()){
@@ -467,7 +472,6 @@ char* run_js(char *code){
 		return errBuf;
 	}
 	v8::Handle<v8::Value> result = script->Run();
-	printf("script->Run()\n");
 	if (result.IsEmpty()) {  
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
@@ -531,7 +535,7 @@ void hello_world(){
 	v8::Handle<v8::Value> result = script->Run();
 	
 	// Dispose the persistent context.
-	context.Dispose();
+	//context.Dispose();
 	
 	// Convert the result to an ASCII string and print it.
 	v8::String::AsciiValue ascii(result);
@@ -563,9 +567,9 @@ extern "C"
 		
 		//hello_world();
 		initV8();
-		run_corejs_test();
-		run_corejs_test();
-		run_corejs_test();
+		// run_corejs_test();
+		// run_corejs_test();
+		// run_corejs_test();
 		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 	}
