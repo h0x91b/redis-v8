@@ -260,7 +260,7 @@ v8::Handle<v8::Value> parse_bulk(char *replyPtr){
 
 v8::Handle<v8::Value> parse_response(){
 	char *replyPtr = redisReply;
-	printf("replyPtr[0]='%c' reply='%s'\n",replyPtr[0],replyPtr);
+	//printf("replyPtr[0]='%c' reply='%s'\n",replyPtr[0],replyPtr);
 	switch(replyPtr[0]){
 		case '+':
 			return v8::Boolean::New(true);
@@ -563,9 +563,9 @@ extern "C"
 		
 		//hello_world();
 		initV8();
-		//run_corejs_test();
-		//run_corejs_test();
-		//run_corejs_test();
+		run_corejs_test();
+		run_corejs_test();
+		run_corejs_test();
 		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 	}
