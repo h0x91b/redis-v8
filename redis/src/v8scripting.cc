@@ -72,13 +72,13 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		redisReply = replyPtr;
 		return ret;
 	}
-	char *buff= (char*)malloc(strlength+1);
+	char *buff= (char*)zmallocPtr(strlength+1);
 	strncpy(buff,replyPtr,strlength);
 	replyPtr+=strlength+2;
 	buff[strlength]='\0';
 	//printf("line is '%s'\n",buff);
 	v8::Local<v8::String> ret = v8::String::New(buff);
-	free(buff);
+	zfreePtr(buff);
 	redisReply = replyPtr;
 	return ret;
 }
@@ -191,7 +191,7 @@ char *file_get_contents(char *filename)
 	FILE* f = fopen(filename, "r");
 	fseek(f, 0, SEEK_END);
 	size_t size = ftell(f);
-	char* content = (char*)malloc(size+1);
+	char* content = (char*)zmallocPtr(size+1);
 	memset(content,0,size);
 	rewind(f);
 	fread(content, sizeof(char), size, f);
@@ -263,7 +263,7 @@ void initV8(){
 	// Create a string containing the JavaScript source code.
 	char* core = file_get_contents("../../core.js");
 	v8::Handle<v8::String> source = v8::String::New(core);
-	free(core);
+	zfreePtr(core);
 	
 	// Compile the source code.
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
@@ -279,7 +279,7 @@ void run_corejs_test(){
 	v8::Handle<v8::String> source = v8::String::New(core);
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	v8::Handle<v8::Value> result = script->Run();
-	free(core);
+	zfreePtr(core);
 }
 
 char* run_js(char *code){
@@ -287,18 +287,18 @@ char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
-	char *wrapcodebuf = (char*)malloc(code_length+170);
+	char *wrapcodebuf = (char*)zmallocPtr(code_length+170);
 	memset(wrapcodebuf,0,code_length);
 	sprintf(wrapcodebuf,"(function(){ return redis.inline_return(function(){%s}) })();",code);
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
-	free(wrapcodebuf);
+	zfreePtr(wrapcodebuf);
 	v8::TryCatch trycatch;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	if(script.IsEmpty()){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("V8 Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
@@ -309,14 +309,14 @@ char* run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		return errBuf;
 	}
 	v8::String::Utf8Value ascii(result);
 	int size = strlen(*ascii);
-	char *rez= (char*)malloc(size);
+	char *rez= (char*)zmallocPtr(size);
 	memset(rez,0,size);
 	strcpy(rez,*ascii);
 	return rez;
@@ -333,7 +333,7 @@ void load_user_script(char *file){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("V8 Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
@@ -344,12 +344,12 @@ void load_user_script(char *file){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		return;
 	}
-	free(core);
+	zfreePtr(core);
 }
 
 void load_user_scripts_from_folder(char *folder){
@@ -388,7 +388,7 @@ extern "C"
 		char *json = run_js(code);
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
-		free(json);
+		zfreePtr(json);
 		decrRefCountPtr(obj);
 	}
 	void v8_reload(redisClient *c){
@@ -409,7 +409,7 @@ extern "C"
 		initV8();
 		
 		if(js_dir==NULL){
-			js_dir = (char*)malloc(1024);
+			js_dir = (char*)zmallocPtr(1024);
 			strcpy(js_dir,"./js/");
 		}
 
@@ -521,12 +521,14 @@ extern "C"
 	
 	void config_js_dir(char *_js_dir){
 		printf("config_js_dir %s\n",_js_dir);
+		if(js_dir) free(js_dir);
 		js_dir = (char*)malloc(1024);
 		strcpy(js_dir,_js_dir);
 	}
 	
 	void config_js_flags(char *_js_flags){
 		printf("config_js_flags %s\n",_js_flags);
+		if(js_flags) free(js_flags);
 		js_flags = (char*)malloc(1024);
 		strcpy(js_flags,_js_flags);
 	}
