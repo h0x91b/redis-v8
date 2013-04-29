@@ -322,7 +322,7 @@ char* run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("V8 Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096);
+		char *errBuf = (char*)malloc(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
@@ -333,14 +333,14 @@ char* run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)malloc(4096);
+		char *errBuf = (char*)malloc(4096); //TODO: calc size
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		return errBuf;
 	}
 	
-	v8::String::AsciiValue ascii(result);
-	//printf("run_js '%s'\n", *ascii);
+	v8::String::Utf8Value ascii(result);
+	//printf("run_js (%s) return '%s'\n", code,*ascii);
 	int size = strlen(*ascii);
 	char *rez= (char*)malloc(size);
 	memset(rez,0,size);
@@ -351,7 +351,7 @@ char* run_js(char *code){
 extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
-		printf("v8_exec %s\n",code);
+		//printf("v8_exec %s\n",code);
 		char *json = run_js(code);
 		//addReplyStringPtr(c,json,strlen(json));
 		//void addReplyBulkLen(redisClient *c, robj *obj)

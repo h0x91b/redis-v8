@@ -117,6 +117,10 @@ redis.ping = function(){
 	return this.run('PING');
 }
 
+redis.incr = function(key){
+	return this.run('INCR',key);
+}
+
 
 /* Log levels
 #define REDIS_DEBUG 0
@@ -132,23 +136,20 @@ console = {
 	},
 	debug: function(){
 		for(var i=0; i<arguments.length; i++)
-			redis.__log(0,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+			redis.__log(0,'console.debug argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	},
 	info: function(){
 		for(var i=0; i<arguments.length; i++)
-			redis.__log(1,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+			redis.__log(1,'console.info argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	},
 	log: function(){
 		for(var i=0; i<arguments.length; i++)
-			redis.__log(2,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+			redis.__log(2,'console.log argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	},
 	warn: function(){
 		for(var i=0; i<arguments.length; i++)
-			redis.__log(3,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+			redis.__log(3,'console.warn argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	}
 };
 
-console.log('test console.log',13,{hello:5},undefined,null,false);
-console.debug('test console.debug',13,{hello:5},undefined,null,false);
-console.info('test console.info',13,{hello:5},undefined,null,false);
-console.warn('test console.warn',13,{hello:5},undefined,null,false);
+redis.hmset('HSET:V8:UNICODE',{title:'Русский тайтл'})
