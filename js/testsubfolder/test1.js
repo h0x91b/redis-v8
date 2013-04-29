@@ -1,0 +1,1 @@
+console.log('HELLO USER SCRIPT FROM SUB FOLDER')

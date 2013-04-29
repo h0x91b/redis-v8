@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <v8.h>
+#include <dirent.h>
+#include <errno.h>
 #include "v8scripting.h"
 
 using namespace v8;
@@ -117,6 +119,8 @@ v8::Handle<v8::Value> parse_response(){
 			return parse_string(++replyPtr);
 		case '*':
 			return parse_bulk(++replyPtr);
+		default:
+			printf("cant parse reply %s\n",replyPtr);
 	}
 	return v8::Undefined();
 }
@@ -167,13 +171,10 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		printf("no cmd '%s'!!!\n",(char*)argv[0]->ptr);
 		return v8::Undefined();
 	}
-	
 	/* Run the command */
 	c->cmd = cmd;
 	callPtr(c,REDIS_CALL_SLOWLOG | REDIS_CALL_STATS);
-	
 	reply = sdsemptyPtr();
-		
 	if (c->bufpos) {
 		reply = sdscatlenPtr(reply,c->buf,c->bufpos);
 		c->bufpos = 0;
@@ -181,8 +182,7 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	
 	while(listLength(c->reply)) {
 		robj *o = (robj*)listNodeValue(listFirst(c->reply));
-
-		reply = sdscatlenPtr(reply,o->ptr,sdslenPtr((const sds)o->ptr));
+		reply = sdscatlenPtr(reply,o->ptr,strlen((const char*)o->ptr));
 		listDelNodePtr(c->reply,listFirst(c->reply));
 	}
 	
@@ -308,6 +308,7 @@ void run_corejs_test(){
 }
 
 char* run_js(char *code){
+	int step = 0;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
@@ -338,14 +339,73 @@ char* run_js(char *code){
 		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		return errBuf;
 	}
-	
 	v8::String::Utf8Value ascii(result);
-	//printf("run_js (%s) return '%s'\n", code,*ascii);
 	int size = strlen(*ascii);
 	char *rez= (char*)malloc(size);
 	memset(rez,0,size);
 	strcpy(rez,*ascii);
 	return rez;
+}
+
+void load_user_script(char *file){
+	v8::HandleScope handle_scope;
+	v8::Context::Scope context_scope(v8_context);
+	char* core = file_get_contents(file);
+	v8::Handle<v8::String> source = v8::String::New(core);
+	v8::TryCatch trycatch;
+	v8::Handle<v8::Script> script = v8::Script::Compile(source);
+	if(script.IsEmpty()){
+		Handle<Value> exception = trycatch.Exception();
+		String::AsciiValue exception_str(exception);
+		printf("V8 Exception: %s\n", *exception_str);
+		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		memset(errBuf,0,4096);
+		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
+		printf("errBuf is '%s'\n",errBuf);
+		return;
+	}
+	v8::Handle<v8::Value> result = script->Run();
+	if (result.IsEmpty()) {  
+		Handle<Value> exception = trycatch.Exception();
+		String::AsciiValue exception_str(exception);
+		printf("Exception: %s\n", *exception_str);
+		char *errBuf = (char*)malloc(4096); //TODO: calc size
+		memset(errBuf,0,4096);
+		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+		return;
+	}
+	free(core);
+	v8::String::AsciiValue ascii(result);
+	printf("%s\n", *ascii);
+}
+
+void load_user_scripts_from_folder(char *folder){
+	DIR *dp;
+	struct dirent *dirp;
+	unsigned char isFolder =0x4;
+	int len = 0;
+	if((dp  = opendir(folder)) != NULL) {
+		while ((dirp = readdir(dp)) != NULL) {
+			//files.push_back(string(dirp->d_name));
+			if(strcmp(".", dirp->d_name) && strcmp("..", dirp->d_name)){
+				len = strlen (dirp->d_name);
+				if(dirp->d_type == isFolder){
+					char subfolder[1024] = {0};
+					sprintf(subfolder,"%s%s/",folder,dirp->d_name);
+					load_user_scripts_from_folder(subfolder);
+				}
+				else if(strcmp (".js", &(dirp->d_name[len - 3])) == 0){
+					char file[1024] = {0};
+					sprintf(file,"%s%s",folder,dirp->d_name);
+					redisLogRawPtr(REDIS_NOTICE,file);
+					load_user_script(file);
+				}
+			}
+		}
+		closedir(dp);
+	} else {
+		redisLogRawPtr(REDIS_NOTICE,"js-dir from config - not found\n");
+	}
 }
 
 extern "C"
@@ -363,10 +423,6 @@ extern "C"
 	}
 	void funccpp(int i, char c, float x)
 	{
-		int r=0;
-		int q = r+i;
-		printf("\n\n\n hello!!!!!!!!\n\n");
-		
 		redisLogRawPtr(REDIS_NOTICE,"Making redisClient\n");
 		client = redisCreateClientPtr(-1);
 		client->flags |= REDIS_LUA_CLIENT;
@@ -383,6 +439,9 @@ extern "C"
 		// run_corejs_test();
 		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
+		load_user_scripts_from_folder(js_dir);
+		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
+		
 	}
 	
 	void passPointerToRedisLogRaw(void (*functionPtr)(int, char*)){
