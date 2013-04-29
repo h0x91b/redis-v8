@@ -8,7 +8,7 @@ v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
 v8::Handle<v8::Value> parse_response();
-char *js_dir;
+char *js_dir = NULL;
 
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
@@ -372,6 +372,12 @@ extern "C"
 		client->flags |= REDIS_LUA_CLIENT;
 		
 		initV8();
+		
+		if(js_dir==NULL){
+			js_dir = (char*)malloc(1024);
+			strcpy(js_dir,"./js/");
+		}
+
 		// run_corejs_test();
 		// run_corejs_test();
 		// run_corejs_test();
@@ -475,6 +481,9 @@ extern "C"
 		addReplyBulkPtr = functionPtr;
 	}
 	
-	void config_js_dir(char *js_dir){
+	void config_js_dir(char *_js_dir){
+		printf("config_js_dir %s\n",_js_dir);
+		js_dir = (char*)malloc(1024);
+		strcpy(js_dir,_js_dir);
 	}
 }

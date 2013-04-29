@@ -447,6 +447,8 @@ void loadServerConfigFromString(char *config) {
                 err = sentinelHandleConfiguration(argv+1,argc-1);
                 if (err) goto loaderr;
             }
+		} else if (!strcasecmp(argv[0],"js-dir") && argc == 2) {
+			config_js_dir(argv[1]);
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }
