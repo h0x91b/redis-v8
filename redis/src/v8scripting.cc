@@ -60,6 +60,11 @@ char lastError[4096] = {0};
 v8::Handle<v8::Value> parse_string(char *replyPtr){
 	//printf("parse_line_ok replyPtr[0]='%c' string length:%i\n",replyPtr[0],atoi(replyPtr));
 	int strlength = atoi(replyPtr);
+	bool special_minus_one = false;
+	if(strlength==-1){
+		strlength = 0;
+		special_minus_one = true;
+	}
 	int len = strstr(replyPtr,"\r\n")-replyPtr;
 	replyPtr+=len+2;
 	if(strlength<4096){
@@ -70,6 +75,7 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		//printf("line is '%s'\n",buff);
 		v8::Local<v8::String> ret = v8::String::New(bufForString);
 		redisReply = replyPtr;
+		if(special_minus_one) return v8::Null();
 		return ret;
 	}
 	char *buff= (char*)zmallocPtr(strlength+1);
@@ -80,6 +86,7 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 	v8::Local<v8::String> ret = v8::String::New(buff);
 	zfreePtr(buff);
 	redisReply = replyPtr;
+	if(special_minus_one) return v8::Null();
 	return ret;
 }
 
