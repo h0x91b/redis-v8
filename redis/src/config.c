@@ -455,6 +455,8 @@ void loadServerConfigFromString(char *config) {
             }
 		} else if (!strcasecmp(argv[0],"js-dir") && argc == 2) {
 			config_js_dir(argv[1]);
+        } else if (!strcasecmp(argv[0],"js-flags") && argc == 2) {
+			config_js_flags(argv[1]);
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }

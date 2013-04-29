@@ -11,6 +11,7 @@ v8::Persistent<v8::Context> v8_context;
 const char* ToCString(const v8::String::Utf8Value& value);
 v8::Handle<v8::Value> parse_response();
 char *js_dir = NULL;
+char *js_flags = NULL;
 
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
@@ -249,13 +250,12 @@ v8::Handle<v8::Value> test(const v8::Arguments& args) {
 }
 
 void initV8(){
-	v8::V8::SetFlagsFromString(
-		"--trace_inlining --trace_opt --trace_deopt",
-		strlen(
-		"--trace_inlining --trace_opt --trace_deopt"
-		)
-	);
-	i::FLAG_allow_natives_syntax = true;
+	if(js_flags){
+		v8::V8::SetFlagsFromString(
+			js_flags,
+			strlen(js_flags)
+		);
+	}
 	
 	v8::HandleScope handle_scope;
 	
@@ -544,5 +544,11 @@ extern "C"
 		printf("config_js_dir %s\n",_js_dir);
 		js_dir = (char*)malloc(1024);
 		strcpy(js_dir,_js_dir);
+	}
+	
+	void config_js_flags(char *_js_flags){
+		printf("config_js_flags %s\n",_js_flags);
+		js_flags = (char*)malloc(1024);
+		strcpy(js_flags,_js_flags);
 	}
 }
