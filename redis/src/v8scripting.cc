@@ -218,6 +218,17 @@ const char* ToCString(const v8::String::Utf8Value& value) {
 	return *value ? *value : "<string conversion failed>";
 }
 
+v8::Handle<v8::Value> redis_log(const v8::Arguments& args) {
+	if(args.Length()>=2){
+		Local<Integer> i = Local<Integer>::Cast(args[0]);
+		int log_level = (int)(i->Int32Value());
+		v8::String::Utf8Value str(args[1]);
+		const char* cstr = ToCString(str);
+		redisLogRawPtr(log_level,(char *)cstr);
+	}
+	return v8::Undefined();
+}
+
 v8::Handle<v8::Value> test(const v8::Arguments& args) {
 	bool first = true;
 	printf("c++ test function()\n");
@@ -239,9 +250,9 @@ v8::Handle<v8::Value> test(const v8::Arguments& args) {
 
 void initV8(){
 	v8::V8::SetFlagsFromString(
-		"--trace_opt --trace_deopt --allow_natives_syntax",
+		"--trace_inlining --trace_opt --trace_deopt",
 		strlen(
-		"--trace_opt --trace_deopt --allow_natives_syntax"
+		"--trace_inlining --trace_opt --trace_deopt"
 		)
 	);
 	i::FLAG_allow_natives_syntax = true;
@@ -250,11 +261,12 @@ void initV8(){
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
-	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
+	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test), ReadOnly);
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
+	redis->Set(v8::String::New("__log"), v8::FunctionTemplate::New(redis_log));
 	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError));
 	
-	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test));
+	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test), ReadOnly);
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.
@@ -299,9 +311,9 @@ char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
-	char *wrapcodebuf = (char*)malloc(code_length+93);
+	char *wrapcodebuf = (char*)malloc(code_length+170);
 	memset(wrapcodebuf,0,code_length);
-	sprintf(wrapcodebuf,"(function(){ return JSON.stringify({ret:(function(){%s})(),last_error:redis.last_error}) })();",code);
+	sprintf(wrapcodebuf,"(function(){ return redis.inline_return(function(){%s}) })();",code);
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
 	free(wrapcodebuf);
 	v8::TryCatch trycatch;
@@ -355,7 +367,7 @@ extern "C"
 		int q = r+i;
 		printf("\n\n\n hello!!!!!!!!\n\n");
 		
-		redisLogRawPtr(100,"Making redisClient\n");
+		redisLogRawPtr(REDIS_NOTICE,"Making redisClient\n");
 		client = redisCreateClientPtr(-1);
 		client->flags |= REDIS_LUA_CLIENT;
 		

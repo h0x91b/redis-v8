@@ -72,6 +72,13 @@ redis.run = function(){
 	return redis.str;
 }
 
+redis.inline_return = function(exec_func){
+	var ret = exec_func();
+	if(ret === undefined) ret = null;
+	var ret_obj = {ret:ret,last_error:redis.last_error}; 
+	return JSON.stringify(ret_obj);
+}
+
 redis.hmset = function(key, obj){
 	var f = ['HMSET',key];
 	for(var k in obj){
@@ -109,8 +116,39 @@ redis.setex = function(key,expire,value){
 redis.ping = function(){
 	return this.run('PING');
 }
-//redis.run();
 
-//%OptimizeFunctionOnNextCall(redis.ok_return);
 
-//optimize(redis.ok_return);
+/* Log levels
+#define REDIS_DEBUG 0
+#define REDIS_VERBOSE 1
+#define REDIS_NOTICE 2
+#define REDIS_WARNING 3
+*/
+console = {
+	pretifyJSON: function(obj){
+		if(typeof obj == 'string') return obj;
+		if(typeof obj == 'number') return obj;
+		return JSON.stringify(obj,null,'\t');
+	},
+	debug: function(){
+		for(var i=0; i<arguments.length; i++)
+			redis.__log(0,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+	},
+	info: function(){
+		for(var i=0; i<arguments.length; i++)
+			redis.__log(1,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+	},
+	log: function(){
+		for(var i=0; i<arguments.length; i++)
+			redis.__log(2,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+	},
+	warn: function(){
+		for(var i=0; i<arguments.length; i++)
+			redis.__log(3,'argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
+	}
+};
+
+console.log('test console.log',13,{hello:5},undefined,null,false);
+console.debug('test console.debug',13,{hello:5},undefined,null,false);
+console.info('test console.info',13,{hello:5},undefined,null,false);
+console.warn('test console.warn',13,{hello:5},undefined,null,false);
