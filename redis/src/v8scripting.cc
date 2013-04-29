@@ -388,7 +388,7 @@ void load_user_scripts_from_folder(char *folder){
 		}
 		closedir(dp);
 	} else {
-		redisLogRawPtr(REDIS_NOTICE,"js-dir from config - not found\n");
+		redisLogRawPtr(REDIS_NOTICE,"js-dir from config - not found");
 	}
 }
 
@@ -397,23 +397,19 @@ extern "C"
 	void v8_exec(redisClient *c,char* code){
 		//printf("v8_exec %s\n",code);
 		char *json = run_js(code);
-		//addReplyStringPtr(c,json,strlen(json));
-		//void addReplyBulkLen(redisClient *c, robj *obj)
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		free(json);
 		decrRefCountPtr(obj);
-		//addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8\r\n")));
 	}
 	void v8_reload(redisClient *c){
-		//v8_context.Dispose();
 		v8::Isolate* isolate = v8_context->GetIsolate();
 		v8_context.Dispose(isolate);
 		initV8();
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 		load_user_scripts_from_folder(js_dir);
 		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
-		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("-V8 Reload fail\r\n")));
+		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8 Reload complete\r\n")));
 	}
 	void funccpp(int i, char c, float x)
 	{
@@ -544,5 +540,13 @@ extern "C"
 		printf("config_js_flags %s\n",_js_flags);
 		js_flags = (char*)malloc(1024);
 		strcpy(js_flags,_js_flags);
+	}
+	
+	char *config_get_js_dir(){
+		return js_dir;
+	}
+	
+	char *config_get_js_flags(){
+		return js_flags;
 	}
 }

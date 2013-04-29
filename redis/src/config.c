@@ -803,7 +803,11 @@ void configSetCommand(redisClient *c) {
         if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
             ll <= 0) goto badfmt;
         server.cluster_node_timeout = ll;
-    } else {
+    } else if (!strcasecmp(c->argv[2]->ptr,"js-dir")) {
+		config_js_dir(o->ptr);
+	} else if (!strcasecmp(c->argv[2]->ptr,"js-flags")) {
+		config_js_flags(o->ptr);
+	} else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
         return;
@@ -1039,6 +1043,25 @@ void configGetCommand(redisClient *c) {
         decrRefCount(flagsobj);
         matches++;
     }
+
+	if (stringmatch(pattern,"js-dir",0)) {
+		char *js_dir = config_get_js_dir();
+		if(js_dir){
+			addReplyBulkCString(c,"js-dir");
+			addReplyBulkCString(c,js_dir);
+			matches++;
+		}
+    }
+
+	if (stringmatch(pattern,"js-flags",0)) {
+		char *js_flags = config_get_js_flags();
+		if(js_flags){
+			addReplyBulkCString(c,"js-flags");
+			addReplyBulkCString(c,js_flags);
+			matches++;
+		}
+    }
+
     setDeferredMultiBulkLength(c,replylen,matches*2);
 }
 

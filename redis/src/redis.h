@@ -1492,8 +1492,10 @@ void passPointerTocreateObject(robj* (*functionPtr)(int,void*));
 void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t));
 void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*));
 void v8_exec(redisClient *c,char* code);
+void v8_reload(redisClient *c);
 void config_js_dir(char *js_dir);
 void config_js_flags(char *_js_flags);
-void v8_reload(redisClient *c);
+char *config_get_js_dir();
+char *config_get_js_flags();
 
 #endif
