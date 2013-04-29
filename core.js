@@ -79,6 +79,10 @@ redis.inline_return = function(exec_func){
 	return JSON.stringify(ret_obj);
 }
 
+redis.exists = function(key){
+	return this.run('EXISTS',key);
+}
+
 redis.hmset = function(key, obj){
 	var f = ['HMSET',key];
 	for(var k in obj){
@@ -93,6 +97,8 @@ redis.hgetall = function(key){
 	redis.str = redis.__run.apply(this,['HGETALL',key]);
 	redis.bufindex = 0;
 	
+	if(redis.str.length<1) return null;
+	
 	var resp = redis.str;
 	var ret = {};
 	for(var i=0; i<resp.length; i+=2){
@@ -104,6 +110,11 @@ redis.hgetall = function(key){
 redis.get = function(key){
 	return this.run('GET',key);
 }
+
+redis.del = function(key){
+	return this.run('DEL',key);
+}
+
 
 redis.set = function(key,value){
 	return this.run('SET',key,value);
@@ -119,6 +130,22 @@ redis.ping = function(){
 
 redis.incr = function(key){
 	return this.run('INCR',key);
+}
+
+redis.zadd = function(key,score,value){
+	return this.run('ZADD',key,score,value);
+}
+
+redis.zrange = function(key,start,stop){
+	return this.run('ZRANGE',key,start,stop);
+}
+
+redis.zrevrange = function(key,start,stop){
+	return this.run('ZREVRANGE',key,start,stop);
+}
+
+redis.zrem = function(key,value){
+	return this.run('ZREM',key,value);
 }
 
 
