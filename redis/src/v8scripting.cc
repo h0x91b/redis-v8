@@ -132,34 +132,18 @@ v8::Handle<v8::Value> getLastError(const v8::Arguments& args) {
 
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
-	//return v8::String::New("$11\nhello\nworld\n");
-	//return v8::String::New("+OK");
 	int argc = args.Length();
 	redisCommand *cmd;
 	robj **argv;
 	redisClient *c = client;
 	sds reply;
 	
-	//argv = (robj**)malloc(sizeof(robj*)*argc);
 	argv = (robj**)zmallocPtr(sizeof(robj*)*argc);
 	
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value str(args[i]);
-		
-		/*
-		const char* cstr = ToCString(str);
-		char *arg = (char*)malloc(strlen(cstr));
-		strcpy(arg,cstr);
-		char separator = ',';
-		if(i==args.Length()-1)
-			separator = ' ';
-		argv[i] = createStringObjectPtr(arg,strlen(arg));
-		*/
 		argv[i] = createStringObjectPtr((char*)ToCString(str),strlen(ToCString(str)));
-		//		 argv[j] = createStringObject((char*)lua_tostring(lua,j+1),
-		//									  lua_strlen(lua,j+1));
-		
 	}
 	
 	/* Setup our fake client for command execution */
@@ -420,6 +404,16 @@ extern "C"
 		free(json);
 		decrRefCountPtr(obj);
 		//addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8\r\n")));
+	}
+	void v8_reload(redisClient *c){
+		//v8_context.Dispose();
+		v8::Isolate* isolate = v8_context->GetIsolate();
+		v8_context.Dispose(isolate);
+		initV8();
+		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
+		load_user_scripts_from_folder(js_dir);
+		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
+		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("-V8 Reload fail\r\n")));
 	}
 	void funccpp(int i, char c, float x)
 	{

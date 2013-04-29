@@ -1302,7 +1302,6 @@ char *redisGitDirty(void);
 uint64_t redisBuildId(void);
 
 /* Commands prototypes */
-void v8Command(redisClient *c);
 void authCommand(redisClient *c);
 void pingCommand(redisClient *c);
 void echoCommand(redisClient *c);
@@ -1469,6 +1468,9 @@ extern void funccpp(int i, char c, float x);
 
 
 /*V8 section*/
+void v8Command(redisClient *c);
+void v8Reload(redisClient *c);
+
 
 void passPointerTolookupCommandByCString(struct redisCommand* (*functionPtr)(char*));
 void passPointerToRedisLogRaw(void (*functionPtr)(int,const char*));
@@ -1492,5 +1494,6 @@ void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*));
 void v8_exec(redisClient *c,char* code);
 void config_js_dir(char *js_dir);
 void config_js_flags(char *_js_flags);
+void v8_reload(redisClient *c);
 
 #endif
