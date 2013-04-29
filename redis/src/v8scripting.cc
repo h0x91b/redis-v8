@@ -270,13 +270,6 @@ void initV8(){
 	
 	// Run the script to get the result.
 	v8::Handle<v8::Value> result = script->Run();
-	
-	// Dispose the persistent context.
-	//context.Dispose();
-	
-	// Convert the result to an ASCII string and print it.
-	v8::String::AsciiValue ascii(result);
-	printf("core.js return %s\n", *ascii);
 }
 
 void run_corejs_test(){
@@ -287,8 +280,6 @@ void run_corejs_test(){
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	v8::Handle<v8::Value> result = script->Run();
 	free(core);
-	v8::String::AsciiValue ascii(result);
-	printf("%s\n", *ascii);
 }
 
 char* run_js(char *code){
@@ -359,8 +350,6 @@ void load_user_script(char *file){
 		return;
 	}
 	free(core);
-	v8::String::AsciiValue ascii(result);
-	printf("%s\n", *ascii);
 }
 
 void load_user_scripts_from_folder(char *folder){
