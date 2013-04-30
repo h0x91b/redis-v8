@@ -14,7 +14,10 @@ char *js_dir = NULL;
 char *js_flags = NULL;
 int js_code_id = 0;
 pthread_t thread_id_for_js_interrupt;
+pthread_t thread_id_for_js_slow;
 int js_timeout = 15;
+int js_slow = 250;
+char *last_js_run = NULL;
 
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
@@ -312,6 +315,7 @@ char* run_js(char *code){
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
 		pthread_cancel(thread_id_for_js_interrupt);
+		pthread_cancel(thread_id_for_js_slow);
 		return errBuf;
 	}
 	
@@ -332,6 +336,7 @@ char* run_js(char *code){
 			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		}
 		pthread_cancel(thread_id_for_js_interrupt);
+		pthread_cancel(thread_id_for_js_slow);
 		return errBuf;
 	}
 	v8::String::Utf8Value ascii(result);
@@ -340,6 +345,7 @@ char* run_js(char *code){
 	memset(rez,0,size);
 	strcpy(rez,*ascii);
 	pthread_cancel(thread_id_for_js_interrupt);
+	pthread_cancel(thread_id_for_js_slow);
 	return rez;
 }
 
@@ -407,11 +413,22 @@ struct ThreadJSClientAndCode {
 	char *code;
 };
 
-void *thread_function_for_run_js(void *param)
+void *thread_function_for_kill_timeout_js(void *param)
 {
 	sleep(js_timeout);
-	printf("run_js running more than 3000 ms, kill it\n");
+	printf("run_js running more than %i sec, kill it\n",js_timeout);
 	v8::V8::TerminateExecution();
+	return 0;
+}
+
+void *thread_function_for_slow_run_js(void *param)
+{
+	usleep(js_slow*1000); //js_slow is ms
+	if(last_js_run!=NULL){
+		printf("run_js running more than %ims, log function\n",js_slow);
+		redisLogRawPtr(REDIS_NOTICE,(char *)"JS slow function:");
+		redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
+	}
 	return 0;
 }
 
@@ -419,8 +436,11 @@ extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
 		printf("v8_exec %s\n",code);
-		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_run_js, (void*)++js_code_id);
+		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_kill_timeout_js, (void*)++js_code_id);
+		pthread_create(&thread_id_for_js_slow, NULL, thread_function_for_slow_run_js, (void*)js_code_id);
+		last_js_run = code;
 		char *json = run_js(code);
+		last_js_run = NULL;
 		printf("thread for run_js done, now reply JSON\n");
 		//TODO if reply starts with "-" than reply - error string
 		robj *obj = createStringObjectPtr(json,strlen(json));
@@ -575,6 +595,11 @@ extern "C"
 		js_timeout = timeout;
 	}
 	
+	void config_js_slow(int slow){
+		printf("config_js_slow %i\n",slow);
+		js_slow = slow;
+	}
+	
 	char *config_get_js_dir(){
 		return js_dir;
 	}
@@ -585,5 +610,9 @@ extern "C"
 	
 	int config_get_js_timeout(){
 		return js_timeout;
+	}
+	
+	int config_get_js_slow(){
+		return js_slow;
 	}
 }

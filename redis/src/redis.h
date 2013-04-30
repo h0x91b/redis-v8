@@ -1496,8 +1496,10 @@ void v8_reload(redisClient *c);
 void config_js_dir(char *js_dir);
 void config_js_flags(char *_js_flags);
 void config_js_timeout(int _timeout);
+void config_js_slow(int slow);
 char *config_get_js_dir();
 char *config_get_js_flags();
 int config_get_js_timeout();
+int config_get_js_slow();
 
 #endif

@@ -459,6 +459,8 @@ void loadServerConfigFromString(char *config) {
 			config_js_flags(argv[1]);
         } else if (!strcasecmp(argv[0],"js-timeout") && argc == 2) {
 			config_js_timeout(atoi(argv[1]));
+        } else if (!strcasecmp(argv[0],"js-slow") && argc == 2) {
+			config_js_slow(atoi(argv[1]));
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }
@@ -811,6 +813,8 @@ void configSetCommand(redisClient *c) {
 		config_js_flags(o->ptr);
 	} else if (!strcasecmp(c->argv[2]->ptr,"js-timeout")) {
 		config_js_timeout(atoi(o->ptr));
+	} else if (!strcasecmp(c->argv[2]->ptr,"js-slow")) {
+		config_js_slow(atoi(o->ptr));
 	} else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
@@ -1072,6 +1076,15 @@ void configGetCommand(redisClient *c) {
 		sprintf(timeoutstr,"%i",timeout);
 		addReplyBulkCString(c,"js-timeout");
 		addReplyBulkCString(c,timeoutstr);
+		matches++;
+    }
+
+	if (stringmatch(pattern,"js-slow",0)) {
+		int slow = config_get_js_slow();
+		char slowstr[16]={0};
+		sprintf(slowstr,"%i",slow);
+		addReplyBulkCString(c,"js-slow");
+		addReplyBulkCString(c,slowstr);
 		matches++;
     }
 
