@@ -14,6 +14,7 @@ char *js_dir = NULL;
 char *js_flags = NULL;
 int js_code_id = 0;
 pthread_t thread_id_for_js_interrupt;
+int js_timeout = 15;
 
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
@@ -408,7 +409,7 @@ struct ThreadJSClientAndCode {
 
 void *thread_function_for_run_js(void *param)
 {
-	sleep(3);
+	sleep(js_timeout);
 	printf("run_js running more than 3000 ms, kill it\n");
 	v8::V8::TerminateExecution();
 	return 0;
@@ -421,6 +422,7 @@ extern "C"
 		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_run_js, (void*)++js_code_id);
 		char *json = run_js(code);
 		printf("thread for run_js done, now reply JSON\n");
+		//TODO if reply starts with "-" than reply - error string
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		zfreePtr(json);
@@ -568,11 +570,20 @@ extern "C"
 		strcpy(js_flags,_js_flags);
 	}
 	
+	void config_js_timeout(int timeout){
+		printf("config_js_timeout %i\n",timeout);
+		js_timeout = timeout;
+	}
+	
 	char *config_get_js_dir(){
 		return js_dir;
 	}
 	
 	char *config_get_js_flags(){
 		return js_flags;
+	}
+	
+	int config_get_js_timeout(){
+		return js_timeout;
 	}
 }

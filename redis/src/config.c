@@ -457,6 +457,8 @@ void loadServerConfigFromString(char *config) {
 			config_js_dir(argv[1]);
         } else if (!strcasecmp(argv[0],"js-flags") && argc == 2) {
 			config_js_flags(argv[1]);
+        } else if (!strcasecmp(argv[0],"js-timeout") && argc == 2) {
+			config_js_timeout(atoi(argv[1]));
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }
@@ -807,6 +809,8 @@ void configSetCommand(redisClient *c) {
 		config_js_dir(o->ptr);
 	} else if (!strcasecmp(c->argv[2]->ptr,"js-flags")) {
 		config_js_flags(o->ptr);
+	} else if (!strcasecmp(c->argv[2]->ptr,"js-timeout")) {
+		config_js_timeout(atoi(o->ptr));
 	} else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
@@ -1060,6 +1064,15 @@ void configGetCommand(redisClient *c) {
 			addReplyBulkCString(c,js_flags);
 			matches++;
 		}
+    }
+
+	if (stringmatch(pattern,"js-timeout",0)) {
+		int timeout = config_get_js_timeout();
+		char timeoutstr[16]={0};
+		sprintf(timeoutstr,"%i",timeout);
+		addReplyBulkCString(c,"js-timeout");
+		addReplyBulkCString(c,timeoutstr);
+		matches++;
     }
 
     setDeferredMultiBulkLength(c,replylen,matches*2);
