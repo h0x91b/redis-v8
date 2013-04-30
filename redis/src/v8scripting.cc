@@ -72,6 +72,7 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		special_minus_one = true;
 	}
 	int len = strstr(replyPtr,"\r\n")-replyPtr;
+	if(special_minus_one) len-=2;
 	replyPtr+=len+2;
 	if(strlength<4096){
 		memset(bufForString,0,4096);
