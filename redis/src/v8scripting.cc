@@ -417,6 +417,8 @@ void *thread_function_for_kill_timeout_js(void *param)
 {
 	sleep(js_timeout);
 	printf("run_js running more than %i sec, kill it\n",js_timeout);
+	redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
+	redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
 	v8::V8::TerminateExecution();
 	return 0;
 }
@@ -435,13 +437,12 @@ void *thread_function_for_slow_run_js(void *param)
 extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
-		printf("v8_exec %s\n",code);
+		//printf("v8_exec %s\n",code);
 		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_kill_timeout_js, (void*)++js_code_id);
 		pthread_create(&thread_id_for_js_slow, NULL, thread_function_for_slow_run_js, (void*)js_code_id);
 		last_js_run = code;
 		char *json = run_js(code);
 		last_js_run = NULL;
-		printf("thread for run_js done, now reply JSON\n");
 		//TODO if reply starts with "-" than reply - error string
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
