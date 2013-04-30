@@ -12,6 +12,8 @@ const char* ToCString(const v8::String::Utf8Value& value);
 v8::Handle<v8::Value> parse_response();
 char *js_dir = NULL;
 char *js_flags = NULL;
+int js_code_id = 0;
+pthread_t thread_id_for_js_interrupt;
 
 //void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
@@ -290,7 +292,6 @@ void run_corejs_test(){
 }
 
 char* run_js(char *code){
-	int step = 0;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
@@ -309,16 +310,27 @@ char* run_js(char *code){
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
+		pthread_cancel(thread_id_for_js_interrupt);
 		return errBuf;
 	}
+	
+	//v8::Locker::StartPreemption(100);
+	
 	v8::Handle<v8::Value> result = script->Run();
+	
 	if (result.IsEmpty()) {  
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
 		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
 		memset(errBuf,0,4096);
-		sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+		if(!strcmp(*exception_str,"null")){
+			sprintf(errBuf,"-Script runs too long, Exception error: \"%s\"",*exception_str);
+		}
+		else {
+			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+		}
+		pthread_cancel(thread_id_for_js_interrupt);
 		return errBuf;
 	}
 	v8::String::Utf8Value ascii(result);
@@ -326,6 +338,7 @@ char* run_js(char *code){
 	char *rez= (char*)zmallocPtr(size);
 	memset(rez,0,size);
 	strcpy(rez,*ascii);
+	pthread_cancel(thread_id_for_js_interrupt);
 	return rez;
 }
 
@@ -388,11 +401,26 @@ void load_user_scripts_from_folder(char *folder){
 	}
 }
 
+struct ThreadJSClientAndCode {
+	redisClient *c;
+	char *code;
+};
+
+void *thread_function_for_run_js(void *param)
+{
+	sleep(3);
+	printf("run_js running more than 3000 ms, kill it\n");
+	v8::V8::TerminateExecution();
+	return 0;
+}
+
 extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
-		//printf("v8_exec %s\n",code);
+		printf("v8_exec %s\n",code);
+		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_run_js, (void*)++js_code_id);
 		char *json = run_js(code);
+		printf("thread for run_js done, now reply JSON\n");
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		zfreePtr(json);
