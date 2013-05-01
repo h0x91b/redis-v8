@@ -203,6 +203,7 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 char *file_get_contents(char *filename)
 {
 	FILE* f = fopen(filename, "r");
+	if(!f) return NULL;
 	fseek(f, 0, SEEK_END);
 	size_t size = ftell(f);
 	char* content = (char*)zmallocPtr(size+1);
