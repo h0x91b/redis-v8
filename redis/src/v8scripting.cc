@@ -488,93 +488,93 @@ extern "C"
 	}
 	
 	void passPointerToCreateClient(redisClient* (*functionPtr)(int)){
-		printf("passPointerToCreateClient\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToCreateClient\n");
 		redisCreateClientPtr = functionPtr;
 	}
 	
 	//redisCommand *lookupCommand(sds name)
 	void passPointerTolookupCommandByCString(redisCommand* (*functionPtr)(char*)){
-		printf("passPointerTolookupCommand\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupCommand\n");
 		lookupCommandByCStringPtr = functionPtr;
 	}
 	
 	void passPointerTocall(void (*functionPtr)(redisClient*,int)){
-		printf("passPointerTocall\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocall\n");
 		callPtr = functionPtr;
 	}
 	
 	void passPointerTocreateStringObject(robj* (*functionPtr)(char*,size_t)){
-		printf("passPointerTocreateStringObject\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObject\n");
 		createStringObjectPtr = functionPtr;
 	}
 	
 	void passPointerTosdsempty(sds (*functionPtr)()){
-		printf("passPointerTosdsempty\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsempty\n");
 		sdsemptyPtr = functionPtr;
 	}
 	
 	void passPointerTosdscatlen(sds (*functionPtr)(sds, const void *,size_t)){
-		printf("passPointerTosdscatlen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdscatlen\n");
 		sdscatlenPtr = functionPtr;
 	}
 	
 	void passPointerTosdslen(size_t (*functionPtr)(const sds)){
-		printf("passPointerTosdslen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdslen\n");
 		sdslenPtr = functionPtr;
 	}
 	
 	void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*)){
-		printf("passPointerTolistDelNode\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTolistDelNode\n");
 		listDelNodePtr = functionPtr;
 	}
 	
 	void passPointerTodecrRefCount(void (*functionPtr)(robj*)){
-		printf("passPointerTodecrRefCount\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTodecrRefCount\n");
 		decrRefCountPtr = functionPtr;
 	}
 	
 	void passPointerTosdsfree(void (*functionPtr)(sds)){
-		printf("passPointerTosdsfree\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsfree\n");
 		sdsfreePtr = functionPtr;
 	}
 	
 	void passPointerTozmalloc(void* (*functionPtr)(size_t)){
-		printf("passPointerTozmalloc\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTozmalloc\n");
 		zmallocPtr = functionPtr;
 	}
 	
 	void passPointerTozfree(void (*functionPtr)(void*)){
-		printf("passPointerTozfree\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTozfree\n");
 		zfreePtr = functionPtr;
 	}
 	
 	void passPointerToredisLog(void (*functionPtr)(int,const char*,...)){
-		printf("passPointerToredisLog\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToredisLog\n");
 		redisLogPtr = functionPtr;
 	}
 	
 	void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *)){
-		printf("passPointerToaddReply\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReply\n");
 		addReplyPtr = functionPtr;
 	}
 	
 	void passPointerTosdsnew(sds (*functionPtr)(const char*)){
-		printf("passPointerTosdsnew\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsnew\n");
 		sdsnewPtr = functionPtr;
 	}
 	
 	void passPointerTocreateObject(robj* (*functionPtr)(int,void*)){
-		printf("passPointerTocreateObject\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateObject\n");
 		createObjectPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t)){
-		printf("passPointerToaddReplyString\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyString\n");
 		addReplyStringPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
-		printf("passPointerToaddReplyBulkLen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyBulkLen\n");
 		addReplyBulkPtr = functionPtr;
 	}
 	
