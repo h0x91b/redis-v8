@@ -60,22 +60,20 @@ Compiling
 
 Get redis-v8 source
 
-<code>git clone git://github.com/h0x91b/redis-v8.git</code>
+	git clone git://github.com/h0x91b/redis-v8.git
 
 You will also need a v8 =)
 
-<code>cd redis-v8/redis/deps/</code>
-
-<code>git clone git@github.com:v8/v8.git</code>
-
-<code>make dependencies</code>
+	cd redis-v8/redis/deps/
+	git clone git@github.com:v8/v8.git
+	cd v8/
+	make dependencies
 
 Now you can make a redis
 
-<code>cd redis/</code>
-
-<code>make</code>
+	cd ../../
+	make
 
 Start server
 
-<code>cd src/; ./redis-server ../redis.conf</code>
+	cd src/; ./redis-server ../redis.conf
