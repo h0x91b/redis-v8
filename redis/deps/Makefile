@@ -44,7 +44,7 @@ distclean:
 
 v8: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	$(shell cd v8 && $(MAKE) dependencies)
+	$(shell sh -c 'cd v8 && make dependencies')
 	export CC=clang
 	export CXX=clang++
 	export GYP_DEFINES="clang=1"
