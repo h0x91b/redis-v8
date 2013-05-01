@@ -187,7 +187,7 @@ redis.ping = function(){
 // SELECT index
 // SET key value [EX seconds] [PX milliseconds] [NX|XX]
 redis.set = function(key,value){
-	if(argument.length>2){
+	if(arguments.length>2){
 		var args = [];
 		args = Array(arguments.length+1);
 		args[0] = 'SET';
@@ -227,7 +227,7 @@ redis.setex = function(key,expire,value){
 // TYPE key
 // ZADD key score member [score member ...]
 redis.zadd = function(key,score,value){
-	if(argument.length>2){
+	if(arguments.length>2){
 		var args = [];
 		args = Array(arguments.length+1);
 		args[0] = 'ZADD';
@@ -251,7 +251,7 @@ redis.zrange = function(key,start,stop){
 // ZRANK key member
 // ZREM key member [member ...]
 redis.zrem = function(key,value){
-	if(argument.length>2){
+	if(arguments.length>2){
 		var args = [];
 		args = Array(arguments.length+1);
 		args[0] = 'ZREM';
