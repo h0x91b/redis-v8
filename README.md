@@ -81,18 +81,8 @@ For compiling redis-v8 you will need folowing packages:
 Get redis-v8 source
 
 	git clone git://github.com/h0x91b/redis-v8.git
-
-You will also need a v8 =)
-
-	cd redis-v8/redis/deps/
-	git clone git://github.com/v8/v8.git
-	cd v8/
-	make dependencies
-
-Now you can make a redis
-
-	cd ../../
-	make
+	cd redis-v8/redis
+	make MALLOC=jemalloc
 
 Start server
 
