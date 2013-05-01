@@ -1133,93 +1133,93 @@ extern "C"
 	}
 	
 	void passPointerToCreateClient(redisClient* (*functionPtr)(int)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToCreateClient\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToCreateClient");
 		redisCreateClientPtr = functionPtr;
 	}
 	
 	//redisCommand *lookupCommand(sds name)
 	void passPointerTolookupCommandByCString(redisCommand* (*functionPtr)(char*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupCommand\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupCommand");
 		lookupCommandByCStringPtr = functionPtr;
 	}
 	
 	void passPointerTocall(void (*functionPtr)(redisClient*,int)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocall\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocall");
 		callPtr = functionPtr;
 	}
 	
 	void passPointerTocreateStringObject(robj* (*functionPtr)(char*,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObject\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObject");
 		createStringObjectPtr = functionPtr;
 	}
 	
 	void passPointerTosdsempty(sds (*functionPtr)()){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsempty\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsempty");
 		sdsemptyPtr = functionPtr;
 	}
 	
 	void passPointerTosdscatlen(sds (*functionPtr)(sds, const void *,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdscatlen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdscatlen");
 		sdscatlenPtr = functionPtr;
 	}
 	
 	void passPointerTosdslen(size_t (*functionPtr)(const sds)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdslen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdslen");
 		sdslenPtr = functionPtr;
 	}
 	
 	void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTolistDelNode\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTolistDelNode");
 		listDelNodePtr = functionPtr;
 	}
 	
 	void passPointerTodecrRefCount(void (*functionPtr)(robj*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTodecrRefCount\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTodecrRefCount");
 		decrRefCountPtr = functionPtr;
 	}
 	
 	void passPointerTosdsfree(void (*functionPtr)(sds)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsfree\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsfree");
 		sdsfreePtr = functionPtr;
 	}
 	
 	void passPointerTozmalloc(void* (*functionPtr)(size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTozmalloc\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTozmalloc");
 		zmallocPtr = functionPtr;
 	}
 	
 	void passPointerTozfree(void (*functionPtr)(void*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTozfree\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTozfree");
 		zfreePtr = functionPtr;
 	}
 	
 	void passPointerToredisLog(void (*functionPtr)(int,const char*,...)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToredisLog\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToredisLog");
 		redisLogPtr = functionPtr;
 	}
 	
 	void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReply\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReply");
 		addReplyPtr = functionPtr;
 	}
 	
 	void passPointerTosdsnew(sds (*functionPtr)(const char*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsnew\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsnew");
 		sdsnewPtr = functionPtr;
 	}
 	
 	void passPointerTocreateObject(robj* (*functionPtr)(int,void*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateObject\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateObject");
 		createObjectPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyString\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyString");
 		addReplyStringPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyBulkLen\n");
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyBulkLen");
 		addReplyBulkPtr = functionPtr;
 	}
 	
