@@ -69,6 +69,14 @@ In redis.log you will see:
 Compiling
 =========
 
+For compiling redis-v8 you will need folowing packages:
+	
+	make
+	clang++
+	git
+	svn
+	vim-common
+
 Get redis-v8 source
 
 	git clone git://github.com/h0x91b/redis-v8.git
@@ -88,4 +96,5 @@ Now you can make a redis
 
 Start server
 
-	cd src/; ./redis-server ../redis.conf
+	cd src/
+	./redis-server ../redis.conf
