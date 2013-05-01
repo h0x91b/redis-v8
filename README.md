@@ -36,23 +36,34 @@ SET:
 
 Using
 =====
-	Run server
-		./redis-server ../redis.conf
+
+Run server
+
+	./redis-server ../redis.conf
+
+Some commands for example
 
 	./redis-cli JS "redis.hmset('HSET:TEST',{title:'hello', body: 'world'}); return redis.hgetall('HSET:TEST')"
-
 	time ./redis-cli JS "for(var i=0; i< 1000000; i++) redis.set('KV:TEST'+i,'hello world '+i);"
 
+
+Using console, run redis-cli
+	
 	./redis-cli
-		JS "console.log('hello world!',{a:123,b:{c:[]}})"
-	in redis.log you will see:
-		[60565] 01 May 13:37:11.184 * console.log argument[0] = hello world!
-		[60565] 01 May 13:37:11.186 * console.log argument[1] = {
-			"a": 123,
-			"b": {
-				"c": []
-			}
+
+And type
+
+	JS "console.log('hello world!',{a:123,b:{c:[]}})"
+	
+In redis.log you will see:
+
+	[60565] 01 May 13:37:11.184 * console.log argument[0] = hello world!
+	[60565] 01 May 13:37:11.186 * console.log argument[1] = {
+		"a": 123,
+		"b": {
+			"c": []
 		}
+	}
 
 
 Compiling
