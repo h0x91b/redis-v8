@@ -1,9 +1,9 @@
 redis-v8
 ========
 
-Experiment, Redis (2.9.9) with built in google v8 JS engine
+Redis (2.9.9) with built in google v8 JS engine
 
-Currently tested only on OSX
+Currently tested on Mac OS X and CentOS 6.3
 
 Speed
 =====
