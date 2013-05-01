@@ -64,7 +64,7 @@ Get redis-v8 source
 
 You will also need a v8 =)
 
-<code>cd redis/deps/</code>
+<code>cd redis-v8/redis/deps/</code>
 
 <code>git clone git@github.com:v8/v8.git</code>
 
