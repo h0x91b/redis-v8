@@ -12,6 +12,7 @@ source tests/support/test.tcl
 source tests/support/util.tcl
 
 set ::all_tests {
+    v8/v8
     unit/printver
     unit/dump
     unit/auth
