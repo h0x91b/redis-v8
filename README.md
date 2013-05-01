@@ -36,17 +36,33 @@ SET:
 
 Using
 =====
+	Run server
+		./redis-server ../redis.conf
 
 	./redis-cli JS "redis.hmset('HSET:TEST',{title:'hello', body: 'world'}); return redis.hgetall('HSET:TEST')"
 
 	time ./redis-cli JS "for(var i=0; i< 1000000; i++) redis.set('KV:TEST'+i,'hello world '+i);"
 
+	./redis-cli
+		JS "console.log('hello world!',{a:123,b:{c:[]}})"
+	in redis.log you will see:
+		[60565] 01 May 13:37:11.184 * console.log argument[0] = hello world!
+		[60565] 01 May 13:37:11.186 * console.log argument[1] = {
+			"a": 123,
+			"b": {
+				"c": []
+			}
+		}
 
 
 Compiling
 =========
 
-You will need v8 =)
+Get redis-v8 source
+
+<code>git clone git://github.com/h0x91b/redis-v8.git</code>
+
+You will also need a v8 =)
 
 <code>cd redis/deps/</code>
 
