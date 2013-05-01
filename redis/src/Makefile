@@ -34,6 +34,7 @@ INSTALL=install
 # Default allocator
 ifeq ($(uname_S),Linux)
 	MALLOC=jemalloc
+	V8_LIBS_LOCATION=../deps/v8/out/native/obj.target/tools/gyp/libv8_{base.x64,snapshot}.a
 else
 	MALLOC=libc
 endif
