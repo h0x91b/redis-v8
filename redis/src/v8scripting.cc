@@ -880,25 +880,6 @@ v8::Handle<v8::Value> redis_log(const v8::Arguments& args) {
 	return v8::Undefined();
 }
 
-v8::Handle<v8::Value> test(const v8::Arguments& args) {
-	bool first = true;
-	printf("c++ test function()\n");
-	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope;
-		if (first) {
-			first = false;
-		} else {
-			printf(" ");
-		}
-		v8::String::Utf8Value str(args[i]);
-		const char* cstr = ToCString(str);
-		printf("%s", cstr);
-	}
-	printf("\n");
-	fflush(stdout);
-	return v8::Undefined();
-}
-
 void initV8(){
 	if(js_flags){
 		v8::V8::SetFlagsFromString(
@@ -911,12 +892,10 @@ void initV8(){
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
-	redis->Set(v8::String::New("test"), v8::FunctionTemplate::New(test), ReadOnly);
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run));
 	redis->Set(v8::String::New("__log"), v8::FunctionTemplate::New(redis_log));
 	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError));
 	
-	global->Set(v8::String::New("test"), v8::FunctionTemplate::New(test), ReadOnly);
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.
@@ -926,19 +905,9 @@ void initV8(){
 	// running the hello world script. 
 	v8::Context::Scope context_scope(v8_context);
 	
-	v8::Handle<v8::String> source = v8::String::New((const char*)______core_js);
+	v8::Handle<v8::String> source = v8::String::New((const char*)v8core_js);
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	v8::Handle<v8::Value> result = script->Run();
-}
-
-void run_corejs_test(){
-	v8::HandleScope handle_scope;
-	v8::Context::Scope context_scope(v8_context);
-	char* core = file_get_contents("../../coretest.js");
-	v8::Handle<v8::String> source = v8::String::New(core);
-	v8::Handle<v8::Script> script = v8::Script::Compile(source);
-	v8::Handle<v8::Value> result = script->Run();
-	zfreePtr(core);
 }
 
 char* run_js(char *code){
@@ -1117,10 +1086,6 @@ extern "C"
 			strcpy(js_dir,"./js/");
 		}
 
-		// run_corejs_test();
-		// run_corejs_test();
-		// run_corejs_test();
-		
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 		load_user_scripts_from_folder(js_dir);
 		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
