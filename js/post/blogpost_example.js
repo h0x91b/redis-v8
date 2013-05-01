@@ -58,17 +58,17 @@ blogpost = {
 	}
 }
 
-redis.run('FLUSHALL');
+//redis.run('FLUSHALL');
 
-console.log('add 10000 posts');
-
-for(var i=0;i<10000;i++){
-	var post = blogpost.new('Title '+(Math.round(Math.random()*10000)),'body '+(Math.round(Math.random()*10000)));
-	for(var r=0;r<Math.round(Math.random()*100);r++){
-		blogpost.comment(post.id,'Comment Title '+(Math.round(Math.random()*10000)),'Comment body '+(Math.round(Math.random()*10000)))
-	}
-}
-
-console.log('done');
+// console.log('add 10000 posts');
+// 
+// for(var i=0;i<10000;i++){
+// 	var post = blogpost.new('Title '+(Math.round(Math.random()*10000)),'body '+(Math.round(Math.random()*10000)));
+// 	for(var r=0;r<Math.round(Math.random()*100);r++){
+// 		blogpost.comment(post.id,'Comment Title '+(Math.round(Math.random()*10000)),'Comment body '+(Math.round(Math.random()*10000)))
+// 	}
+// }
+// 
+//console.log('done');
 //now you can do 
 //time ./redis-cli js "return blogpost.getall()" #return in JSON format
