@@ -2,6 +2,8 @@
 #include <v8.h>
 #include <dirent.h>
 #include <errno.h>
+#include <pthread.h>
+#include <unistd.h>
 #include "v8core_js.h"
 #include "v8scripting.h"
 
