@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include "v8core_js.h"
 #include "v8scripting.h"
 
@@ -12,12 +13,12 @@ using namespace v8;
 v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
+void *single_thread_function_for_slow_run_js(void *param);
 v8::Handle<v8::Value> parse_response();
 char *js_dir = NULL;
 char *js_flags = NULL;
 int js_code_id = 0;
-pthread_t thread_id_for_js_interrupt;
-pthread_t thread_id_for_js_slow;
+pthread_t thread_id_for_single_thread_check;
 int js_timeout = 15;
 int js_slow = 250;
 char *last_js_run = NULL;
@@ -65,6 +66,14 @@ redisClient *client=NULL;
 char *redisReply = NULL;
 char bufForString[4096] = {0};
 char lastError[4096] = {0};
+int scriptStart = 0;
+
+unsigned int GetTickCount(void) 
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return tv.tv_sec*1000 + (tv.tv_usec/1000);
+}
 
 v8::Handle<v8::Value> parse_string(char *replyPtr){
 	//printf("parse_line_ok replyPtr[0]='%c' string length:%i\n",replyPtr[0],atoi(replyPtr));
@@ -240,6 +249,8 @@ void initV8(){
 		);
 	}
 	
+	pthread_create(&thread_id_for_single_thread_check, NULL, single_thread_function_for_slow_run_js, (void*)NULL);
+	
 	v8::HandleScope handle_scope;
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
@@ -280,8 +291,6 @@ char* run_js(char *code){
 		memset(errBuf,0,4096);
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
-		pthread_cancel(thread_id_for_js_interrupt);
-		pthread_cancel(thread_id_for_js_slow);
 		return errBuf;
 	}
 	
@@ -301,8 +310,6 @@ char* run_js(char *code){
 		else {
 			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		}
-		pthread_cancel(thread_id_for_js_interrupt);
-		pthread_cancel(thread_id_for_js_slow);
 		return errBuf;
 	}
 	v8::String::Utf8Value ascii(result);
@@ -310,8 +317,6 @@ char* run_js(char *code){
 	char *rez= (char*)zmallocPtr(size);
 	memset(rez,0,size);
 	strcpy(rez,*ascii);
-	pthread_cancel(thread_id_for_js_interrupt);
-	pthread_cancel(thread_id_for_js_slow);
 	return rez;
 }
 
@@ -379,23 +384,29 @@ struct ThreadJSClientAndCode {
 	char *code;
 };
 
-void *thread_function_for_kill_timeout_js(void *param)
+void *single_thread_function_for_slow_run_js(void *param)
 {
-	sleep(js_timeout);
-	printf("run_js running more than %i sec, kill it\n",js_timeout);
-	redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
-	redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
-	v8::V8::TerminateExecution();
-	return 0;
-}
-
-void *thread_function_for_slow_run_js(void *param)
-{
-	usleep(js_slow*1000); //js_slow is ms
-	if(last_js_run!=NULL){
-		printf("run_js running more than %ims, log function\n",js_slow);
-		redisLogRawPtr(REDIS_NOTICE,(char *)"JS slow function:");
-		redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
+	bool slow_report = false;
+	while(1){
+		usleep(50000); //50ms
+		unsigned int dt = GetTickCount() - scriptStart;
+		if(scriptStart != 0 && last_js_run!=NULL && dt > js_slow){
+			if(!slow_report){
+				slow_report = true;
+				printf("run_js running more than %ims, log function\n",js_slow);
+				redisLogRawPtr(REDIS_NOTICE,(char*)"JS slow function:");
+				redisLogRawPtr(REDIS_NOTICE,(char*)last_js_run);
+			}
+		}
+		else
+			slow_report = false;
+		
+		if(scriptStart != 0 && last_js_run!=NULL && dt > js_timeout*1000){
+			printf("run_js running more than %i sec, kill it\n",js_timeout);
+			redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
+			redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
+			v8::V8::TerminateExecution();
+		}
 	}
 	return 0;
 }
@@ -404,12 +415,12 @@ extern "C"
 {
 	void v8_exec(redisClient *c,char* code){
 		//printf("v8_exec %s\n",code);
-		pthread_create(&thread_id_for_js_interrupt, NULL, thread_function_for_kill_timeout_js, (void*)++js_code_id);
-		pthread_create(&thread_id_for_js_slow, NULL, thread_function_for_slow_run_js, (void*)js_code_id);
+		scriptStart = GetTickCount();
 		last_js_run = code;
 		char *json = run_js(code);
 		last_js_run = NULL;
 		//TODO if reply starts with "-" than reply - error string
+		scriptStart = 0;
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		zfreePtr(json);
@@ -418,6 +429,7 @@ extern "C"
 	void v8_reload(redisClient *c){
 		v8::Isolate* isolate = v8_context->GetIsolate();
 		v8_context.Dispose(isolate);
+		pthread_cancel(thread_id_for_single_thread_check);
 		initV8();
 		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
 		load_user_scripts_from_folder(js_dir);
