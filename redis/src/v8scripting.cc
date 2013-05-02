@@ -60,6 +60,8 @@ robj* (*createObjectPtr)(int,void*);
 void (*addReplyStringPtr)(redisClient*,char *,size_t);
 //void addReplyBulk(redisClient *c, robj *obj)
 void (*addReplyBulkPtr)(redisClient*,robj*);
+//void addReplyError(redisClient *c, char *err);
+void (*addReplyErrorPtr)(redisClient*,char*);
 
 redisClient *client=NULL;
 
@@ -423,8 +425,12 @@ extern "C"
 		char *json = run_js(code);
 		last_js_run = NULL;
 		scriptStart = 0;
-		//TODO if json starts with "-" than reply is error string
-		//printf("run_js return %s\n",json);
+		if(json && json[0]=='-'){
+			printf("run_js return error %s\n",json);
+			addReplyErrorPtr(c,json);
+			zfreePtr(json);
+			return;
+		}
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		zfreePtr(json);
@@ -554,6 +560,11 @@ extern "C"
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyBulkLen");
 		addReplyBulkPtr = functionPtr;
+	}
+	
+	void passPointerToaddReplyError(void (*functionPtr)(redisClient*,char*)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyError");
+		addReplyErrorPtr = functionPtr;
 	}
 	
 	void config_js_dir(char *_js_dir){

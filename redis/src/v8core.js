@@ -13,7 +13,8 @@ redis.run = function(){
 redis.inline_return = function(){
 	var ret = inline_redis_func();
 	if(ret === undefined) ret = null;
-	var ret_obj = {ret:ret}; //,last_error:redis.last_error
+	if(ret === false) return redis.last_error;
+	var ret_obj = {ret:ret};
 	return JSON.stringify(ret_obj);
 }
 

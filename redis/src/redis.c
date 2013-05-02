@@ -2781,6 +2781,7 @@ void loadDataFromDisk(void) {
 	passPointerTocreateObject(createObject);
 	passPointerToaddReplyString(addReplyString);
 	passPointerToaddReplyBulk(addReplyBulk);
+	passPointerToaddReplyError(addReplyError);
 	funccpp(1,'d',1.3);
 }
 
