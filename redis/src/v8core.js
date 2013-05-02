@@ -1,7 +1,10 @@
 redis.str = {};
 redis.last_error = '';
+redis.v8_start = +new Date;
+redis.runcounter = 0;
 
 redis.run = function(){
+	redis.runcounter++;
 	redis.last_error = '';
 	redis.str = redis.__run.apply(this,arguments);
 	if(redis.str===false){
@@ -18,6 +21,12 @@ redis.inline_return = function(){
 	return JSON.stringify(ret_obj);
 }
 
+redis.v8stats = function(){
+	return JSON.stringify({
+		command_processed: redis.runcounter,
+		ops_per_second: Math.floor(redis.runcounter/((+new Date - redis.v8_start)/1000))
+	});
+}
 
 /* standart redis functions */
 // APPEND key value
@@ -48,7 +57,13 @@ redis.bgsave = function(){
 // DEBUG OBJECT key
 // DEBUG SEGFAULT
 // DECR key
+redis.decr = function(key) {
+	return this.run('DECR',key);
+}
 // DECRBY key decrement
+redis.decrby = function(key,decrement) {
+	return this.run('DECRBY',key,decrement);
+}
 // DEL key [key ...]
 redis.del = function(key){
 	if(arguments.length>1){
@@ -96,6 +111,7 @@ redis.get = function(key){
 // HGET key field
 // HGETALL key
 redis.hgetall = function(key){
+	redis.runcounter++;
 	redis.last_error = '';
 	redis.str = redis.__run.apply(this,['HGETALL',key]);
 	
@@ -114,6 +130,7 @@ redis.hgetall = function(key){
 // HLEN key
 // HMGET key field [field ...]
 redis.hmget = function(key,fields){
+	redis.runcounter++;
 	redis.last_error = '';
 	var args = fields;
 	if(Array.isArray(fields)){
