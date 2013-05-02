@@ -10,10 +10,10 @@ redis.run = function(){
 	return redis.str;
 }
 
-redis.inline_return = function(exec_func){
-	var ret = exec_func();
+redis.inline_return = function(){
+	var ret = inline_redis_func();
 	if(ret === undefined) ret = null;
-	var ret_obj = {ret:ret,last_error:redis.last_error}; 
+	var ret_obj = {ret:ret}; //,last_error:redis.last_error
 	return JSON.stringify(ret_obj);
 }
 
@@ -307,3 +307,4 @@ console = {
 	}
 };
 
+//

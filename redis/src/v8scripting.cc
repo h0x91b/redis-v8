@@ -267,7 +267,7 @@ char* run_js(char *code){
 	int code_length = strlen(code);
 	char *wrapcodebuf = (char*)zmallocPtr(code_length+170);
 	memset(wrapcodebuf,0,code_length);
-	sprintf(wrapcodebuf,"(function(){ return redis.inline_return(function(){%s}) })();",code);
+	sprintf(wrapcodebuf,"inline_redis_func = function(){%s;%i}; redis.inline_return()",code,rand());
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
 	zfreePtr(wrapcodebuf);
 	v8::TryCatch trycatch;
