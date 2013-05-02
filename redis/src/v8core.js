@@ -60,6 +60,18 @@ redis.del = function(key){
 }
 // DISCARD
 // DUMP key
+redis.dump = function(key){
+	redis.last_error = 'cant handle binary data, not implemented yet';
+	return false;
+	
+	redis.runcounter++;
+	redis.last_error = '';
+	var rez = this.__run('dump',key);
+	rez = rez.map(function(char){
+		return escape(String.fromCharCode(char));
+	})
+	return rez.join('');
+}
 // ECHO message
 // EVAL script numkeys key [key ...] arg [arg ...]
 // EVALSHA sha1 numkeys key [key ...] arg [arg ...]

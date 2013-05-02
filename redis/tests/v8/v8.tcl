@@ -23,4 +23,8 @@ start_server {tags {"basic"}} {
     test {V8 hmget array} {
         r js {return redis.hmget('HSET',['a','b']);}
     } {{"ret":{"a":"123","b":"string"}}}
+
+    test {V8 dump key} {
+        r js {return redis.dump('HSET');}
+    } {cant handle binary data, not implemented yet}
 }

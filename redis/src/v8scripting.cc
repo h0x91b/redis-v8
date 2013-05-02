@@ -90,9 +90,17 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 	replyPtr+=len+2;
 	if(strlength<4096){
 		memset(bufForString,0,4096);
-		strncpy(bufForString,replyPtr,strlength);
+		memcpy(bufForString,replyPtr,strlength);
 		replyPtr+=strlength+2;
 		bufForString[strlength]='\0';
+		if(strlen(bufForString)!=strlength){
+			//binary data, TODO (v8::ArrayBuffer::New)
+			v8::Local<v8::Array> ret = v8::Array::New(strlength);
+			for(int i=0;i<strlength;i++){
+				ret->Set(v8::Number::New(i), v8::Number::New((unsigned char)bufForString[i]));
+			}
+			return ret;
+		}
 		//printf("line is '%s'\n",buff);
 		v8::Local<v8::String> ret = v8::String::New(bufForString);
 		redisReply = replyPtr;
@@ -100,9 +108,18 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		return ret;
 	}
 	char *buff= (char*)zmallocPtr(strlength+1);
-	strncpy(buff,replyPtr,strlength);
+	memcpy(buff,replyPtr,strlength);
 	replyPtr+=strlength+2;
 	buff[strlength]='\0';
+	if(strlen(bufForString)!=strlength){
+		//binary data
+		v8::Local<v8::Array> ret = v8::Array::New(strlength);
+		for(int i=0;i<strlength;i++){
+			ret->Set(v8::Number::New(i), v8::Number::New((unsigned char)bufForString[i]));
+		}
+		zfreePtr(buff);
+		return ret;
+	}
 	//printf("line is '%s'\n",buff);
 	v8::Local<v8::String> ret = v8::String::New(buff);
 	zfreePtr(buff);
