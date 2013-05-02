@@ -316,7 +316,13 @@ static void showLatencyReport(void) {
     int i, curlat = 0;
     float perc, reqpersec;
 
-    reqpersec = (float)config.requests_finished/((float)config.totlatency/1000);
+	int modifier = 1;
+	char *str = strstr(config.title,"result * ");
+	if(str!=NULL){
+		str+=9;
+		modifier = atoi(str);
+	}
+    reqpersec = ((float)config.requests_finished/((float)config.totlatency/1000))*modifier;
     if (!config.quiet && !config.csv) {
         printf("====== %s ======\n", config.title);
         printf("  %d requests completed in %.2f seconds\n", config.requests_finished,
@@ -483,8 +489,14 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
     REDIS_NOTUSED(clientData);
 
     if (config.csv) return 250;
+	int modifier = 1;
+	char *str = strstr(config.title,"result * ");
+	if(str!=NULL){
+		str+=9;
+		modifier = atoi(str);
+	}
     float dt = (float)(mstime()-config.start)/1000.0;
-    float rps = (float)config.requests_finished/dt;
+    float rps = ((float)config.requests_finished/dt)*modifier;
     printf("%s: %.2f\r", config.title, rps);
     fflush(stdout);
     return 250; /* every 250ms */
@@ -577,12 +589,37 @@ int main(int argc, const char **argv) {
         memset(data,'x',config.datasize);
         data[config.datasize] = '\0';
 
+		if (test_is_selected("v8_incr")) {
+            len = redisFormatCommand(&cmd,"JS %s","return redis.incr('counter:rand:000000000000')");
+            benchmark("V8 INCR",cmd,len);
+            free(cmd);
+        }
+		
+
         if (test_is_selected("ping_inline") || test_is_selected("ping"))
             benchmark("PING_INLINE","PING\r\n",6);
 
         if (test_is_selected("ping_mbulk") || test_is_selected("ping")) {
             len = redisFormatCommand(&cmd,"PING");
             benchmark("PING_BULK",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_ping_mbulk")) {
+            len = redisFormatCommand(&cmd,"JS %s","redis.ping()");
+            benchmark("V8 PING_BULK",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_ping_100")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.ping()");
+            benchmark("V8 PING_BULK 100 inline (result * 100)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_ping_300")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.ping()");
+            benchmark("V8 PING_BULK 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
 
@@ -598,9 +635,39 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
+		if (test_is_selected("v8_get")) {
+            len = redisFormatCommand(&cmd,"JS %s","return redis.get('foo:rand:000000000000')");
+            benchmark("V8 GET 1 inline",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_get_100")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.get('foo:rand:000000000000')");
+            benchmark("V8 GET 100 inline (result * 100)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_get_300")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.get('foo:rand:000000000000')");
+            benchmark("V8 GET 300 inline (result * 300)",cmd,len);
+            free(cmd);
+        }
+
         if (test_is_selected("incr")) {
             len = redisFormatCommand(&cmd,"INCR counter:rand:000000000000");
             benchmark("INCR",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_incr_100")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.incr('counter:rand:000000000000')");
+            benchmark("V8 INCR 100 inline (result * 100)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_incr_300")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.incr('counter:rand:000000000000')");
+            benchmark("V8 INCR 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
 
