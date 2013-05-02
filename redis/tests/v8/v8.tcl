@@ -27,4 +27,8 @@ start_server {tags {"basic"}} {
     test {V8 dump key} {
         r js {return redis.dump('HSET');}
     } {cant handle binary data, not implemented yet}
+
+    test {V8 test user script blogpost.new} {
+        r js {blogpost.new('test title','test body'); return redis.hmget('HSET:BLOG_POST:1','id','title','body');}
+    } {{"ret":{"id":"1","title":"test title","body":"test body"}}}
 }
