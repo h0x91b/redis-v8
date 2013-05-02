@@ -279,6 +279,9 @@ char* run_js(char *code){
 	char *wrapcodebuf = (char*)zmallocPtr(code_length+170);
 	memset(wrapcodebuf,0,code_length);
 	sprintf(wrapcodebuf,"inline_redis_func = function(){%s;%i}; redis.inline_return()",code,rand());
+	
+	//printf("%s\n",wrapcodebuf);
+	
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
 	zfreePtr(wrapcodebuf);
 	v8::TryCatch trycatch;
@@ -419,13 +422,15 @@ extern "C"
 		last_js_run = code;
 		char *json = run_js(code);
 		last_js_run = NULL;
-		//TODO if reply starts with "-" than reply - error string
 		scriptStart = 0;
+		//TODO if json starts with "-" than reply is error string
+		//printf("run_js return %s\n",json);
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
 		zfreePtr(json);
 		decrRefCountPtr(obj);
 	}
+	
 	void v8_reload(redisClient *c){
 		v8::Isolate* isolate = v8_context->GetIsolate();
 		v8_context.Dispose(isolate);
@@ -436,6 +441,7 @@ extern "C"
 		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
 		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8 Reload complete\r\n")));
 	}
+	
 	void funccpp(int i, char c, float x)
 	{
 		redisLogRawPtr(REDIS_NOTICE,"Making redisClient\n");
@@ -465,7 +471,6 @@ extern "C"
 		redisCreateClientPtr = functionPtr;
 	}
 	
-	//redisCommand *lookupCommand(sds name)
 	void passPointerTolookupCommandByCString(redisCommand* (*functionPtr)(char*)){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupCommand");
 		lookupCommandByCStringPtr = functionPtr;
