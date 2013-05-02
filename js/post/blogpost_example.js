@@ -21,7 +21,7 @@ blogpost = {
 			post: post_id,
 			title: title,
 			body: body,
-			date: +new Date
+			date: Math.round(+new Date/1000)
 		};
 		redis.zadd('ZSET:BLOG_POST:'+post_id+':COMMENTS',comment.date,id);
 		redis.hmset('HSET:BLOG_POST_COMMENT:'+id,comment);
@@ -37,12 +37,12 @@ blogpost = {
 		redis.zrem('ZSET:BLOG_POSTS',id);
 	},
 	get: function(id){
-		var post = redis.hgetall('HSET:BLOG_POST:'+id);
+		var post = redis.hmget('HSET:BLOG_POST:'+id,'id','title','body','date');
 		if(!post) return null;
 		post.comments = [];
 		var comments = redis.zrevrange('ZSET:BLOG_POST:'+id+':COMMENTS',0,-1);
 		for(var i=0;i<comments.length;i++){
-			var comment = redis.hgetall('HSET:BLOG_POST_COMMENT:'+comments[id]);
+			var comment = redis.hmget('HSET:BLOG_POST_COMMENT:'+comments[id],'id','post','title','body','date');
 			if(comment)
 				post.comments.push(comment);
 		}
