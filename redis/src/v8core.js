@@ -146,6 +146,9 @@ redis.incr = function(key){
 // LLEN key
 // LPOP key
 // LPUSH key value [value ...]
+redis.lpush = function(key,value){
+	return this.run('LPUSH',key,value);
+}
 // LPUSHX key value
 // LRANGE key start stop
 // LREM key count value
