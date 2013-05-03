@@ -193,8 +193,7 @@ redis._get = function(key) {
 
 redis.get = function(key){
 	if(typeof key != 'string' || key.length<1){
-		redis.last_error = 'redis-v8 error, optimized get must have 1 non empty string argument';
-		return false;
+		return this._get(key);
 	}
 	redis._runcounter++;
 	redis.last_error = '';
@@ -433,8 +432,8 @@ redis.scard = function(key){
 redis.select = function(index){
 	return this._run('SELECT',index);
 }
-// SET key value [EX seconds] [PX milliseconds] [NX|XX]
-redis.set = function(key,value){
+
+redis._set = function(key,value){
 	if(arguments.length>2){
 		var args = [];
 		args = Array(arguments.length+1);
@@ -450,6 +449,14 @@ redis.set = function(key,value){
 		redis.last_error = redis.getLastError();
 	}
 	return redis.str;
+}
+// SET key value [EX seconds] [PX milliseconds] [NX|XX]
+redis.set = function(key,value){
+	if(arguments.length>2 || typeof key != 'string' || typeof value != 'string')
+		return this._set.apply(this,arguments);
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__set(key,value);
 }
 
 redis.setbit = function(key,offset,value){
@@ -619,5 +626,9 @@ console = {
 			redis.__log(3,'console.warn argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	}
 };
+
+redis.del('hello')
+redis.set('hello','value')
+console.log(redis.get('hello'))
 
 //

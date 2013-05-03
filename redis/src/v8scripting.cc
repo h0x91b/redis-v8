@@ -75,7 +75,8 @@ robj* (*createObjectPtr)(int,void*);
 void (*addReplyStringPtr)(redisClient*,char *,size_t);
 void (*addReplyBulkPtr)(redisClient*,robj*);
 void (*addReplyErrorPtr)(redisClient*,char*);
-robj *(*lookupKeyReadPtr)(redisDb*, robj *);
+robj *(*lookupKeyReadPtr)(redisDb*, robj*);
+void (*setKeyPtr)(redisDb*, robj*, robj*);
 
 redisClient *client=NULL;
 
@@ -205,6 +206,16 @@ v8::Handle<v8::Value> raw_get(const v8::Arguments& args) {
 	return v8reply;
 }
 
+v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
+	redisClient *c = client;
+	v8::String::Utf8Value strkey(args[0]);
+	v8::String::Utf8Value strval(args[1]);
+	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
+	robj *val = createStringObjectPtr((char*)*strval,strval.length());
+	setKeyPtr(c->db,key,val);
+	return v8::Boolean::New(true);
+}
+
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	int argc = args.Length();
 	redisCommand *cmd;
@@ -305,6 +316,7 @@ void initV8(){
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run),ReadOnly);
 	redis->Set(v8::String::New("__get"), v8::FunctionTemplate::New(raw_get),ReadOnly);
+	redis->Set(v8::String::New("__set"), v8::FunctionTemplate::New(raw_set),ReadOnly);
 	redis->Set(v8::String::New("__log"), v8::FunctionTemplate::New(redis_log),ReadOnly);
 	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError),ReadOnly);
 	global->Set(v8::String::New("redis"), redis);
@@ -650,6 +662,11 @@ extern "C"
 	void passPointerTolookupKeyRead(robj *(*functionPtr)(redisDb*, robj *)){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupKeyRead");
 		lookupKeyReadPtr = functionPtr;
+	}
+	
+	void passPointerTosetKey(void (*functionPtr)(redisDb*, robj*, robj*)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosetKey");
+		setKeyPtr = functionPtr;
 	}
 	
 	void config_js_dir(char *_js_dir){
