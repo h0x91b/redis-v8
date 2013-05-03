@@ -31,10 +31,10 @@
 redis.str = {};
 redis.last_error = '';
 redis.v8_start = +new Date;
-redis.runcounter = 0;
+redis._runcounter = 0;
 
-redis.run = function(){
-	redis.runcounter++;
+redis._run = function(){
+	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = redis.__run.apply(this,arguments);
 	if(redis.str===false){
@@ -53,8 +53,8 @@ redis.inline_return = function(){
 
 redis.v8stats = function(){
 	return JSON.stringify({
-		command_processed: redis.runcounter,
-		ops_per_second: Math.floor(redis.runcounter/((+new Date - redis.v8_start)/1000))
+		command_processed: redis._runcounter,
+		ops_per_second: Math.floor(redis._runcounter/((+new Date - redis.v8_start)/1000))
 	});
 }
 
@@ -115,7 +115,7 @@ redis.dump = function(key){
 	redis.last_error = 'cant handle binary data, not implemented yet';
 	return false;
 	
-	redis.runcounter++;
+	redis._runcounter++;
 	redis.last_error = '';
 	var rez = this.__run('dump',key);
 	rez = rez.map(function(char){
@@ -155,7 +155,7 @@ redis.get = function(key){
 // HGET key field
 // HGETALL key
 redis.hgetall = function(key){
-	redis.runcounter++;
+	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = redis.__run.apply(this,['HGETALL',key]);
 	
@@ -180,7 +180,7 @@ redis.hlen = function(key){
 }
 // HMGET key field [field ...]
 redis.hmget = function(key,fields){
-	redis.runcounter++;
+	redis._runcounter++;
 	redis.last_error = '';
 	var args = fields;
 	if(Array.isArray(fields)){
