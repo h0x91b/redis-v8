@@ -463,7 +463,7 @@ void *single_thread_function_for_slow_run_js(void *param)
 {
 	bool slow_report = false;
 	while(1){
-		usleep(50000); //50ms
+		usleep(100000); //100ms
 		unsigned int dt = GetTickCount() - scriptStart;
 		if(scriptStart != 0 && last_js_run!=NULL && dt > js_slow){
 			if(!slow_report){
