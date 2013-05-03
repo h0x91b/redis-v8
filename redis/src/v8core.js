@@ -182,7 +182,13 @@ redis.flushdb = function(){
 }
 
 redis.get = function(key){
-	return this._run('GET',key);
+	redis._runcounter++;
+	redis.last_error = '';
+	redis.str = redis.__run('GET',key);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
 redis.getbit = function(key,offset){
@@ -329,12 +335,25 @@ redis.lrange = function(key,start,stop){
 	return this._run('LRANGE',key,start,stop);
 }
 
-// LREM key count value
-// LSET key index value
-// LTRIM key start stop
+redis.lrem = function(key,count,value){
+	return this._run('LREM',key,count,value);
+}
+
+redis.lset = function(key,index,value){
+	return this._run('LSET',key,index,value);
+}
+
+redis.ltrim = function(key,start,stop){
+	return this._run('LTRIM',key,start,stop);
+}
+
 // MGET key [key ...]
 // MIGRATE host port key destination-db timeout
-// MOVE key db
+
+redis.move = function(key,db){
+	return this._run('MOVE',key,db);
+}
+
 // MSET key value [key value ...]
 // MSETNX key value [key value ...]
 // OBJECT subcommand [arguments [arguments ...]]
@@ -342,13 +361,22 @@ redis.lrange = function(key,start,stop){
 redis.persist = function(key){
 	return this._run('PERSIST',key);
 }
-// PEXPIRE key milliseconds
-// PEXPIREAT key milliseconds-timestamp
+
+redis.pexpire = function(key,milliseconds){
+	return this._run('PEXPIRE',key,milliseconds);
+}
+
+redis.pexpireat = function(key,milliseconds){
+	return this._run('PEXPIREAT',key,milliseconds);
+}
 
 redis.ping = function(){
 	return this._run('PING');
 }
-// PSETEX key milliseconds value
+
+redis.psetex = function(key,milliseconds,value){
+	return this._run('PSETEX',key,milliseconds,value);
+}
 
 redis.pttl = function(key){
 	return this._run('PTTL',key);
@@ -372,7 +400,10 @@ redis.rpop = function(key){
 }
 // RPOPLPUSH source destination
 // RPUSH key value [value ...]
-// RPUSHX key value
+
+redis.rpushx = function(key,value){
+	return this._run('RPUSHX',key,value);
+}
 // SADD key member [member ...]
 
 redis.save = function(){
@@ -402,27 +433,46 @@ redis.set = function(key,value){
 			args[i+1] = arguments[i];
 		return this._run.apply(this,args);
 	}
-	return this._run('SET',key,value);
+	redis._runcounter++;
+	redis.last_error = '';
+	redis.str = redis.__run('SET',key,value);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
-// SETBIT key offset value
-// SETEX key seconds value
+redis.setbit = function(key,offset,value){
+	return this._run('SETBIT',key,offset,value);
+}
+
 redis.setex = function(key,expire,value){
 	return this._run('SETEX',key,expire,value);
 }
-// SETNX key value
-// SETRANGE key offset value
+
+redis.setnx = function(key,value){
+	return this._run('SETNX',key,value);
+}
+
+redis.setrange = function(key,offset,value){
+	return this._run('SETRANGE',key,offset,value);
+}
 // SHUTDOWN [NOSAVE] [SAVE]
 // SINTER key [key ...]
 // SINTERSTORE destination key [key ...]
-// SISMEMBER key member
-// SLAVEOF host port
+
+redis.sismember = function(key,member){
+	return this._run('SISMEMBER',key,member);
+}
 // SLOWLOG subcommand [argument]
-// SMEMBERS key
+
 redis.smembers = function(key){
 	return this._run('SMEMBERS',key);
 }
-// SMOVE source destination member
+
+redis.smove = function(source,destination,member){
+	return this._run('SMOVE',source,destination,member);
+}
 // SORT key [BY pattern] [LIMIT offset count] [GET pattern [GET pattern ...]] [ASC|DESC] [ALPHA] [STORE destination]
 
 redis.spop = function(key){
@@ -469,8 +519,15 @@ redis.zadd = function(key,score,value){
 redis.zcard = function(key){
 	return this._run('ZCARD',key);
 }
-// ZCOUNT key min max
-// ZINCRBY key increment member
+
+redis.zcount = function(key,min,max){
+	return this._run('ZCOUNT',key,min,max);
+}
+
+redis.zincrby = function(key,increment,member){
+	return this._run('ZINCRBY',key,increment,member);
+}
+
 // ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
 // ZRANGE key start stop [WITHSCORES]
 redis.zrange = function(key,start,stop){
@@ -479,7 +536,10 @@ redis.zrange = function(key,start,stop){
 	return this._run('ZRANGE',key,start,stop);
 }
 // ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]
-// ZRANK key member
+
+redis.zrank = function(key,member){
+	return this._run('ZRANK',key,member);
+}
 
 redis.zrem = function(key,value){
 	if(arguments.length>2){
@@ -493,17 +553,29 @@ redis.zrem = function(key,value){
 	return this._run('ZREM',key,value);
 }
 
-// ZREMRANGEBYRANK key start stop
-// ZREMRANGEBYSCORE key min max
-// ZREVRANGE key start stop [WITHSCORES]
+
+redis.zremrangebyrank = function(key,start,stop){
+	return this._run('ZREMRANGEBYRANK',key,start,stop);
+}
+
+redis.zremrangebyscore = function(key,min,max){
+	return this._run('ZREMRANGEBYSCORE',key,min,max);
+}
+
 redis.zrevrange = function(key,start,stop,withscores){
 	if(typeof withscores != 'undefined')
 		return this._run('ZREVRANGE',key,start,stop,'WITHSCORES');
 	return this._run('ZREVRANGE',key,start,stop);
 }
 // ZREVRANGEBYSCORE key max min [WITHSCORES] [LIMIT offset count]
-// ZREVRANK key member
-// ZSCORE key member
+
+redis.zrevrank = function(key,member){
+	return this._run('ZREVRANK',key,member);
+}
+
+redis.zscore = function(key,member){
+	return this._run('ZSCORE',key,member);
+}
 // ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
 
 
