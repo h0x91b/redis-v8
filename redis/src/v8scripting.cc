@@ -102,7 +102,6 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 	if(special_minus_one) len-=2;
 	replyPtr+=len+2;
 	if(strlength<4096){
-		memset(bufForString,0,4096);
 		memcpy(bufForString,replyPtr,strlength);
 		replyPtr+=strlength+2;
 		bufForString[strlength]='\0';
@@ -115,9 +114,9 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		// 	return ret;
 		// }
 		//printf("line is '%s'\n",buff);
-		v8::Local<v8::String> ret = v8::String::New(bufForString);
 		redisReply = replyPtr;
 		if(special_minus_one) return v8::Null();
+		v8::Local<v8::String> ret = v8::String::New(bufForString);
 		return ret;
 	}
 	char *buff= (char*)zmallocPtr(strlength+1);
