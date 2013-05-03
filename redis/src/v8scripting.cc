@@ -323,18 +323,28 @@ void initV8(){
 	v8::Handle<v8::Value> result = script->Run();
 }
 
+char *wrapcodebuf = NULL;
+int wrapcodebuf_len = 4096;
 char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
-	char *wrapcodebuf = (char*)zmallocPtr(code_length+170);
-	memset(wrapcodebuf,0,code_length);
-	sprintf(wrapcodebuf,"inline_redis_func = function(){%s;%i}; redis.inline_return()",code,rand());
+	if(wrapcodebuf==NULL){
+		wrapcodebuf_len = code_length+170;
+		wrapcodebuf = (char*)zmallocPtr(wrapcodebuf_len);
+	}
+	if(code_length+170>wrapcodebuf_len){
+		zfreePtr(wrapcodebuf);
+		wrapcodebuf_len = code_length+170;
+		wrapcodebuf = (char*)zmallocPtr(wrapcodebuf_len);
+	}
+	memset(wrapcodebuf,0,wrapcodebuf_len);
+	sprintf(wrapcodebuf,"inline_redis_func = function(){%s}; redis.inline_return()",code);
 	
 	//printf("%s\n",wrapcodebuf);
 	
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
-	zfreePtr(wrapcodebuf);
+	//zfreePtr(wrapcodebuf);
 	v8::TryCatch trycatch;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	if(script.IsEmpty()){
