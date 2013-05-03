@@ -354,8 +354,8 @@ char* run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("V8 Exception: %s\n", *exception_str);
-		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
-		memset(errBuf,0,4096);
+		char *errBuf = (char*)zmallocPtr(exception_str.length());
+		memset(errBuf,0,exception_str.length());
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
 		return errBuf;
@@ -369,8 +369,8 @@ char* run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
-		memset(errBuf,0,4096);
+		char *errBuf = (char*)zmallocPtr(exception_str.length());
+		memset(errBuf,0,exception_str.length());
 		if(!strcmp(*exception_str,"null")){
 			sprintf(errBuf,"-Script runs too long, Exception error: \"%s\"",*exception_str);
 		}
@@ -380,13 +380,13 @@ char* run_js(char *code){
 		return errBuf;
 	}
 	v8::String::Utf8Value ascii(result);
-	int size = strlen(*ascii);
+	int size = ascii.length();
 	if(run_js_returnbuf==NULL){
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
 	}
 	if(size>run_js_returnbuf_len){
 		zfreePtr(run_js_returnbuf);
-		run_js_returnbuf_len = size+1;
+		run_js_returnbuf_len = (((size+1)/1024)+1)*1024;
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
 	}
 	//char *rez= (char*)zmallocPtr(size);
