@@ -659,20 +659,50 @@ int main(int argc, const char **argv) {
         }
 
 		if (test_is_selected("v8_get")) {
-            len = redisFormatCommand(&cmd,"JS %s","return redis.get('foo:rand:000000000000')");
+            len = redisFormatCommand(&cmd,"JS %s","return redis._get('foo:rand:000000000000')");
             benchmark("V8 GET 1 inline",cmd,len);
             free(cmd);
         }
 
+		if (test_is_selected("v8_get_10")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<10;i++) redis._get('foo:rand:000000000000')");
+            benchmark("V8 GET 10 inline (result * 10)",cmd,len);
+            free(cmd);
+        }
+
 		if (test_is_selected("v8_get_100")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.get('foo:rand:000000000000')");
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis._get('foo:rand:000000000000')");
             benchmark("V8 GET 100 inline (result * 100)",cmd,len);
             free(cmd);
         }
 
 		if (test_is_selected("v8_get_300")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.get('foo:rand:000000000000')");
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis._get('foo:rand:000000000000')");
             benchmark("V8 GET 300 inline (result * 300)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_getn")) {
+            len = redisFormatCommand(&cmd,"JS %s","return redis.get('foo:rand:000000000000')");
+            benchmark("V8 OPTIMIZED GET 1 inline",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_getn_10")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<10;i++) redis.get('foo:rand:000000000000')");
+            benchmark("V8 OPTIMIZED GET 10 inline (result * 10)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_getn_100")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.get('foo:rand:000000000000')");
+            benchmark("V8 OPTIMIZED GET 100 inline (result * 100)",cmd,len);
+            free(cmd);
+        }
+
+		if (test_is_selected("v8_getn_300")) {
+            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.get('foo:rand:000000000000')");
+            benchmark("V8 OPTIMIZED GET 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
 

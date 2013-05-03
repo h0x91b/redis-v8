@@ -2782,6 +2782,7 @@ void loadDataFromDisk(void) {
 	passPointerToaddReplyString(addReplyString);
 	passPointerToaddReplyBulk(addReplyBulk);
 	passPointerToaddReplyError(addReplyError);
+	passPointerTolookupKeyRead(lookupKeyRead);
 	v8setup();
 }
 

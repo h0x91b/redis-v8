@@ -75,6 +75,7 @@ robj* (*createObjectPtr)(int,void*);
 void (*addReplyStringPtr)(redisClient*,char *,size_t);
 void (*addReplyBulkPtr)(redisClient*,robj*);
 void (*addReplyErrorPtr)(redisClient*,char*);
+robj *(*lookupKeyReadPtr)(redisDb*, robj *);
 
 redisClient *client=NULL;
 
@@ -187,6 +188,22 @@ v8::Handle<v8::Value> getLastError(const v8::Arguments& args) {
 	return v8::String::New(lastError);
 }
 
+v8::Handle<v8::Value> raw_get(const v8::Arguments& args) {
+	redisClient *c = client;
+	v8::String::Utf8Value strkey(args[0]);
+	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
+	robj *reply = lookupKeyReadPtr(c->db,key);
+	decrRefCountPtr(key);
+	if(reply == NULL || reply->type != REDIS_STRING){
+		//printf("reply is NULL or not string\n");
+		return v8::Null();
+	}
+	//printf("reply is %s\n",reply->ptr);
+	v8::Local<v8::String> v8reply = v8::String::New((const char *)reply->ptr);
+	//decrRefCountPtr(reply);
+	//printf("return to v8\n");
+	return v8reply;
+}
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	int argc = args.Length();
@@ -215,7 +232,8 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	}
 	/* Run the command */
 	c->cmd = cmd;
-	callPtr(c,REDIS_CALL_SLOWLOG | REDIS_CALL_STATS);
+	c->cmd->proc(c); //raw call, without redis stats log
+	//callPtr(c,REDIS_CALL_STATS);
 	reply = sdsemptyPtr();
 	if (c->bufpos) {
 		reply = sdscatlenPtr(reply,c->buf,c->bufpos);
@@ -286,6 +304,7 @@ void initV8(){
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run),ReadOnly);
+	redis->Set(v8::String::New("__get"), v8::FunctionTemplate::New(raw_get),ReadOnly);
 	redis->Set(v8::String::New("__log"), v8::FunctionTemplate::New(redis_log),ReadOnly);
 	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError),ReadOnly);
 	global->Set(v8::String::New("redis"), redis);
@@ -626,6 +645,11 @@ extern "C"
 	void passPointerToaddReplyError(void (*functionPtr)(redisClient*,char*)){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyError");
 		addReplyErrorPtr = functionPtr;
+	}
+	
+	void passPointerTolookupKeyRead(robj *(*functionPtr)(redisDb*, robj *)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupKeyRead");
+		lookupKeyReadPtr = functionPtr;
 	}
 	
 	void config_js_dir(char *_js_dir){

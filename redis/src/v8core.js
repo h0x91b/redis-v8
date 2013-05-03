@@ -181,7 +181,7 @@ redis.flushdb = function(){
 	return this._run('FLUSHDB');
 }
 
-redis.get = function(key){
+redis._get = function(key) {
 	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = redis.__run('GET',key);
@@ -189,6 +189,16 @@ redis.get = function(key){
 		redis.last_error = redis.getLastError();
 	}
 	return redis.str;
+}
+
+redis.get = function(key){
+	if(typeof key != 'string' || key.length<1){
+		redis.last_error = 'redis-v8 error, optimized get must have 1 non empty string argument';
+		return false;
+	}
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__get(key);
 }
 
 redis.getbit = function(key,offset){
