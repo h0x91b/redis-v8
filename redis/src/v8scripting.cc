@@ -340,7 +340,7 @@ RUN_JS_RETURN *run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("V8 Exception: %s\n", *exception_str);
-		char *errBuf = (char*)zmallocPtr(exception_str.length());
+		char *errBuf = (char*)zmallocPtr(exception_str.length()+100);
 		memset(errBuf,0,exception_str.length());
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
@@ -357,7 +357,7 @@ RUN_JS_RETURN *run_js(char *code){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)zmallocPtr(exception_str.length());
+		char *errBuf = (char*)zmallocPtr(exception_str.length()+100);
 		memset(errBuf,0,exception_str.length());
 		if(!strcmp(*exception_str,"null")){
 			sprintf(errBuf,"-Script runs too long, Exception error: \"%s\"",*exception_str);
