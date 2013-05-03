@@ -260,7 +260,6 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	zfreePtr(c->argv);
 	
 	return ret_value;
-	//return v8reply;
 }
 
 char *file_get_contents(char *filename)
@@ -328,7 +327,14 @@ int wrapcodebuf_len = 4096;
 char* run_js_returnbuf = NULL;
 int run_js_returnbuf_len = 4096;
 
-char* run_js(char *code){
+struct RUN_JS_RETURN {
+	char *json;
+	int len;
+};
+
+RUN_JS_RETURN run_js_return;
+
+RUN_JS_RETURN *run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
@@ -347,7 +353,6 @@ char* run_js(char *code){
 	//printf("%s\n",wrapcodebuf);
 	
 	v8::Handle<v8::String> source = v8::String::New(wrapcodebuf);
-	//zfreePtr(wrapcodebuf);
 	v8::TryCatch trycatch;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source);
 	if(script.IsEmpty()){
@@ -358,7 +363,9 @@ char* run_js(char *code){
 		memset(errBuf,0,exception_str.length());
 		sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
 		printf("errBuf is '%s'\n",errBuf);
-		return errBuf;
+		run_js_return.json = errBuf;
+		run_js_return.len = exception_str.length();
+		return &run_js_return;
 	}
 	
 	//v8::Locker::StartPreemption(100);
@@ -377,7 +384,9 @@ char* run_js(char *code){
 		else {
 			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
 		}
-		return errBuf;
+		run_js_return.json = errBuf;
+		run_js_return.len = exception_str.length();
+		return &run_js_return;
 	}
 	v8::String::Utf8Value ascii(result);
 	int size = ascii.length();
@@ -392,7 +401,9 @@ char* run_js(char *code){
 	//char *rez= (char*)zmallocPtr(size);
 	memset(run_js_returnbuf,0,run_js_returnbuf_len);
 	memcpy(run_js_returnbuf,*ascii,size);
-	return run_js_returnbuf;
+	run_js_return.json = run_js_returnbuf;
+	run_js_return.len = size;
+	return &run_js_return;
 }
 
 void load_user_script(char *file){
@@ -492,18 +503,17 @@ extern "C"
 		//printf("v8_exec %s\n",code);
 		scriptStart = GetTickCount();
 		last_js_run = code;
-		char *json = run_js(code);
+		RUN_JS_RETURN * ret = run_js(code);
 		last_js_run = NULL;
 		scriptStart = 0;
-		if(json && json[0]=='-'){
-			printf("run_js return error %s\n",json);
-			addReplyErrorPtr(c,json);
-			//zfreePtr(json);
+		if(ret->json && ret->json[0]=='-'){
+			printf("run_js return error %s\n",ret->json);
+			addReplyErrorPtr(c,ret->json);
+			zfreePtr(ret->json);
 			return;
 		}
-		robj *obj = createStringObjectPtr(json,strlen(json));
+		robj *obj = createStringObjectPtr(ret->json,ret->len);
 		addReplyBulkPtr(c,obj);
-		//zfreePtr(json);
 		decrRefCountPtr(obj);
 	}
 	
