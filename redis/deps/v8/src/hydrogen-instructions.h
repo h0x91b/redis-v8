@@ -135,7 +135,6 @@ class LChunkBuilder;
   V(IsUndetectableAndBranch)                   \
   V(LeaveInlined)                              \
   V(LoadContextSlot)                           \
-  V(LoadElements)                              \
   V(LoadExternalArrayPointer)                  \
   V(LoadFunctionPrototype)                     \
   V(LoadGlobalCell)                            \
@@ -2585,39 +2584,6 @@ class HUnaryMathOperation: public HTemplateInstruction<2> {
 };
 
 
-class HLoadElements: public HTemplateInstruction<2> {
- public:
-  HLoadElements(HValue* value, HValue* typecheck) {
-    SetOperandAt(0, value);
-    SetOperandAt(1, typecheck != NULL ? typecheck : value);
-    set_representation(Representation::Tagged());
-    SetFlag(kUseGVN);
-    SetGVNFlag(kDependsOnElementsPointer);
-  }
-
-  HValue* value() { return OperandAt(0); }
-  HValue* typecheck() {
-    ASSERT(HasTypeCheck());
-    return OperandAt(1);
-  }
-  bool HasTypeCheck() const { return OperandAt(0) != OperandAt(1); }
-
-  virtual void PrintDataTo(StringStream* stream);
-
-  virtual Representation RequiredInputRepresentation(int index) {
-    return Representation::Tagged();
-  }
-
-  DECLARE_CONCRETE_INSTRUCTION(LoadElements)
-
- protected:
-  virtual bool DataEquals(HValue* other) { return true; }
-
- private:
-  virtual bool IsDeletable() const { return true; }
-};
-
-
 class HLoadExternalArrayPointer: public HUnaryOperation {
  public:
   explicit HLoadExternalArrayPointer(HValue* value)
@@ -3013,7 +2979,6 @@ class HPhi: public HValue {
 
   virtual Range* InferRange(Zone* zone);
   virtual void InferRepresentation(HInferRepresentation* h_infer);
-  Representation RepresentationObservedByAllNonPhiUses();
   Representation RepresentationFromUseRequirements();
   virtual Representation RequiredInputRepresentation(int index) {
     return representation();

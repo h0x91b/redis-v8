@@ -240,7 +240,8 @@ Handle<Code> HydrogenCodeStub::GenerateLightweightMissCode(Isolate* isolate) {
       GetCodeKind(),
       GetICState(),
       GetExtraICState(),
-      GetStubType(), -1);
+      GetStubType(),
+      GetStubFlags());
   Handle<Code> new_object = factory->NewCode(
       desc, flags, masm.CodeObject(), NeedsImmovableCode());
   return new_object;
@@ -290,8 +291,7 @@ HValue* CodeStubGraphBuilder<FastCloneShallowArrayStub>::BuildCodeStub() {
   checker.Then();
 
   if (mode == FastCloneShallowArrayStub::CLONE_ANY_ELEMENTS) {
-    HValue* elements =
-        AddInstruction(new(zone) HLoadElements(boilerplate, NULL));
+    HValue* elements = AddLoadElements(boilerplate);
 
     IfBuilder if_fixed_cow(this);
     if_fixed_cow.IfCompareMap(elements, factory->fixed_cow_array_map());
@@ -410,6 +410,36 @@ Handle<Code> KeyedLoadFastElementStub::GenerateCode() {
 }
 
 
+template<>
+HValue* CodeStubGraphBuilder<LoadFieldStub>::BuildCodeStub() {
+  Representation representation = casted_stub()->representation();
+  HInstruction* load = AddInstruction(new(zone()) HLoadNamedField(
+      GetParameter(0), casted_stub()->is_inobject(),
+      representation, casted_stub()->offset()));
+  return load;
+}
+
+
+Handle<Code> LoadFieldStub::GenerateCode() {
+  return DoGenerateCode(this);
+}
+
+
+template<>
+HValue* CodeStubGraphBuilder<KeyedLoadFieldStub>::BuildCodeStub() {
+  Representation representation = casted_stub()->representation();
+  HInstruction* load = AddInstruction(new(zone()) HLoadNamedField(
+      GetParameter(0), casted_stub()->is_inobject(),
+      representation, casted_stub()->offset()));
+  return load;
+}
+
+
+Handle<Code> KeyedLoadFieldStub::GenerateCode() {
+  return DoGenerateCode(this);
+}
+
+
 template <>
 HValue* CodeStubGraphBuilder<KeyedStoreFastElementStub>::BuildCodeStub() {
   BuildUncheckedMonomorphicElementAccess(
@@ -453,8 +483,7 @@ HValue* CodeStubGraphBuilder<TransitionElementsKindStub>::BuildCodeStub() {
 
   if_builder.Else();
 
-  HInstruction* elements =
-      AddInstruction(new(zone) HLoadElements(js_array, js_array));
+  HInstruction* elements = AddLoadElements(js_array);
 
   HInstruction* elements_length =
       AddInstruction(new(zone) HFixedArrayBaseLength(elements));

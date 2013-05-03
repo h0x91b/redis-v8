@@ -1271,8 +1271,7 @@ HInstruction* HGraphBuilder::BuildUncheckedMonomorphicElementAccess(
   }
   bool fast_smi_only_elements = IsFastSmiElementsKind(elements_kind);
   bool fast_elements = IsFastObjectElementsKind(elements_kind);
-  HValue* elements =
-      AddInstruction(new(zone) HLoadElements(object, mapcheck));
+  HValue* elements = AddLoadElements(object, mapcheck);
   if (is_store && (fast_elements || fast_smi_only_elements) &&
       store_mode != STORE_NO_TRANSITION_HANDLE_COW) {
     HCheckMaps* check_cow_map = HCheckMaps::New(
@@ -1521,6 +1520,18 @@ HInstruction* HGraphBuilder::BuildStoreMap(HValue* object,
 }
 
 
+HLoadNamedField* HGraphBuilder::AddLoadElements(HValue* object,
+    HValue* typecheck) {
+  HLoadNamedField* instr = new(zone()) HLoadNamedField(object, true,
+      Representation::Tagged(), JSObject::kElementsOffset, typecheck);
+  AddInstruction(instr);
+  instr->SetGVNFlag(kDependsOnElementsPointer);
+  instr->ClearGVNFlag(kDependsOnMaps);
+  instr->ClearGVNFlag(kDependsOnInobjectFields);
+  return instr;
+}
+
+
 HValue* HGraphBuilder::BuildNewElementsCapacity(HValue* context,
                                                 HValue* old_capacity) {
   Zone* zone = this->zone();
@@ -1744,8 +1755,7 @@ HValue* HGraphBuilder::BuildCloneShallowArray(HContext* context,
   if (length > 0) {
     // Get hold of the elements array of the boilerplate and setup the
     // elements pointer in the resulting object.
-    HValue* boilerplate_elements =
-        AddInstruction(new(zone) HLoadElements(boilerplate, NULL));
+    HValue* boilerplate_elements = AddLoadElements(boilerplate);
     HValue* object_elements =
         AddInstruction(new(zone) HInnerAllocatedObject(object, elems_offset));
     AddInstruction(new(zone) HStoreNamedField(object,
@@ -3763,7 +3773,39 @@ void HInferRepresentation::Analyze() {
     }
   }
 
+  // Set truncation flags for groups of connected phis. This is a conservative
+  // approximation; the flag will be properly re-computed after representations
+  // have been determined.
+  if (phi_count > 0) {
+    BitVector* done = new(zone()) BitVector(phi_count, graph_->zone());
+    for (int i = 0; i < phi_count; ++i) {
+      if (done->Contains(i)) continue;
+
+      // Check if all uses of all connected phis in this group are truncating.
+      bool all_uses_everywhere_truncating = true;
+      for (BitVector::Iterator it(connected_phis.at(i));
+           !it.Done();
+           it.Advance()) {
+        int index = it.Current();
+        all_uses_everywhere_truncating &=
+            phi_list->at(index)->CheckFlag(HInstruction::kTruncatingToInt32);
+        done->Add(index);
+      }
+      if (all_uses_everywhere_truncating) {
+        continue;  // Great, nothing to do.
+      }
+      // Clear truncation flag of this group of connected phis.
+      for (BitVector::Iterator it(connected_phis.at(i));
+           !it.Done();
+           it.Advance()) {
+        int index = it.Current();
+        phi_list->at(index)->ClearFlag(HInstruction::kTruncatingToInt32);
+      }
+    }
+  }
+
   // Simplify constant phi inputs where possible.
+  // This step uses kTruncatingToInt32 flags of phis.
   for (int i = 0; i < phi_count; ++i) {
     phi_list->at(i)->SimplifyConstantInputs();
   }
@@ -4043,36 +4085,50 @@ void HGraph::InsertRepresentationChanges() {
   // int32-phis allow truncation and iteratively remove the ones that
   // are used in an operation that does not allow a truncating
   // conversion.
-  // TODO(fschneider): Replace this with a worklist-based iteration.
+  ZoneList<HPhi*> worklist(8, zone());
+
   for (int i = 0; i < phi_list()->length(); i++) {
     HPhi* phi = phi_list()->at(i);
     if (phi->representation().IsInteger32()) {
       phi->SetFlag(HValue::kTruncatingToInt32);
     }
   }
-  bool change = true;
-  while (change) {
-    change = false;
-    for (int i = 0; i < phi_list()->length(); i++) {
-      HPhi* phi = phi_list()->at(i);
-      if (!phi->CheckFlag(HValue::kTruncatingToInt32)) continue;
-      for (HUseIterator it(phi->uses()); !it.Done(); it.Advance()) {
-        // If a Phi is used as a non-truncating int32 or as a double,
-        // clear its "truncating" flag.
-        HValue* use = it.value();
-        Representation input_representation =
-            use->RequiredInputRepresentation(it.index());
-        if ((input_representation.IsInteger32() &&
-             !use->CheckFlag(HValue::kTruncatingToInt32)) ||
-            input_representation.IsDouble()) {
-          if (FLAG_trace_representation) {
-            PrintF("#%d Phi is not truncating because of #%d %s\n",
-                   phi->id(), it.value()->id(), it.value()->Mnemonic());
-          }
-          phi->ClearFlag(HValue::kTruncatingToInt32);
-          change = true;
-          break;
+
+  for (int i = 0; i < phi_list()->length(); i++) {
+    HPhi* phi = phi_list()->at(i);
+    for (HUseIterator it(phi->uses()); !it.Done(); it.Advance()) {
+      // If a Phi is used as a non-truncating int32 or as a double,
+      // clear its "truncating" flag.
+      HValue* use = it.value();
+      Representation input_representation =
+          use->RequiredInputRepresentation(it.index());
+      if ((input_representation.IsInteger32() &&
+           !use->CheckFlag(HValue::kTruncatingToInt32)) ||
+          input_representation.IsDouble()) {
+        if (FLAG_trace_representation) {
+          PrintF("#%d Phi is not truncating because of #%d %s\n",
+                 phi->id(), it.value()->id(), it.value()->Mnemonic());
         }
+        phi->ClearFlag(HValue::kTruncatingToInt32);
+        worklist.Add(phi, zone());
+        break;
+      }
+    }
+  }
+
+  while (!worklist.is_empty()) {
+    HPhi* current = worklist.RemoveLast();
+    for (int i = 0; i < current->OperandCount(); ++i) {
+      HValue* input = current->OperandAt(i);
+      if (input->IsPhi() &&
+          input->representation().IsInteger32() &&
+          input->CheckFlag(HValue::kTruncatingToInt32)) {
+        if (FLAG_trace_representation) {
+          PrintF("#%d Phi is not truncating because of #%d %s\n",
+                 input->id(), current->id(), current->Mnemonic());
+        }
+        input->ClearFlag(HValue::kTruncatingToInt32);
+        worklist.Add(HPhi::cast(input), zone());
       }
     }
   }
@@ -5380,6 +5436,9 @@ void HGraph::DeadCodeElimination() {
 
   while (!worklist.is_empty()) {
     HInstruction* instr = worklist.RemoveLast();
+    // This happens when an instruction is used multiple times as operand. That
+    // in turn could happen through GVN.
+    if (!instr->IsLinked()) continue;
     if (FLAG_trace_dead_code_elimination) {
       HeapStringAllocator allocator;
       StringStream stream(&allocator);
@@ -6830,7 +6889,7 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   // of the property values and is the value of the entire expression.
   Push(literal);
 
-  HLoadElements* elements = NULL;
+  HInstruction* elements = NULL;
 
   for (int i = 0; i < length; i++) {
     Expression* subexpr = subexprs->at(i);
@@ -6842,10 +6901,7 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
     HValue* value = Pop();
     if (!Smi::IsValid(i)) return Bailout("Non-smi key in array literal");
 
-    // Pass in literal as dummy depedency, since  the receiver always has
-    // elements.
-    elements = new(zone()) HLoadElements(literal, literal);
-    AddInstruction(elements);
+    elements = AddLoadElements(literal);
 
     HValue* key = AddInstruction(
         new(zone()) HConstant(Handle<Object>(Smi::FromInt(i), isolate()),
@@ -7960,8 +8016,7 @@ HValue* HOptimizedGraphBuilder::HandlePolymorphicElementAccess(
 
   HInstruction* elements_kind_instr =
       AddInstruction(new(zone()) HElementsKind(object));
-  HInstruction* elements =
-      AddInstruction(new(zone()) HLoadElements(object, checkspec));
+  HInstruction* elements = AddLoadElements(object, checkspec);
   HLoadExternalArrayPointer* external_elements = NULL;
   HInstruction* checked_key = NULL;
 
