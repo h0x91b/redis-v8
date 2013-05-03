@@ -1,9 +1,43 @@
 redis-v8 alpha
-========
+==============
 
 Redis (2.9.9) with built in google V8 JS engine
 
 Currently tested on Mac OS X and CentOS 6.3
+
+Fast JS database scripts
+========================
+
+Place into ./js directory (js-dir flag in redis.conf) any js file.
+
+./js/example.js
+
+	function MakeMillionKeys(){
+		for(var i=0;i<1000000;i++){
+			redis.set('KEY'+i,'some value');
+		}
+	}
+
+	function getRandom100keys(){
+		var ret = Array(100);
+		for(var i=0;i<100;i++){
+			var key = 'KEY'+Math.floor(Math.random()*1000000);
+			var value = redis.get(key);
+			ret[i] = {
+				key: key,
+				value: value
+			}
+		}
+		return ret;
+	}
+	
+Open console or any standard redis client and type:
+
+	$ ./redis-cli JSRELOAD #this will reload a V8 and all JS DB scripts
+	$ ./redis-cli JS "MakeMillionKeys();"
+	"{\"ret\":null,\"cmds\":1000000}"
+	$ ./redis-cli JS "return getRandom100keys()"
+	"{\"ret\":[{\"key\":\"KEY258647\",\"value\":\"some value\"},...99 more keys here...],\"cmds\":100}"
 
 Speed
 =====
