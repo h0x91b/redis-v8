@@ -76,17 +76,38 @@ redis.bgsave = function(){
 // BITOP operation destkey key [key ...]
 // BLPOP key [key ...] timeout
 // BRPOP key [key ...] timeout
-// BRPOPLPUSH source destination timeout
-// CLIENT KILL ip:port
 
-redis.client_list = function(list){
+redis.brpoplpush = function(source,destination,timeout){
+	return this._run('BRPOPLPUSH',source,destination,timeout);
+}
+
+redis.client_kill = function(ip_port){
+	return this._run('CLIENT','KILL',ip_port);
+}
+
+redis.client_list = function(){
 	return this._run('CLIENT','LIST');
 }
-// CLIENT GETNAME
-// CLIENT SETNAME connection-name
-// CONFIG GET parameter
-// CONFIG SET parameter value
-// CONFIG RESETSTAT
+
+redis.client_getname = function(){
+	return this._run('CLIENT','GETNAME');
+}
+
+redis.client_setname = function(name){
+	return this._run('CLIENT','SETNAME',name);
+}
+
+redis.config_get = function(parameter){
+	return this._run('CONFIG','GET',parameter);
+}
+
+redis.config_set = function(parameter,value){
+	return this._run('CONFIG','SET',parameter,value);
+}
+
+redis.config_resetstat = function(){
+	return this._run('CONFIG','RESETSTAT');
+}
 
 redis.dbsize = function(){
 	return this._run('DBSIZE');
@@ -95,9 +116,15 @@ redis.dbsize = function(){
 redis.bgsave = function(){
 	return this._run('BGSAVE');
 }
-// DEBUG OBJECT key
-// DEBUG SEGFAULT
-// DECR key
+
+redis.debug_object = function(key){
+	return this._run('DEBUG','OBJECT',key);
+}
+
+redis.debug_segfault = function(){
+	return this._run('DEBUG','SEGFAULT');
+}
+
 redis.decr = function(key) {
 	return this._run('DECR',key);
 }
@@ -141,7 +168,10 @@ redis.exists = function(key){
 redis.expire = function(key,seconds){
 	return this._run('EXPIRE',key,seconds);
 }
-// EXPIREAT key timestamp
+
+redis.expireat = function(key,timestamp){
+	return this._run('EXPIREAT',key,timestamp);
+}
 
 redis.flushall = function(){
 	return this._run('FLUSHALL');
@@ -154,12 +184,28 @@ redis.flushdb = function(){
 redis.get = function(key){
 	return this._run('GET',key);
 }
-// GETBIT key offset
-// GETRANGE key start end
-// GETSET key value
+
+redis.getbit = function(key,offset){
+	return this._run('GETBIT',key,offset);
+}
+
+redis.getrange = function(key,start,end){
+	return this._run('GETRANGE',key,start,end);
+}
+
+redis.getset = function(key,value){
+	return this._run('GETSET',key,value);
+}
+
 // HDEL key field [field ...]
-// HEXISTS key field
-// HGET key field
+
+redis.hexists = function(key,field){
+	return this._run('HEXISTS',key,field);
+}
+
+redis.hget = function(key,field){
+	return this._run('HGET',key,field);
+}
 
 redis.hgetall = function(key){
 	redis._runcounter++;
@@ -175,8 +221,14 @@ redis.hgetall = function(key){
 	}
 	return ret;
 }
-// HINCRBY key field increment
-// HINCRBYFLOAT key field increment
+
+redis.hincrby = function(key,field,increment){
+	return this._run('HINCRBY',key,field,increment)
+}
+
+redis.hincrbyfloat = function(key,field,increment){
+	return this._run('HINCRBYFLOAT',key,field,increment);
+}
 
 redis.hkeys = function(key){
 	return this._run('HKEYS',key);
@@ -185,7 +237,7 @@ redis.hkeys = function(key){
 redis.hlen = function(key){
 	return this._run('HLEN',key);
 }
-// HMGET key field [field ...]
+
 redis.hmget = function(key,fields){
 	redis._runcounter++;
 	redis.last_error = '';
@@ -216,8 +268,14 @@ redis.hmset = function(key, obj){
 	}
 	return this._run.apply(this,f);
 }
-// HSET key field value
-// HSETNX key field value
+
+redis.hset = function(key,field,value){
+	return this._run('HSET',key,field,value);
+}
+
+redis.hsetnx = function(key,field,value){
+	return this._run('HSETNX',key,field,value);
+}
 
 redis.hvals = function(key){
 	return this._run('HVALS',key);
@@ -226,8 +284,15 @@ redis.hvals = function(key){
 redis.incr = function(key){
 	return this._run('INCR',key);
 }
-// INCRBY key increment
-// INCRBYFLOAT key increment
+
+redis.incrby = function(key,increment){
+	return this._run('INCRBY',key,increment);
+}
+
+redis.incrbyfloat = function(key,increment){
+	return this._run('INCRBYFLOAT',key,increment);
+}
+
 // INFO [section]
 
 redis.keys = function(pattern){
@@ -237,7 +302,11 @@ redis.keys = function(pattern){
 redis.lastsave = function(){
 	return this._run('LASTSAVE');
 }
-// LINDEX key index
+
+redis.lindex = function(key,index){
+	return this._run('LINDEX',key,index);
+}
+
 // LINSERT key BEFORE|AFTER pivot value
 
 redis.llen = function(key){
@@ -251,8 +320,15 @@ redis.lpop = function(key){
 redis.lpush = function(key,value){
 	return this._run('LPUSH',key,value);
 }
-// LPUSHX key value
-// LRANGE key start stop
+
+redis.lpushhx = function(key,value){
+	return this._run('LPUSHX',key,value);
+}
+
+redis.lrange = function(key,start,stop){
+	return this._run('LRANGE',key,start,stop);
+}
+
 // LREM key count value
 // LSET key index value
 // LTRIM key start stop

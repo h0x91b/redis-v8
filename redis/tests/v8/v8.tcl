@@ -55,9 +55,9 @@ start_server {tags {"basic"}} {
 	} {js-slow 100}
 	
 	test {V8 SET CONFIG js-timeout} {
-		r config set js-timeout 1
+		r config set js-timeout 5
 		r config get js-timeout
-	} {js-timeout 1}
+	} {js-timeout 5}
 	
 	test {V8 script timeout test} {
 		assert_error {ERR -Script runs too long, Exception error: "null"} {r js {while(1){}}}
@@ -70,4 +70,8 @@ start_server {tags {"basic"}} {
 	test {V8 exists command returns 1} {
 		r js {redis.set('key','value'); return redis.exists('key');}
 	} {{"ret":1,"cmds":2}}
+	
+	test {V8 js config_get} {
+		r js {return redis.config_get('js-dir')}
+	} {{"ret":["js-dir","./js/"],"cmds":1}}
 }
