@@ -44,10 +44,11 @@ redis._run = function(){
 }
 
 redis.inline_return = function(){
+	var commands = redis._runcounter;
 	var ret = inline_redis_func();
 	if(ret === undefined) ret = null;
 	if(ret === false) return redis.last_error;
-	var ret_obj = {ret:ret};
+	var ret_obj = {ret:ret,cmds:redis._runcounter-commands};
 	return JSON.stringify(ret_obj);
 }
 

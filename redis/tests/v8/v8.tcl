@@ -6,27 +6,27 @@ start_server {tags {"basic"}} {
 	
 	test {V8 simple Math js} {
 		r js {return Math.floor(10/3)}
-	} {{"ret":3}}
+	} {{"ret":3,"cmds":0}}
 	
 	test {V8 get non exists key} {
 		r js {return redis.get('non exists key')}
-	} {{"ret":null}}
+	} {{"ret":null,"cmds":1}}
 	
 	test {V8 set and get key} {
 		r js {redis.set('exist key','exist value'); return redis.get('exist key')}
-	} {{"ret":"exist value"}}
+	} {{"ret":"exist value","cmds":2}}
 	
 	test {V8 hmset & hgetall} {
 		r js {redis.hmset('HSET',{a:123,b:"string"}); return redis.hgetall('HSET')}
-	} {{"ret":{"a":"123","b":"string"}}}
+	} {{"ret":{"a":"123","b":"string"},"cmds":2}}
 	
 	test {V8 hmget} {
 		r js {return redis.hmget('HSET','a','b');}
-	} {{"ret":{"a":"123","b":"string"}}}
+	} {{"ret":{"a":"123","b":"string"},"cmds":1}}
 	
 	test {V8 hmget array} {
 		r js {return redis.hmget('HSET',['a','b']);}
-	} {{"ret":{"a":"123","b":"string"}}}
+	} {{"ret":{"a":"123","b":"string"},"cmds":1}}
 
 	test {V8 dump key (test must fail)} {
 		r js {return redis.dump('HSET');}
@@ -34,7 +34,7 @@ start_server {tags {"basic"}} {
 
 	test {V8 test user script blogpost.new} {
 		r js {blogpost.new('test title','test body'); return redis.hmget('HSET:BLOG_POST:1','id','title','body');}
-	} {{"ret":{"id":"1","title":"test title","body":"test body"}}}
+	} {{"ret":{"id":"1","title":"test title","body":"test body"},"cmds":4}}
 
 	test {V8 exception test} {
 		assert_error {ERR -Exception error: "error"} {r js {throw "error"}}
@@ -65,9 +65,9 @@ start_server {tags {"basic"}} {
 	
 	test {V8 exists command returns 0} {
 		r js {return redis.exists('non exist');}
-	} {{"ret":0}}
+	} {{"ret":0,"cmds":1}}
 	
 	test {V8 exists command returns 1} {
 		r js {redis.set('key','value'); return redis.exists('key');}
-	} {{"ret":1}}
+	} {{"ret":1,"cmds":2}}
 }
