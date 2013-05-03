@@ -201,7 +201,7 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value str(args[i]);
-		argv[i] = createStringObjectPtr((char*)ToCString(str),strlen(ToCString(str)));
+		argv[i] = createStringObjectPtr((char*)*str,str.length());
 	}
 	
 	/* Setup our fake client for command execution */
@@ -328,7 +328,8 @@ RUN_JS_RETURN *run_js(char *code){
 		wrapcodebuf_len = code_length+170;
 		wrapcodebuf = (char*)zmallocPtr(wrapcodebuf_len);
 	}
-	memset(wrapcodebuf,0,wrapcodebuf_len);
+	//memset(wrapcodebuf,0,code_length+170);
+	wrapcodebuf[0] = '\0';
 	sprintf(wrapcodebuf,"inline_redis_func = function(){%s}; redis.inline_return()",code);
 	
 	//printf("%s\n",wrapcodebuf);
@@ -380,7 +381,7 @@ RUN_JS_RETURN *run_js(char *code){
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
 	}
 	//char *rez= (char*)zmallocPtr(size);
-	memset(run_js_returnbuf,0,run_js_returnbuf_len);
+	//memset(run_js_returnbuf,0,size+1);
 	memcpy(run_js_returnbuf,*ascii,size);
 	run_js_return.json = run_js_returnbuf;
 	run_js_return.len = size;
