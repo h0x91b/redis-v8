@@ -62,4 +62,12 @@ start_server {tags {"basic"}} {
 	test {V8 script timeout test} {
 		assert_error {ERR -Script runs too long, Exception error: "null"} {r js {while(1){}}}
 	}
+	
+	test {V8 exists command returns 0} {
+		r js {return redis.exists('non exist');}
+	} {{"ret":0}}
+	
+	test {V8 exists command returns 1} {
+		r js {redis.set('key','value'); return redis.exists('key');}
+	} {{"ret":1}}
 }
