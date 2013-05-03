@@ -2782,7 +2782,7 @@ void loadDataFromDisk(void) {
 	passPointerToaddReplyString(addReplyString);
 	passPointerToaddReplyBulk(addReplyBulk);
 	passPointerToaddReplyError(addReplyError);
-	funccpp(1,'d',1.3);
+	v8setup();
 }
 
 void redisOutOfMemoryHandler(size_t allocation_size) {

@@ -1116,11 +1116,4 @@ struct hashTypeIterator {
 #define REDIS_HASH_KEY 1
 #define REDIS_HASH_VALUE 2
 
-
-//extern void funccpp(int i, char c, float x);
-//void (*pingCommandPtr)(redisClient *c);
-//void pingCommand(redisClient *c);
-
-//typedef int (*pingCommandDef)(redisClient *c);
-
 #endif

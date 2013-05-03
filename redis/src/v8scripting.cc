@@ -55,44 +55,25 @@ int js_timeout = 15;
 int js_slow = 250;
 char *last_js_run = NULL;
 
-//void (*redisLogRawPtr)(int,const char);
 void (*redisLogRawPtr)(int, char*);
-//redisClient *createClient(int fd) {
 redisClient* (*redisCreateClientPtr)(int);
 redisCommand* (*lookupCommandByCStringPtr)(char*);
-//void call(redisClient *c, int flags) {
 void (*callPtr)(redisClient*,int);
-//robj *createStringObject(char *ptr, size_t len) {
 robj* (*createStringObjectPtr)(char*,size_t);
-//sds sdsempty(void)
 sds (*sdsemptyPtr)();
-//sds sdscatlen(sds s, const void *t, size_t len)
 sds (*sdscatlenPtr)(sds, const void *,size_t);
-//size_t sdslen(const sds s)
 size_t (*sdslenPtr)(const sds);
-//void listDelNode(list *list, listNode *node)
 void (*listDelNodePtr)(list*,listNode*);
-//void decrRefCount(robj *o)
 void (*decrRefCountPtr)(robj*);
-//void sdsfree(sds s)
 void (*sdsfreePtr)(sds);
-//void *zmalloc(size_t size)
 void* (*zmallocPtr)(size_t);
-//void zfree(void *ptr)
 void (*zfreePtr)(void*);
-//void redisLog(int level, const char *fmt, ...)
 void (*redisLogPtr)(int,const char*,...);
-//void addReply(redisClient *c, robj *obj)
 void (*addReplyPtr)(redisClient *, robj *);
-//sds sdsnew(const char *init)
 sds (*sdsnewPtr)(const char*);
-//robj *createObject(int type, void *ptr)
 robj* (*createObjectPtr)(int,void*);
-//void addReplyString(redisClient *c, char *s, size_t len)
 void (*addReplyStringPtr)(redisClient*,char *,size_t);
-//void addReplyBulk(redisClient *c, robj *obj)
 void (*addReplyBulkPtr)(redisClient*,robj*);
-//void addReplyError(redisClient *c, char *err);
 void (*addReplyErrorPtr)(redisClient*,char*);
 
 redisClient *client=NULL;
@@ -528,7 +509,7 @@ extern "C"
 		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8 Reload complete\r\n")));
 	}
 	
-	void funccpp(int i, char c, float x)
+	void v8setup()
 	{
 		redisLogRawPtr(REDIS_NOTICE,"Making redisClient\n");
 		client = redisCreateClientPtr(-1);

@@ -1459,7 +1459,6 @@ void enableWatchdog(int period);
 void disableWatchdog(void);
 void watchdogScheduleSignal(int period);
 void redisLogHexDump(int level, char *descr, void *value, size_t len);
-extern void funccpp(int i, char c, float x);
 
 #define redisDebug(fmt, ...) \
     printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
@@ -1468,6 +1467,7 @@ extern void funccpp(int i, char c, float x);
 
 
 /*V8 section*/
+void v8setup();
 void v8Command(redisClient *c);
 void v8Reload(redisClient *c);
 
