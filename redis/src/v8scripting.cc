@@ -325,6 +325,9 @@ void initV8(){
 
 char *wrapcodebuf = NULL;
 int wrapcodebuf_len = 4096;
+char* run_js_returnbuf = NULL;
+int run_js_returnbuf_len = 4096;
+
 char* run_js(char *code){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
@@ -378,10 +381,18 @@ char* run_js(char *code){
 	}
 	v8::String::Utf8Value ascii(result);
 	int size = strlen(*ascii);
-	char *rez= (char*)zmallocPtr(size);
-	memset(rez,0,size);
-	strcpy(rez,*ascii);
-	return rez;
+	if(run_js_returnbuf==NULL){
+		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+	}
+	if(size>run_js_returnbuf_len){
+		zfreePtr(run_js_returnbuf);
+		run_js_returnbuf_len = size+1;
+		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+	}
+	//char *rez= (char*)zmallocPtr(size);
+	memset(run_js_returnbuf,0,run_js_returnbuf_len);
+	memcpy(run_js_returnbuf,*ascii,size);
+	return run_js_returnbuf;
 }
 
 void load_user_script(char *file){
@@ -487,12 +498,12 @@ extern "C"
 		if(json && json[0]=='-'){
 			printf("run_js return error %s\n",json);
 			addReplyErrorPtr(c,json);
-			zfreePtr(json);
+			//zfreePtr(json);
 			return;
 		}
 		robj *obj = createStringObjectPtr(json,strlen(json));
 		addReplyBulkPtr(c,obj);
-		zfreePtr(json);
+		//zfreePtr(json);
 		decrRefCountPtr(obj);
 	}
 	
