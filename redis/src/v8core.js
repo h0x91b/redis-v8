@@ -78,12 +78,19 @@ redis.bgsave = function(){
 // BRPOPLPUSH source destination timeout
 // CLIENT KILL ip:port
 // CLIENT LIST
+redis.client_list = function(list){
+	return this.run('CLIENT','LIST');
+}
 // CLIENT GETNAME
 // CLIENT SETNAME connection-name
 // CONFIG GET parameter
 // CONFIG SET parameter value
 // CONFIG RESETSTAT
 // DBSIZE
+redis.dbsize = function(){
+	return redis.run('DBSIZE');
+}
+// BGSAVE
 // DEBUG OBJECT key
 // DEBUG SEGFAULT
 // DECR key
@@ -103,7 +110,6 @@ redis.del = function(key){
 	}
 	return this.run('DEL',key);
 }
-// DISCARD
 // DUMP key
 redis.dump = function(key){
 	redis.last_error = 'cant handle binary data, not implemented yet';
@@ -118,9 +124,11 @@ redis.dump = function(key){
 	return rez.join('');
 }
 // ECHO message
+redis.echo = function(message){
+	return redis.run('ECHO',message);
+}
 // EVAL script numkeys key [key ...] arg [arg ...]
 // EVALSHA sha1 numkeys key [key ...] arg [arg ...]
-// EXEC
 // EXISTS key
 redis.exists = function(key){
 	return this.run('EXISTS',key);
@@ -128,7 +136,13 @@ redis.exists = function(key){
 // EXPIRE key seconds
 // EXPIREAT key timestamp
 // FLUSHALL
+redis.flushall = function(){
+	return redis.run('FLUSHALL');
+}
 // FLUSHDB
+redis.flushdb = function(){
+	return redis.run('FLUSHDB');
+}
 // GET key
 redis.get = function(key){
 	return this.run('GET',key);
@@ -157,7 +171,13 @@ redis.hgetall = function(key){
 // HINCRBY key field increment
 // HINCRBYFLOAT key field increment
 // HKEYS key
+redis.hkeys = function(key){
+	return this.run('HKEYS',key);
+}
 // HLEN key
+redis.hlen = function(key){
+	return this.run('HLEN',key);
+}
 // HMGET key field [field ...]
 redis.hmget = function(key,fields){
 	redis.runcounter++;
@@ -192,6 +212,9 @@ redis.hmset = function(key, obj){
 // HSET key field value
 // HSETNX key field value
 // HVALS key
+redis.hvals = function(key){
+	return this.run('HVALS',key);
+}
 // INCR key
 redis.incr = function(key){
 	return this.run('INCR',key);
@@ -200,11 +223,23 @@ redis.incr = function(key){
 // INCRBYFLOAT key increment
 // INFO [section]
 // KEYS pattern
+redis.keys = function(pattern){
+	return this.run('KEYS',pattern);
+}
 // LASTSAVE
+redis.lastsave = function(){
+	return redis.run('LASTSAVE');
+}
 // LINDEX key index
 // LINSERT key BEFORE|AFTER pivot value
 // LLEN key
+redis.llen = function(key){
+	return this.run('LLEN',key);
+}
 // LPOP key
+redis.lpop = function(key){
+	return this.run('LPOP',key);
+}
 // LPUSH key value [value ...]
 redis.lpush = function(key,value){
 	return this.run('LPUSH',key,value);
@@ -219,9 +254,11 @@ redis.lpush = function(key,value){
 // MOVE key db
 // MSET key value [key value ...]
 // MSETNX key value [key value ...]
-// MULTI
 // OBJECT subcommand [arguments [arguments ...]]
 // PERSIST key
+redis.persist = function(key){
+	return this.run('PERSIST',key);
+}
 // PEXPIRE key milliseconds
 // PEXPIREAT key milliseconds-timestamp
 // PING
@@ -230,17 +267,32 @@ redis.ping = function(){
 }
 // PSETEX key milliseconds value
 // PTTL key
+redis.pttl = function(key){
+	return this.run('PTTL',key);
+}
 // RANDOMKEY
+redis.randomkey = function(){
+	return redis.run('RANDOMKEY');
+}
 // RENAME key newkey
 // RENAMENX key newkey
 // RESTORE key ttl serialized-value
 // RPOP key
+redis.rpop = function(key){
+	return this.run('RPOP',key);
+}
 // RPOPLPUSH source destination
 // RPUSH key value [value ...]
 // RPUSHX key value
 // SADD key member [member ...]
 // SAVE
+redis.save = function(){
+	return redis.run('SAVE');
+}
 // SCARD key
+redis.scard = function(key){
+	return this.run('SCARD',key);
+}
 // SCRIPT EXISTS script [script ...]
 // SCRIPT FLUSH
 // SCRIPT KILL
@@ -248,6 +300,9 @@ redis.ping = function(){
 // SDIFF key [key ...]
 // SDIFFSTORE destination key [key ...]
 // SELECT index
+redis.select = function(index){
+	return this.run('SELECT',index);
+}
 // SET key value [EX seconds] [PX milliseconds] [NX|XX]
 redis.set = function(key,value){
 	if(arguments.length>2){
@@ -275,19 +330,40 @@ redis.setex = function(key,expire,value){
 // SLAVEOF host port
 // SLOWLOG subcommand [argument]
 // SMEMBERS key
+redis.smembers = function(key){
+	return this.run('SMEMBERS',key);
+}
 // SMOVE source destination member
 // SORT key [BY pattern] [LIMIT offset count] [GET pattern [GET pattern ...]] [ASC|DESC] [ALPHA] [STORE destination]
 // SPOP key
+redis.spop = function(key){
+	return this.run('SPOP',key);
+}
 // SRANDMEMBER key [count]
 // SREM key member [member ...]
 // STRLEN key
+redis.strlen = function(key){
+	return this.run('STRLEN',key);
+}
 // SUBSCRIBE channel [channel ...]
 // SUNION key [key ...]
 // SUNIONSTORE destination key [key ...]
 // SYNC
+redis.sync = function(){
+	return redis.run('SYNC');
+}
 // TIME
+redis.time = function(){
+	return redis.run('TIME');
+}
 // TTL key
+redis.ttl = function(key){
+	return this.run('TTL',key);
+}
 // TYPE key
+redis.type = function(key){
+	return this.run('TYPE',key);
+}
 // ZADD key score member [score member ...]
 redis.zadd = function(key,score,value){
 	if(arguments.length>2){
@@ -301,6 +377,9 @@ redis.zadd = function(key,score,value){
 	return this.run('ZADD',key,score,value);
 }
 // ZCARD key
+redis.zcard = function(key){
+	return this.run('ZCARD',key);
+}
 // ZCOUNT key min max
 // ZINCRBY key increment member
 // ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
