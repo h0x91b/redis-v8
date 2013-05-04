@@ -714,6 +714,12 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
+		if (test_is_selected("v8_get_call")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.get foo:rand:000000000000");
+            benchmark("V8 GET CALL 1 inline",cmd,len);
+            free(cmd);
+        }
+
 		if (test_is_selected("v8_get_10")) {
             len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<10;i++) redis._get('foo:rand:000000000000')");
             benchmark("V8 GET 10 inline (result * 10)",cmd,len);
