@@ -201,7 +201,6 @@ v8::Handle<v8::Value> raw_get(const v8::Arguments& args) {
 	}
 	//printf("reply is %s\n",reply->ptr);
 	v8::Local<v8::String> v8reply = v8::String::New((const char *)reply->ptr);
-	//decrRefCountPtr(reply);
 	//printf("return to v8\n");
 	return v8reply;
 }
@@ -419,6 +418,58 @@ RUN_JS_RETURN *run_js(char *code){
 	return &run_js_return;
 }
 
+
+RUN_JS_RETURN *call_js(redisClient *c){
+	v8::HandleScope handle_scope;
+	v8::Context::Scope context_scope(v8_context);
+	
+	Handle<v8::Object> global = v8_context->Global();
+	Handle<v8::Value> value = global->Get(String::New("jscall_wrapper_function"));
+	Handle<v8::Function> jscall_wrapper_function = v8::Handle<v8::Function>::Cast(value);
+	
+	int argc = c->argc-1;
+	
+	Handle<Value> *args = (Handle<Value>*)zmallocPtr(argc*sizeof(Handle<Value>));
+	for (int i = 1; i <= argc; i++) { 
+		args[i-1] = v8::String::New((const char*)c->argv[i]->ptr); 
+	}
+	
+	v8::TryCatch trycatch;
+	v8::Handle<v8::Value> result = jscall_wrapper_function->Call(global, argc, args);
+	zfreePtr(args);
+	if (result.IsEmpty()) {  
+		Handle<Value> exception = trycatch.Exception();
+		String::AsciiValue exception_str(exception);
+		printf("Exception: %s\n", *exception_str);
+		char *errBuf = (char*)zmallocPtr(exception_str.length()+100);
+		memset(errBuf,0,exception_str.length());
+		if(!strcmp(*exception_str,"null")){
+			sprintf(errBuf,"-Script runs too long, Exception error: \"%s\"",*exception_str);
+		}
+		else {
+			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+		}
+		run_js_return.json = errBuf;
+		run_js_return.len = exception_str.length();
+		return &run_js_return;
+	}
+	
+	v8::String::Utf8Value ascii(result);
+	int size = ascii.length();
+	if(run_js_returnbuf==NULL){
+		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+	}
+	if(size>run_js_returnbuf_len){
+		zfreePtr(run_js_returnbuf);
+		run_js_returnbuf_len = (((size+1)/1024)+1)*1024;
+		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+	}
+	memcpy(run_js_returnbuf,*ascii,size);
+	run_js_return.json = run_js_returnbuf;
+	run_js_return.len = size;
+	return &run_js_return;
+}
+
 void load_user_script(char *file){
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
@@ -517,6 +568,28 @@ extern "C"
 		scriptStart = GetTickCount();
 		last_js_run = code;
 		RUN_JS_RETURN * ret = run_js(code);
+		last_js_run = NULL;
+		scriptStart = 0;
+		if(ret->json && ret->json[0]=='-'){
+			printf("run_js return error %s\n",ret->json);
+			addReplyErrorPtr(c,ret->json);
+			zfreePtr(ret->json);
+			return;
+		}
+		robj *obj = createStringObjectPtr(ret->json,ret->len);
+		addReplyBulkPtr(c,obj);
+		decrRefCountPtr(obj);
+	}
+	
+	void v8_exec_call(redisClient *c){
+		if(c->argc<2){
+			addReplyErrorPtr(c,"-Wrong number of arguments, must be at least 2");
+			return;
+		}
+		//printf("v8_exec_call args %i\n",c->argc);
+		scriptStart = GetTickCount();
+		last_js_run = (char*)c->argv[1]->ptr;
+		RUN_JS_RETURN * ret = call_js(c);
 		last_js_run = NULL;
 		scriptStart = 0;
 		if(ret->json && ret->json[0]=='-'){

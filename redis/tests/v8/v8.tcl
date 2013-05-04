@@ -74,4 +74,8 @@ start_server {tags {"basic"}} {
 	test {V8 js config_get} {
 		r js {return redis.config_get('js-dir')}
 	} {{"ret":["js-dir","./js/"],"cmds":1}}
+	
+	test {V8 JSCALL test} {
+		r jscall redis.get key
+	} {{"ret":"value","cmds":1}}
 }

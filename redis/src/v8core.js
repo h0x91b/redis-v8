@@ -33,6 +33,39 @@ redis.last_error = '';
 redis.v8_start = +new Date;
 redis._runcounter = 0;
 
+window = this;
+
+function jscall_search_function_in_obj(func,obj){
+	if(func in obj) return obj[func];
+	return null;
+}
+
+function jscall_wrapper_function(){
+	var funcname = arguments[0].split('.');
+	var obj = window;
+	var self = window;
+	funcname.forEach(function(func_or_obj){
+		if(!obj) return;
+		self = obj;
+		obj = jscall_search_function_in_obj(func_or_obj,obj);
+	})
+	var func = obj;
+	if(typeof func != 'function'){
+		redis.last_error = '-Function "'+arguments[0]+'" not found';
+		return redis.last_error;
+	}
+	var args = Array(arguments.length-1);
+	for(var i=0;i<arguments.length-1;i++){
+		args[i] = arguments[i+1];
+	}
+	var commands = redis._runcounter;
+	var ret = func.apply(self,args)
+	if(ret === undefined) ret = null;
+	if(ret === false) return redis.last_error;
+	var ret_obj = {ret:ret,cmds:redis._runcounter-commands};
+	return JSON.stringify(ret_obj);
+}
+
 redis._run = function(){
 	redis._runcounter++;
 	redis.last_error = '';

@@ -116,6 +116,7 @@ struct redisCommand *commandTable;
  */
 struct redisCommand redisCommandTable[] = {
 	{"js",v8Command,2,"wm",0,NULL,1,1,1,0,0},
+	{"jscall",v8CommandCall,-2,"wm",0,NULL,1,1,1,0,0},
 	{"jsreload",v8Reload,1,"r",0,NULL,1,1,1,0,0},
     {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
     {"set",setCommand,-3,"wm",0,noPreloadGetKeys,1,1,1,0,0},
@@ -1989,10 +1990,17 @@ void authCommand(redisClient *c) {
       addReplyError(c,"invalid password");
     }
 }
+
 void v8Command(redisClient *c){
 	v8_exec(c,(char*)c->argv[1]->ptr);
 	//addReply(c,createObject(REDIS_STRING,sdsnew("+V8\r\n")));
 }
+
+void v8CommandCall(redisClient *c){
+	v8_exec_call(c);
+	//addReply(c,createObject(REDIS_STRING,sdsnew("+V8\r\n")));
+}
+
 void v8Reload(redisClient *c){
 	v8_reload(c);
 	//addReply(c,createObject(REDIS_STRING,sdsnew("+V8\r\n")));
