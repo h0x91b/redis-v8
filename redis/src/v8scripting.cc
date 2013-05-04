@@ -213,6 +213,7 @@ v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
 	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
 	robj *val = createStringObjectPtr((char*)*strval,strval.length());
 	setKeyPtr(c->db,key,val);
+	decrRefCountPtr(key);
 	return v8::Boolean::New(true);
 }
 
