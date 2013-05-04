@@ -59,7 +59,12 @@ redis.v8stats = function(){
 	});
 }
 
-/* standart redis functions */
+/* 
+* standart redis functions 
+* you can find info on http://redis.io/commands
+* some commands like PUBLISH SUBSCRIPE MONITOR are omited
+* if some command missing you can use redis._run("missing_command","arg1","arg2")
+*/
 
 redis.append = function(key,value){
 	return this._run('APPEND',key,value);
@@ -72,10 +77,50 @@ redis.bgrewriteaof = function(){
 redis.bgsave = function(){
 	return this._run('BGSAVE');
 }
-// BITCOUNT key [start] [end]
-// BITOP operation destkey key [key ...]
-// BLPOP key [key ...] timeout
-// BRPOP key [key ...] timeout
+
+redis.bitcount = function(key){
+	if(arguments.length==1){
+		return this._run('BITCOUNT',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'BITCOUNT';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.bitop = function(operation,destkey,key){
+	if(arguments.length==3){
+		return this._run('BITOP',operation,destkey,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'BITOP';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.blpop = function(key,timeout){
+	if(arguments.length==2){
+		return this._run('BLPOP',key,timeout);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'BLPOP';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.brpop = function(key,timeout){
+	if(arguments.length==2){
+		return this._run('BRPOP',key,timeout);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'BRPOP';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.brpoplpush = function(source,destination,timeout){
 	return this._run('BRPOPLPUSH',source,destination,timeout);
@@ -158,8 +203,22 @@ redis.dump = function(key){
 redis.echo = function(message){
 	return this._run('ECHO',message);
 }
-// EVAL script numkeys key [key ...] arg [arg ...]
-// EVALSHA sha1 numkeys key [key ...] arg [arg ...]
+
+redis.eval = function(){
+	var args = Array(arguments.length+1);
+	args[0] = 'EVAL';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.evalsha = function(){
+	var args = Array(arguments.length+1);
+	args[0] = 'EVALSHA';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.exists = function(key){
 	return this._run('EXISTS',key);
@@ -212,7 +271,16 @@ redis.getset = function(key,value){
 	return this._run('GETSET',key,value);
 }
 
-// HDEL key field [field ...]
+redis.hdel = function(key,field){
+	if(arguments.length==2){
+		return this._run('HDEL',key,field);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'HDEL';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.hexists = function(key,field){
 	return this._run('HEXISTS',key,field);
@@ -308,7 +376,16 @@ redis.incrbyfloat = function(key,increment){
 	return this._run('INCRBYFLOAT',key,increment);
 }
 
-// INFO [section]
+redis.info = function(){
+	if(arguments.length==0){
+		return this._run('INFO');
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'INFO';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.keys = function(pattern){
 	return this._run('KEYS',pattern);
@@ -322,7 +399,9 @@ redis.lindex = function(key,index){
 	return this._run('LINDEX',key,index);
 }
 
-// LINSERT key BEFORE|AFTER pivot value
+redis.linsert = function(key,before_after,pivot,value){
+	return this._run('LINSERT',key,before_after,pivot,value);
+}
 
 redis.llen = function(key){
 	return this._run('LLEN',key);
@@ -331,9 +410,16 @@ redis.llen = function(key){
 redis.lpop = function(key){
 	return this._run('LPOP',key);
 }
-// LPUSH key value [value ...]
+
 redis.lpush = function(key,value){
-	return this._run('LPUSH',key,value);
+	if(arguments.length==2){
+		return this._run('LPUSH',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'LPUSH';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
 }
 
 redis.lpushhx = function(key,value){
@@ -356,16 +442,58 @@ redis.ltrim = function(key,start,stop){
 	return this._run('LTRIM',key,start,stop);
 }
 
-// MGET key [key ...]
+redis.mget = function(key){
+	if(arguments.length==1){
+		return this._run('MGET',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'MGET';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 // MIGRATE host port key destination-db timeout
+redis.migrate = function(){
+	this.last_error = 'not supported yet';
+	return false;
+}
 
 redis.move = function(key,db){
 	return this._run('MOVE',key,db);
 }
 
-// MSET key value [key value ...]
-// MSETNX key value [key value ...]
-// OBJECT subcommand [arguments [arguments ...]]
+redis.mset = function(key,value){
+	if(arguments.length==2){
+		return this._run('MSET',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'MSET';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.msetnx = function(key,value){
+	if(arguments.length==2){
+		return this._run('MSETNX',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'MSETNX';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.object = function(subcommand){
+	if(arguments.length==1){
+		return this._run('OBJECT',subcommand);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'OBJECT';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.persist = function(key){
 	return this._run('PERSIST',key);
@@ -402,18 +530,46 @@ redis.rename = function(key,newkey){
 redis.renamenx = function(key,newkey){
 	return this._run('RENAMENX',key,newkey);
 }
+
 // RESTORE key ttl serialized-value
+redis.restore = function(key,ttl,serialized_value){
+	redis.last_error = 'cant handle binary data, not implemented yet';
+	return false;
+}
 
 redis.rpop = function(key){
 	return this._run('RPOP',key);
 }
-// RPOPLPUSH source destination
-// RPUSH key value [value ...]
+
+redis.rpoplpush = function(source,destination){
+	return this._run('RPOPLPUSH',source,destination);
+}
+
+redis.rpush = function(key,value){
+	if(arguments.length==2){
+		return this._run('RPUSH',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'RPUSH';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.rpushx = function(key,value){
 	return this._run('RPUSHX',key,value);
 }
-// SADD key member [member ...]
+
+redis.sadd = function(key,member){
+	if(arguments.length==2){
+		return this._run('SADD',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SADD';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.save = function(){
 	return this._run('SAVE');
@@ -422,12 +578,52 @@ redis.save = function(){
 redis.scard = function(key){
 	return this._run('SCARD',key);
 }
-// SCRIPT EXISTS script [script ...]
-// SCRIPT FLUSH
-// SCRIPT KILL
-// SCRIPT LOAD script
-// SDIFF key [key ...]
-// SDIFFSTORE destination key [key ...]
+
+redis.script_exists = function(script){
+	if(arguments.length==1){
+		return this._run('SCRIPT','EXISTS',script);
+	}
+	var args = Array(arguments.length+2);
+	args[0] = 'SCRIPT';
+	args[1] = 'EXISTS';
+	for(var i=0;i<arguments.length;i++)
+		args[i+2] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.script_flush = function(){
+	return this._run('SCRIPT','FLUSH');
+}
+
+redis.script_kill = function(){
+	return this._run('SCRIPT','KILL');
+}
+
+redis.script_load = function(script){
+	return this._run('SCRIPT','LOAD',script);
+}
+
+redis.sdiff = function(key){
+	if(arguments.length==1){
+		return this._run('SDIFF',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SDIFF';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.sdiffstore = function(destination,key){
+	if(arguments.length==2){
+		return this._run('SDIFFSTORE',destination,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SDIFFSTORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.select = function(index){
 	return this._run('SELECT',index);
@@ -435,8 +631,7 @@ redis.select = function(index){
 
 redis._set = function(key,value){
 	if(arguments.length>2){
-		var args = [];
-		args = Array(arguments.length+1);
+		var args = Array(arguments.length+1);
 		args[0] = 'SET';
 		for(var i=0;i<arguments.length;i++)
 			args[i+1] = arguments[i];
@@ -474,14 +669,54 @@ redis.setnx = function(key,value){
 redis.setrange = function(key,offset,value){
 	return this._run('SETRANGE',key,offset,value);
 }
-// SHUTDOWN [NOSAVE] [SAVE]
-// SINTER key [key ...]
-// SINTERSTORE destination key [key ...]
+
+redis.shutdown = function(){
+	if(arguments.length==1){
+		return this._run('SHUTDOWN');
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SHUTDOWN';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.sinter = function(key){
+	if(arguments.length==1){
+		return this._run('SINTER',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SINTER';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.sinterstore = function(destination,key){
+	if(arguments.length==2){
+		return this._run('SINTERSTORE',destination,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SINTERSTORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.sismember = function(key,member){
 	return this._run('SISMEMBER',key,member);
 }
-// SLOWLOG subcommand [argument]
+
+redis.slowlog = function(subcommand){
+	if(arguments.length==1){
+		return this._run('SLOWLOG',subcommand);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SLOWLOG';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.smembers = function(key){
 	return this._run('SMEMBERS',key);
@@ -490,20 +725,64 @@ redis.smembers = function(key){
 redis.smove = function(source,destination,member){
 	return this._run('SMOVE',source,destination,member);
 }
-// SORT key [BY pattern] [LIMIT offset count] [GET pattern [GET pattern ...]] [ASC|DESC] [ALPHA] [STORE destination]
+
+redis.sort = function(key){
+	if(arguments.length==1){
+		return this._run('SORT',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SORT';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.spop = function(key){
 	return this._run('SPOP',key);
 }
-// SRANDMEMBER key [count]
-// SREM key member [member ...]
+
+redis.srandmember = function(key,count){
+	if(argument.length==1)
+		return this._run('SRANDMEMBER',key);
+	return this._run('SRANDMEMBER',key,count);
+}
+
+redis.srem = function(key,member){
+	if(arguments.length==2){
+		return this._run('SREM',key,value);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SREM';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.strlen = function(key){
 	return this._run('STRLEN',key);
 }
-// SUBSCRIBE channel [channel ...]
-// SUNION key [key ...]
-// SUNIONSTORE destination key [key ...]
+
+redis.sunion = function(key){
+	if(arguments.length==1){
+		return this._run('SUNION',key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SUNION';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.sunionstore = function(destination,key){
+	if(arguments.length==2){
+		return this._run('SUNIONSTORE',destination,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'SUNIONSTORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.sync = function(){
 	return this._run('SYNC');
@@ -523,8 +802,7 @@ redis.type = function(key){
 
 redis.zadd = function(key,score,value){
 	if(arguments.length>2){
-		var args = [];
-		args = Array(arguments.length+1);
+		var args = Array(arguments.length+1);
 		args[0] = 'ZADD';
 		for(var i=0;i<arguments.length;i++)
 			args[i+1] = arguments[i];
@@ -545,14 +823,33 @@ redis.zincrby = function(key,increment,member){
 	return this._run('ZINCRBY',key,increment,member);
 }
 
-// ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
-// ZRANGE key start stop [WITHSCORES]
-redis.zrange = function(key,start,stop){
-	if(typeof withscores != 'undefined')
+redis.zinterstore = function(destination,numkeys,key){
+	if(arguments.length==3){
+		return this._run('ZINTERSTORE',destination,numkeys,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'ZUNIONSTORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
+
+redis.zrange = function(key,start,stop,withscores){
+	if(arguments.length==4)
 		return this._run('ZRANGE',key,start,stop,'WITHSCORES');
 	return this._run('ZRANGE',key,start,stop);
 }
-// ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]
+
+redis.zrangebyscore = function(key,min,max){
+	if(arguments.length==3){
+		return this._run('ZRANGEBYSCORE',key,min,max);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'ZRANGEBYSCORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.zrank = function(key,member){
 	return this._run('ZRANK',key,member);
@@ -560,8 +857,7 @@ redis.zrank = function(key,member){
 
 redis.zrem = function(key,value){
 	if(arguments.length>2){
-		var args = [];
-		args = Array(arguments.length+1);
+		var args = Array(arguments.length+1);
 		args[0] = 'ZREM';
 		for(var i=0;i<arguments.length;i++)
 			args[i+1] = arguments[i];
@@ -569,7 +865,6 @@ redis.zrem = function(key,value){
 	}
 	return this._run('ZREM',key,value);
 }
-
 
 redis.zremrangebyrank = function(key,start,stop){
 	return this._run('ZREMRANGEBYRANK',key,start,stop);
@@ -584,7 +879,17 @@ redis.zrevrange = function(key,start,stop,withscores){
 		return this._run('ZREVRANGE',key,start,stop,'WITHSCORES');
 	return this._run('ZREVRANGE',key,start,stop);
 }
-// ZREVRANGEBYSCORE key max min [WITHSCORES] [LIMIT offset count]
+
+redis.zrevrangebyscore = function(key,min,max){
+	if(arguments.length==3){
+		return this._run('ZREVRANGEBYSCORE',key,min,max);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'ZREVRANGEBYSCORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
 redis.zrevrank = function(key,member){
 	return this._run('ZREVRANK',key,member);
@@ -593,11 +898,19 @@ redis.zrevrank = function(key,member){
 redis.zscore = function(key,member){
 	return this._run('ZSCORE',key,member);
 }
-// ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]
 
+redis.zunionstore = function(destination,numkeys,key){
+	if(arguments.length==3){
+		return this._run('ZUNIONSTORE',destination,numkeys,key);
+	}
+	var args = Array(arguments.length+1);
+	args[0] = 'ZUNIONSTORE';
+	for(var i=0;i<arguments.length;i++)
+		args[i+1] = arguments[i];
+	return this._run.apply(this,args);
+}
 
-
-/* Log levels
+/* Redis Log levels
 #define REDIS_DEBUG 0
 #define REDIS_VERBOSE 1
 #define REDIS_NOTICE 2
@@ -626,9 +939,5 @@ console = {
 			redis.__log(3,'console.warn argument['+i+'] = ' + console.pretifyJSON(arguments[i]));
 	}
 };
-
-redis.del('hello')
-redis.set('hello','value')
-console.log(redis.get('hello'))
 
 //
