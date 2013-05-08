@@ -35,25 +35,21 @@ redis._runcounter = 0;
 
 window = this;
 
-function jscall_search_function_in_obj(func,obj){
-	if(func in obj) return obj[func];
-	return null;
-}
-
 function jscall_wrapper_function(){
-	var funcname = arguments[0].split('.');
-	var obj = window;
-	var self = window;
-	funcname.forEach(function(func_or_obj){
-		if(!obj) return;
-		self = obj;
-		obj = jscall_search_function_in_obj(func_or_obj,obj);
-	})
-	var func = obj;
+	var self, func;
+
+	self = window;
+	func = eval('('+arguments[0]+')');
 	if(typeof func != 'function'){
 		redis.last_error = '-Function "'+arguments[0]+'" not found';
 		return redis.last_error;
 	}
+	var funcname = arguments[0].split('.');
+	funcname.pop();
+	if(funcname.length>0){
+		self = eval('('+funcname.join('.')+')');
+	}
+
 	var args = Array(arguments.length-1);
 	for(var i=0;i<arguments.length-1;i++){
 		args[i] = arguments[i+1];
