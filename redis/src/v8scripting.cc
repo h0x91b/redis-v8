@@ -77,6 +77,7 @@ void (*addReplyBulkPtr)(redisClient*,robj*);
 void (*addReplyErrorPtr)(redisClient*,char*);
 robj *(*lookupKeyReadPtr)(redisDb*, robj*);
 void (*setKeyPtr)(redisDb*, robj*, robj*);
+void (*notifyKeyspaceEventPtr)(int, char *, robj *, int );
 
 redisClient *client=NULL;
 
@@ -212,6 +213,7 @@ v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
 	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
 	robj *val = createStringObjectPtr((char*)*strval,strval.length());
 	setKeyPtr(c->db,key,val);
+	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"set",key,c->db->id);
 	decrRefCountPtr(key);
 	return v8::Boolean::New(true);
 }
@@ -741,6 +743,11 @@ extern "C"
 	void passPointerTosetKey(void (*functionPtr)(redisDb*, robj*, robj*)){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerTosetKey");
 		setKeyPtr = functionPtr;
+	}
+	
+	void passPointerTonotifyKeyspaceEvent(void (*functionPtr)(int, char *, robj *, int )){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTonotifyKeyspaceEvent");
+		notifyKeyspaceEventPtr = functionPtr;
 	}
 	
 	void config_js_dir(char *_js_dir){

@@ -2792,6 +2792,7 @@ void loadDataFromDisk(void) {
 	passPointerToaddReplyError(addReplyError);
 	passPointerTolookupKeyRead(lookupKeyRead);
 	passPointerTosetKey(setKey);
+	passPointerTonotifyKeyspaceEvent(notifyKeyspaceEvent);
 	v8setup();
 }
 

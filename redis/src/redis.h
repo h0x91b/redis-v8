@@ -1496,6 +1496,7 @@ void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*));
 void passPointerToaddReplyError(void (*functionPtr)(redisClient*,char*));
 void passPointerTolookupKeyRead(robj *(*functionPtr)(redisDb*, robj *));
 void passPointerTosetKey(void (*functionPtr)(redisDb*, robj*, robj*));
+void passPointerTonotifyKeyspaceEvent(void (*functionPtr)(int, char *, robj *, int ));
 void v8_exec(redisClient *c,char* code);
 void v8_exec_call(redisClient *c);
 void v8_reload(redisClient *c);
