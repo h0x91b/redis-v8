@@ -200,6 +200,10 @@ redis.debug_segfault = function(){
 }
 
 redis.decr = function(key) {
+	if(typeof key != 'string' || key.length<1){
+		redis.last_error = '-Not specified key';
+		return false;
+	}
 	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = this.__incrby(key,-1);
@@ -210,6 +214,10 @@ redis.decr = function(key) {
 }
 
 redis.decrby = function(key,decrement) {
+	if(typeof key != 'string' || key.length<1){
+		redis.last_error = '-Not specified key';
+		return false;
+	}
 	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = this.__incrby(key,-decrement);
@@ -406,6 +414,10 @@ redis.hvals = function(key){
 }
 
 redis.incr = function(key){
+	if(typeof key != 'string' || key.length<1){
+		redis.last_error = '-Not specified key';
+		return false;
+	}
 	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = this.__incrby(key,1);
@@ -416,6 +428,10 @@ redis.incr = function(key){
 }
 
 redis.incrby = function(key,increment){
+	if(typeof key != 'string' || key.length<1){
+		redis.last_error = '-Not specified key';
+		return false;
+	}
 	redis._runcounter++;
 	redis.last_error = '';
 	redis.str = this.__incrby(key,increment);

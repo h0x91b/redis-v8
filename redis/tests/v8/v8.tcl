@@ -55,9 +55,9 @@ start_server {tags {"basic"}} {
 	} {js-slow 100}
 	
 	test {V8 SET CONFIG js-timeout} {
-		r config set js-timeout 5
+		r config set js-timeout 3
 		r config get js-timeout
-	} {js-timeout 5}
+	} {js-timeout 3}
 	
 	test {V8 script timeout test} {
 		assert_error {ERR -Script runs too long, Exception error: "null"} {r js {while(1){}}}
@@ -108,5 +108,26 @@ start_server {tags {"basic"}} {
 		r jscall redis.del incrkey5
 		r jscall redis.hset incrkey5 field value
 		assert_error {ERR -value is not integer} {r jscall redis.incrby incrkey5 10}
+	}
+	
+	test {V8 JSCALL incrby without arg return same value} {
+		r jscall redis.del incrkey6
+		r jscall redis.set incrkey6 99
+		r jscall redis.incrby incrkey6
+	} {{"ret":99,"cmds":1}}
+	
+	test {V8 JSCALL incrby on non existing key without arg return 0} {
+		r jscall redis.del incrkey7
+		r jscall redis.incrby incrkey7
+	} {{"ret":0,"cmds":1}}
+	
+	test {V8 JSCALL incrby (incr value not integer)} {
+		r jscall redis.del incrkey8
+		r jscall redis.set incrkey8 3
+		r jscall redis.incrby incrkey8 hello
+	} {{"ret":3,"cmds":1}}
+	
+	test {V8 JSCALL incrby without args} {
+		assert_error {ERR -Not specified key} {r jscall redis.incrby}
 	}
 }
