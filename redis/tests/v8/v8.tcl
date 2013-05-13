@@ -85,28 +85,28 @@ start_server {tags {"basic"}} {
 	} {{"ret":1,"cmds":1}}
 	
 	test {V8 JSCALL incr exist key} {
-		r jscall redis.set incrkey 100
-		r jscall redis.incr incrkey
+		r jscall redis.set incrkey1 100
+		r jscall redis.incr incrkey1
 	} {{"ret":101,"cmds":1}}
 	
 	test {V8 JSCALL incrby 100} {
-		r jscall redis.set incrkey 1000
-		r jscall redis.incrby incrkey 100
+		r jscall redis.set incrkey2 1000
+		r jscall redis.incrby incrkey2 100
 	} {{"ret":1100,"cmds":1}}
 	
 	test {V8 JSCALL incrby JS overflow check} {
-		r jscall redis.set incrkey 9007199254740992
-		r jscall redis.incrby incrkey 1
+		r jscall redis.set incrkey3 9007199254740992
+		r jscall redis.incrby incrkey3 1
 	} {{"ret":"9007199254740993","cmds":1}}
 	
 	test {V8 JSCALL incrby overflow check} {
-		r jscall redis.set incrkey {9223372036854775806}
-		assert_error {ERR -increment or decrement would overflow} {r jscall redis.incrby incrkey 10}
+		r jscall redis.set incrkey4 {9223372036854775806}
+		assert_error {ERR -increment or decrement would overflow} {r jscall redis.incrby incrkey4 10}
 	}
 	
 	test {V8 JSCALL incrby value not integer} {
-		r jscall redis.del incrkey
-		r jscall redis.hset incrkey field value
-		assert_error {ERR -value is not integer} {r jscall redis.incrby incrkey 10}
+		r jscall redis.del incrkey5
+		r jscall redis.hset incrkey5 field value
+		assert_error {ERR -value is not integer} {r jscall redis.incrby incrkey5 10}
 	}
 }
