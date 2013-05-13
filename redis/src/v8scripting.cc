@@ -479,15 +479,18 @@ RUN_JS_RETURN *run_js(char *code){
 	int size = ascii.length();
 	if(run_js_returnbuf==NULL){
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+		memset(run_js_returnbuf,0,run_js_returnbuf_len);
 	}
-	if(size>run_js_returnbuf_len){
+	if(size>=run_js_returnbuf_len){
 		zfreePtr(run_js_returnbuf);
 		run_js_returnbuf_len = (((size+1)/1024)+1)*1024;
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+		memset(run_js_returnbuf,0,run_js_returnbuf_len);
 	}
 	//char *rez= (char*)zmallocPtr(size);
 	//memset(run_js_returnbuf,0,size+1);
 	memcpy(run_js_returnbuf,*ascii,size);
+	run_js_returnbuf[size] = '\0';
 	run_js_return.json = run_js_returnbuf;
 	run_js_return.len = size;
 	return &run_js_return;
@@ -533,13 +536,16 @@ RUN_JS_RETURN *call_js(redisClient *c){
 	int size = ascii.length();
 	if(run_js_returnbuf==NULL){
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+		memset(run_js_returnbuf,0,run_js_returnbuf_len);
 	}
-	if(size>run_js_returnbuf_len){
+	if(size>=run_js_returnbuf_len){
 		zfreePtr(run_js_returnbuf);
 		run_js_returnbuf_len = (((size+1)/1024)+1)*1024;
 		run_js_returnbuf = (char*)zmallocPtr(run_js_returnbuf_len);
+		memset(run_js_returnbuf,0,run_js_returnbuf_len);
 	}
 	memcpy(run_js_returnbuf,*ascii,size);
+	run_js_returnbuf[size] = '\0';
 	run_js_return.json = run_js_returnbuf;
 	run_js_return.len = size;
 	return &run_js_return;
@@ -648,7 +654,7 @@ extern "C"
 		if(ret->json && ret->json[0]=='-'){
 			printf("run_js return error %s\n",ret->json);
 			addReplyErrorPtr(c,ret->json);
-			zfreePtr(ret->json);
+			if(ret->json!=run_js_returnbuf) zfreePtr(ret->json);
 			return;
 		}
 		robj *obj = createStringObjectPtr(ret->json,ret->len);
@@ -668,9 +674,9 @@ extern "C"
 		last_js_run = NULL;
 		scriptStart = 0;
 		if(ret->json && ret->json[0]=='-'){
-			printf("run_js return error %s\n",ret->json);
+			printf("call_js return error %s\n",ret->json);
 			addReplyErrorPtr(c,ret->json);
-			zfreePtr(ret->json);
+			if(ret->json!=run_js_returnbuf) zfreePtr(ret->json);
 			return;
 		}
 		robj *obj = createStringObjectPtr(ret->json,ret->len);
