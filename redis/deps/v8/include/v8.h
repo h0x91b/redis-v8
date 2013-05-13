@@ -191,8 +191,13 @@ class UniqueId {
  * \param object the weak global object to be reclaimed by the garbage collector
  * \param parameter the value passed in when making the weak global object
  */
-typedef void (*WeakReferenceCallback)(Persistent<Value> object,
-                                      void* parameter);
+template<typename T, typename P>
+class WeakReferenceCallbacks {
+ public:
+  typedef void (*Revivable)(Isolate* isolate,
+                            Persistent<T>* object,
+                            P* parameter);
+};
 
 // TODO(svenpanne) Temporary definition until Chrome is in sync.
 typedef void (*NearDeathCallback)(Isolate* isolate,
@@ -598,8 +603,17 @@ template <class T> class Persistent // NOLINT
   // TODO(dcarney): remove before cutover
   V8_INLINE(void Dispose(Isolate* isolate));
 
-  V8_INLINE(void MakeWeak(void* parameters,
-                              WeakReferenceCallback callback));
+  template<typename S, typename P>
+  V8_INLINE(void MakeWeak(
+      Isolate* isolate,
+      P* parameters,
+      typename WeakReferenceCallbacks<S, P>::Revivable callback));
+
+  template<typename P>
+  V8_INLINE(void MakeWeak(
+      Isolate* isolate,
+      P* parameters,
+      typename WeakReferenceCallbacks<T, P>::Revivable callback));
 
   /**
    * Make the reference to this object weak.  When only weak handles
@@ -675,6 +689,21 @@ template <class T> class Persistent // NOLINT
    */
   // TODO(dcarney): remove before cutover
   V8_INLINE(uint16_t WrapperClassId(Isolate* isolate) const);
+
+  /**
+   * Disposes the current contents of the handle and replaces it.
+   */
+  V8_INLINE(void Reset(Isolate* isolate, const Handle<T>& other));
+
+  /**
+   * Returns the underlying raw pointer and clears the handle. The caller is
+   * responsible of eventually destroying the underlying object (by creating a
+   * Persistent handle which points to it and Disposing it). In the future,
+   * destructing a Persistent will also Dispose it. With this function, the
+   * embedder can let the Persistent go out of scope without it getting
+   * disposed.
+   */
+  V8_INLINE(T* ClearAndLeak());
 
 #ifndef V8_USE_UNSAFE_HANDLES
 
@@ -4363,10 +4392,11 @@ class V8EXPORT V8 {
                                                internal::Object** handle);
   static void DisposeGlobal(internal::Isolate* isolate,
                             internal::Object** global_handle);
+  typedef WeakReferenceCallbacks<Value, void>::Revivable RevivableCallback;
   static void MakeWeak(internal::Isolate* isolate,
                        internal::Object** global_handle,
                        void* data,
-                       WeakReferenceCallback weak_reference_callback,
+                       RevivableCallback weak_reference_callback,
                        NearDeathCallback near_death_callback);
   static void ClearWeak(internal::Isolate* isolate,
                         internal::Object** global_handle);
@@ -4589,11 +4619,10 @@ class V8EXPORT Context {
       Handle<Value> global_object = Handle<Value>());
 
   /** Deprecated. Use Isolate version instead. */
-  // TODO(mstarzinger): Put this behind the V8_DEPRECATED guard.
-  static Persistent<Context> New(
+  V8_DEPRECATED(static Persistent<Context> New(
       ExtensionConfiguration* extensions = NULL,
       Handle<ObjectTemplate> global_template = Handle<ObjectTemplate>(),
-      Handle<Value> global_object = Handle<Value>());
+      Handle<Value> global_object = Handle<Value>()));
 
   /** Returns the last entered context. */
   static Local<Context> GetEntered();
@@ -5006,7 +5035,7 @@ class Internals {
   static const int kJSObjectHeaderSize = 3 * kApiPointerSize;
   static const int kFixedArrayHeaderSize = 2 * kApiPointerSize;
   static const int kContextHeaderSize = 2 * kApiPointerSize;
-  static const int kContextEmbedderDataIndex = 65;
+  static const int kContextEmbedderDataIndex = 64;
   static const int kFullStringRepresentationMask = 0x07;
   static const int kStringEncodingMask = 0x4;
   static const int kExternalTwoByteRepresentationTag = 0x02;
@@ -5282,14 +5311,30 @@ void Persistent<T>::Dispose(Isolate* isolate) {
 
 
 template <class T>
-void Persistent<T>::MakeWeak(void* parameters, WeakReferenceCallback callback) {
-  Isolate* isolate = Isolate::GetCurrent();
+template <typename S, typename P>
+void Persistent<T>::MakeWeak(
+    Isolate* isolate,
+    P* parameters,
+    typename WeakReferenceCallbacks<S, P>::Revivable callback) {
+  TYPE_CHECK(S, T);
+  typedef typename WeakReferenceCallbacks<Value, void>::Revivable Revivable;
   V8::MakeWeak(reinterpret_cast<internal::Isolate*>(isolate),
                reinterpret_cast<internal::Object**>(this->val_),
                parameters,
-               callback,
+               reinterpret_cast<Revivable>(callback),
                NULL);
 }
+
+
+template <class T>
+template <typename P>
+void Persistent<T>::MakeWeak(
+    Isolate* isolate,
+    P* parameters,
+    typename WeakReferenceCallbacks<T, P>::Revivable callback) {
+  MakeWeak<T, P>(isolate, parameters, callback);
+}
+
 
 template <class T>
 void Persistent<T>::MakeWeak(Isolate* isolate,
@@ -5347,6 +5392,38 @@ template <class T>
 void Persistent<T>::SetWrapperClassId(uint16_t class_id) {
   SetWrapperClassId(Isolate::GetCurrent(), class_id);
 }
+
+
+template <class T>
+void Persistent<T>::Reset(Isolate* isolate, const Handle<T>& other) {
+  Dispose(isolate);
+#ifdef V8_USE_UNSAFE_HANDLES
+  *this = *New(isolate, other);
+#else
+  if (other.IsEmpty()) {
+    this->val_ = NULL;
+    return;
+  }
+  internal::Object** p = reinterpret_cast<internal::Object**>(other.val_);
+  this->val_ = reinterpret_cast<T*>(
+      V8::GlobalizeReference(reinterpret_cast<internal::Isolate*>(isolate), p));
+#endif
+}
+
+
+template <class T>
+T* Persistent<T>::ClearAndLeak() {
+  T* old;
+#ifdef V8_USE_UNSAFE_HANDLES
+  old = **this;
+  *this = Persistent<T>();
+#else
+  old = val_;
+  val_ = NULL;
+#endif
+  return old;
+}
+
 
 template <class T>
 void Persistent<T>::SetWrapperClassId(Isolate* isolate, uint16_t class_id) {

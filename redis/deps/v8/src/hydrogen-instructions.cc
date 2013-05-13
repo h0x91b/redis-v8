@@ -1678,6 +1678,7 @@ Range* HChange::InferRange(Zone* zone) {
       !value()->CheckFlag(HInstruction::kUint32) &&
       input_range != NULL && input_range->IsInSmiRange()) {
     set_type(HType::Smi());
+    ClearGVNFlag(kChangesNewSpacePromotion);
   }
   Range* result = (input_range != NULL)
       ? input_range->Copy(zone)
@@ -2521,6 +2522,8 @@ HLoadNamedFieldPolymorphic::HLoadNamedFieldPolymorphic(HValue* context,
        i < types->length() && types_.length() < kMaxLoadPolymorphism;
        ++i) {
     Handle<Map> map = types->at(i);
+    // Deprecated maps are updated to the current map in the type oracle.
+    ASSERT(!map->is_deprecated());
     LookupResult lookup(map->GetIsolate());
     map->LookupDescriptor(NULL, *name, &lookup);
     if (lookup.IsFound()) {
@@ -2531,6 +2534,12 @@ HLoadNamedFieldPolymorphic::HLoadNamedFieldPolymorphic(HValue* context,
             SetGVNFlag(kDependsOnInobjectFields);
           } else {
             SetGVNFlag(kDependsOnBackingStoreFields);
+          }
+          if (FLAG_track_double_fields &&
+              lookup.representation().IsDouble()) {
+            // Since the value needs to be boxed, use a generic handler for
+            // loading doubles.
+            continue;
           }
           types_.Add(types->at(i), zone);
           break;
@@ -2673,7 +2682,12 @@ bool HLoadKeyed::UsesMustHandleHole() const {
     return false;
   }
 
-  if (hole_mode() == ALLOW_RETURN_HOLE) return true;
+  if (hole_mode() == ALLOW_RETURN_HOLE) {
+    if (IsFastDoubleElementsKind(elements_kind())) {
+      return AllUsesCanTreatHoleAsNaN();
+    }
+    return true;
+  }
 
   if (IsFastDoubleElementsKind(elements_kind())) {
     return false;
@@ -2682,6 +2696,22 @@ bool HLoadKeyed::UsesMustHandleHole() const {
   for (HUseIterator it(uses()); !it.Done(); it.Advance()) {
     HValue* use = it.value();
     if (!use->IsChange()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
+bool HLoadKeyed::AllUsesCanTreatHoleAsNaN() const {
+  if (!IsFastDoubleElementsKind(elements_kind())) {
+    return false;
+  }
+
+  for (HUseIterator it(uses()); !it.Done(); it.Advance()) {
+    HValue* use = it.value();
+    if (use->CheckFlag(HValue::kDeoptimizeOnUndefined)) {
       return false;
     }
   }
@@ -2997,16 +3027,6 @@ HType HAllocate::CalculateInferredType() {
 void HAllocate::PrintDataTo(StringStream* stream) {
   size()->PrintNameTo(stream);
   if (!GuaranteedInNewSpace()) stream->Add(" (pretenure)");
-}
-
-
-HType HArrayLiteral::CalculateInferredType() {
-  return HType::JSArray();
-}
-
-
-HType HObjectLiteral::CalculateInferredType() {
-  return HType::JSObject();
 }
 
 
@@ -3342,6 +3362,9 @@ HInstruction* HMod::New(
     if (c_left->HasInteger32Value() && c_right->HasInteger32Value()) {
       int32_t dividend = c_left->Integer32Value();
       int32_t divisor = c_right->Integer32Value();
+      if (dividend == kMinInt && divisor == -1) {
+        return H_CONSTANT_DOUBLE(-0.0);
+      }
       if (divisor != 0) {
         int32_t res = dividend % divisor;
         if ((res == 0) && (dividend < 0)) {

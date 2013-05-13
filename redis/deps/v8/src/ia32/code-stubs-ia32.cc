@@ -130,9 +130,10 @@ static void InitializeArrayConstructorDescriptor(
     int constant_stack_parameter_count) {
   // register state
   // eax -- number of arguments
+  // edi -- function
   // ebx -- type info cell with elements kind
-  static Register registers[] = { ebx };
-  descriptor->register_param_count_ = 1;
+  static Register registers[] = { edi, ebx };
+  descriptor->register_param_count_ = 2;
 
   if (constant_stack_parameter_count != 0) {
     // stack param count needs (constructor pointer, and single argument)
@@ -4775,6 +4776,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   Handle<Object> terminal_kind_sentinel =
       TypeFeedbackCells::MonomorphicArraySentinel(isolate,
                                                   LAST_FAST_ELEMENTS_KIND);
+  __ JumpIfNotSmi(ecx, &miss);
   __ cmp(ecx, Immediate(terminal_kind_sentinel));
   __ j(above, &miss);
   // Load the global or builtins object from the current context
@@ -7920,15 +7922,8 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
     // Get the elements kind and case on that.
     __ cmp(ebx, Immediate(undefined_sentinel));
     __ j(equal, &no_info);
-    __ mov(edx, FieldOperand(ebx, kPointerSize));
-
-    // There is no info if the call site went megamorphic either
-
-    // TODO(mvstanton): Really? I thought if it was the array function that
-    // the cell wouldn't get stamped as megamorphic.
-    __ cmp(edx, Immediate(TypeFeedbackCells::MegamorphicSentinel(
-        masm->isolate())));
-    __ j(equal, &no_info);
+    __ mov(edx, FieldOperand(ebx, JSGlobalPropertyCell::kValueOffset));
+    __ JumpIfNotSmi(edx, &no_info);
     __ SmiUntag(edx);
     __ jmp(&switch_ready);
     __ bind(&no_info);

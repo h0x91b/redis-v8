@@ -3291,7 +3291,7 @@ MaybeObject* Heap::AllocateSharedFunctionInfo(Object* name) {
   share->set_name(name);
   Code* illegal = isolate_->builtins()->builtin(Builtins::kIllegal);
   share->set_code(illegal);
-  share->ClearOptimizedCodeMap();
+  share->set_optimized_code_map(Smi::FromInt(0));
   share->set_scope_info(ScopeInfo::Empty(isolate_));
   Code* construct_stub =
       isolate_->builtins()->builtin(Builtins::kJSConstructStubGeneric);
@@ -4160,7 +4160,7 @@ MaybeObject* Heap::AllocateInitialMap(JSFunction* fun) {
         ASSERT(name->IsInternalizedString());
         // TODO(verwaest): Since we cannot update the boilerplate's map yet,
         // initialize to the worst case.
-        FieldDescriptor field(name, i, NONE, Representation::Tagged(), i + 1);
+        FieldDescriptor field(name, i, NONE, Representation::Tagged());
         descriptors->Set(i, &field, witness);
       }
       descriptors->Sort();
@@ -4340,8 +4340,7 @@ MaybeObject* Heap::AllocateJSObjectWithAllocationSite(JSFunction* constructor,
   ElementsKind to_kind = static_cast<ElementsKind>(smi->value());
   AllocationSiteMode mode = TRACK_ALLOCATION_SITE;
   if (to_kind != initial_map->elements_kind()) {
-    MaybeObject* maybe_new_map = constructor->GetElementsTransitionMap(
-        isolate(), to_kind);
+    MaybeObject* maybe_new_map = initial_map->AsElementsKind(to_kind);
     if (!maybe_new_map->To(&initial_map)) return maybe_new_map;
     // Possibly alter the mode, since we found an updated elements kind
     // in the type info cell.
@@ -4589,13 +4588,10 @@ MaybeObject* Heap::AllocateGlobalObject(JSFunction* constructor) {
   // The global object might be created from an object template with accessors.
   // Fill these accessors into the dictionary.
   DescriptorArray* descs = map->instance_descriptors();
-  for (int i = 0; i < descs->number_of_descriptors(); i++) {
+  for (int i = 0; i < map->NumberOfOwnDescriptors(); i++) {
     PropertyDetails details = descs->GetDetails(i);
     ASSERT(details.type() == CALLBACKS);  // Only accessors are expected.
-    PropertyDetails d = PropertyDetails(details.attributes(),
-                                        CALLBACKS,
-                                        Representation::None(),
-                                        details.descriptor_index());
+    PropertyDetails d = PropertyDetails(details.attributes(), CALLBACKS, i + 1);
     Object* value = descs->GetCallbacksObject(i);
     MaybeObject* maybe_value = AllocateJSGlobalPropertyCell(value);
     if (!maybe_value->ToObject(&value)) return maybe_value;
@@ -5181,15 +5177,8 @@ MaybeObject* Heap::AllocateJSArray(
   Context* native_context = isolate()->context()->native_context();
   JSFunction* array_function = native_context->array_function();
   Map* map = array_function->initial_map();
-  Object* maybe_map_array = native_context->js_array_maps();
-  if (!maybe_map_array->IsUndefined()) {
-    Object* maybe_transitioned_map =
-        FixedArray::cast(maybe_map_array)->get(elements_kind);
-    if (!maybe_transitioned_map->IsUndefined()) {
-      map = Map::cast(maybe_transitioned_map);
-    }
-  }
-
+  Map* transition_map = isolate()->get_initial_js_array_map(elements_kind);
+  if (transition_map != NULL) map = transition_map;
   return AllocateJSObjectFromMap(map, pretenure);
 }
 

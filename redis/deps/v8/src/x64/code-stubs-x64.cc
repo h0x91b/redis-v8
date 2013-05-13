@@ -125,9 +125,10 @@ static void InitializeArrayConstructorDescriptor(
     int constant_stack_parameter_count) {
   // register state
   // rax -- number of arguments
+  // rdi -- function
   // rbx -- type info cell with elements kind
-  static Register registers[] = { rbx };
-  descriptor->register_param_count_ = 1;
+  static Register registers[] = { rdi, rbx };
+  descriptor->register_param_count_ = 2;
   if (constant_stack_parameter_count != 0) {
     // stack param count needs (constructor pointer, and single argument)
     descriptor->stack_parameter_count_ = &rax;
@@ -3835,6 +3836,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   Handle<Object> terminal_kind_sentinel =
       TypeFeedbackCells::MonomorphicArraySentinel(isolate,
                                                   LAST_FAST_ELEMENTS_KIND);
+  __ JumpIfNotSmi(rcx, &miss);
   __ Cmp(rcx, terminal_kind_sentinel);
   __ j(above, &miss);
   // Make sure the function is the Array() function
@@ -6947,14 +6949,8 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
     // Get the elements kind and case on that.
     __ Cmp(rbx, undefined_sentinel);
     __ j(equal, &no_info);
-    __ movq(rdx, FieldOperand(rbx, kPointerSize));
-
-    // There is no info if the call site went megamorphic either
-
-    // TODO(mvstanton): Really? I thought if it was the array function that
-    // the cell wouldn't get stamped as megamorphic.
-    __ Cmp(rdx, TypeFeedbackCells::MegamorphicSentinel(masm->isolate()));
-    __ j(equal, &no_info);
+    __ movq(rdx, FieldOperand(rbx, JSGlobalPropertyCell::kValueOffset));
+    __ JumpIfNotSmi(rdx, &no_info);
     __ SmiToInteger32(rdx, rdx);
     __ jmp(&switch_ready);
     __ bind(&no_info);

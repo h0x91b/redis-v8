@@ -95,6 +95,12 @@ void LCodeGen::FinishCode(Handle<Code> code) {
     transition_maps_.at(i)->AddDependentCode(
         DependentCode::kTransitionGroup, code);
   }
+  if (graph()->depends_on_empty_array_proto_elements()) {
+    isolate()->initial_object_prototype()->map()->AddDependentCode(
+        DependentCode::kElementsCantBeAddedGroup, code);
+    isolate()->initial_array_prototype()->map()->AddDependentCode(
+        DependentCode::kElementsCantBeAddedGroup, code);
+  }
 }
 
 
@@ -3057,31 +3063,20 @@ void LCodeGen::DoStoreContextSlot(LStoreContextSlot* instr) {
 
 
 void LCodeGen::DoLoadNamedField(LLoadNamedField* instr) {
+  int offset = instr->hydrogen()->offset();
   Register object = ToRegister(instr->object());
-  if (!FLAG_track_double_fields) {
-    ASSERT(!instr->hydrogen()->representation().IsDouble());
-  }
-  Register temp = instr->hydrogen()->representation().IsDouble()
-      ? scratch0() : ToRegister(instr->result());
-  if (instr->hydrogen()->is_in_object()) {
-    __ ldr(temp, FieldMemOperand(object, instr->hydrogen()->offset()));
-  } else {
-    __ ldr(temp, FieldMemOperand(object, JSObject::kPropertiesOffset));
-    __ ldr(temp, FieldMemOperand(temp, instr->hydrogen()->offset()));
+  if (instr->hydrogen()->representation().IsDouble()) {
+    DwVfpRegister result = ToDoubleRegister(instr->result());
+    __ vldr(result, FieldMemOperand(object, offset));
+    return;
   }
 
-  if (instr->hydrogen()->representation().IsDouble()) {
-    Label load_from_heap_number, done;
-    DwVfpRegister result = ToDoubleRegister(instr->result());
-    SwVfpRegister flt_scratch = double_scratch0().low();
-    __ JumpIfNotSmi(temp, &load_from_heap_number);
-    __ SmiUntag(temp);
-    __ vmov(flt_scratch, temp);
-    __ vcvt_f64_s32(result, flt_scratch);
-    __ b(&done);
-    __ bind(&load_from_heap_number);
-    __ vldr(result, FieldMemOperand(temp, HeapNumber::kValueOffset));
-    __ bind(&done);
+  Register result = ToRegister(instr->result());
+  if (instr->hydrogen()->is_in_object()) {
+    __ ldr(result, FieldMemOperand(object, offset));
+  } else {
+    __ ldr(result, FieldMemOperand(object, JSObject::kPropertiesOffset));
+    __ ldr(result, FieldMemOperand(result, offset));
   }
 }
 
@@ -4199,8 +4194,7 @@ void LCodeGen::DoCallNewArray(LCallNewArray* instr) {
 
   __ mov(r0, Operand(instr->arity()));
   __ mov(r2, Operand(instr->hydrogen()->property_cell()));
-  Object* cell_value = instr->hydrogen()->property_cell()->value();
-  ElementsKind kind = static_cast<ElementsKind>(Smi::cast(cell_value)->value());
+  ElementsKind kind = instr->hydrogen()->elements_kind();
   if (instr->arity() == 0) {
     ArrayNoArgumentConstructorStub stub(kind);
     CallCode(stub.GetCode(isolate()), RelocInfo::CONSTRUCT_CALL, instr);
@@ -4230,29 +4224,32 @@ void LCodeGen::DoStoreNamedField(LStoreNamedField* instr) {
   Representation representation = instr->representation();
 
   Register object = ToRegister(instr->object());
-  Register value = ToRegister(instr->value());
-  ASSERT(!object.is(value));
   Register scratch = scratch0();
   int offset = instr->offset();
 
+  Handle<Map> transition = instr->transition();
+
   if (FLAG_track_fields && representation.IsSmi()) {
+    Register value = ToRegister(instr->value());
     __ SmiTag(value, value, SetCC);
     if (!instr->hydrogen()->value()->range()->IsInSmiRange()) {
       DeoptimizeIf(vs, instr->environment());
     }
-  } else if (FLAG_track_double_fields && representation.IsDouble() &&
-             !instr->hydrogen()->value()->type().IsSmi() &&
-             !instr->hydrogen()->value()->type().IsHeapNumber()) {
-    Label do_store;
-    __ JumpIfSmi(value, &do_store);
-    Handle<Map> map(isolate()->factory()->heap_number_map());
-
-    __ ldr(scratch, FieldMemOperand(value, HeapObject::kMapOffset));
-    DoCheckMapCommon(scratch, map, REQUIRE_EXACT_MAP, instr->environment());
-    __ bind(&do_store);
+  } else if (FLAG_track_heap_object_fields && representation.IsHeapObject()) {
+    Register value = ToRegister(instr->value());
+    if (!instr->hydrogen()->value()->type().IsHeapObject()) {
+      __ tst(value, Operand(kSmiTagMask));
+      DeoptimizeIf(eq, instr->environment());
+    }
+  } else if (FLAG_track_double_fields && representation.IsDouble()) {
+    ASSERT(transition.is_null());
+    ASSERT(instr->is_in_object());
+    ASSERT(!instr->hydrogen()->NeedsWriteBarrier());
+    DwVfpRegister value = ToDoubleRegister(instr->value());
+    __ vstr(value, FieldMemOperand(object, offset));
+    return;
   }
 
-  Handle<Map> transition = instr->transition();
   if (!transition.is_null()) {
     if (transition->CanBeDeprecated()) {
       transition_maps_.Add(transition, info()->zone());
@@ -4274,6 +4271,8 @@ void LCodeGen::DoStoreNamedField(LStoreNamedField* instr) {
   }
 
   // Do the store.
+  Register value = ToRegister(instr->value());
+  ASSERT(!object.is(value));
   HType type = instr->hydrogen()->value()->type();
   SmiCheck check_needed =
       type.IsHeapObject() ? OMIT_SMI_CHECK : INLINE_SMI_CHECK;
@@ -5488,91 +5487,6 @@ void LCodeGen::DoDeferredAllocate(LAllocate* instr) {
         Runtime::kAllocateInNewSpace, 1, instr);
   }
   __ StoreToSafepointRegisterSlot(r0, result);
-}
-
-
-void LCodeGen::DoArrayLiteral(LArrayLiteral* instr) {
-  Handle<FixedArray> literals = instr->hydrogen()->literals();
-  ElementsKind boilerplate_elements_kind =
-      instr->hydrogen()->boilerplate_elements_kind();
-  AllocationSiteMode allocation_site_mode =
-      instr->hydrogen()->allocation_site_mode();
-
-  // Deopt if the array literal boilerplate ElementsKind is of a type different
-  // than the expected one. The check isn't necessary if the boilerplate has
-  // already been converted to TERMINAL_FAST_ELEMENTS_KIND.
-  if (CanTransitionToMoreGeneralFastElementsKind(
-          boilerplate_elements_kind, true)) {
-    __ LoadHeapObject(r1, instr->hydrogen()->boilerplate_object());
-    // Load map into r2.
-    __ ldr(r2, FieldMemOperand(r1, HeapObject::kMapOffset));
-    // Load the map's "bit field 2".
-    __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
-    // Retrieve elements_kind from bit field 2.
-    __ ubfx(r2, r2, Map::kElementsKindShift, Map::kElementsKindBitCount);
-    __ cmp(r2, Operand(boilerplate_elements_kind));
-    DeoptimizeIf(ne, instr->environment());
-  }
-
-  // Set up the parameters to the stub/runtime call.
-  __ LoadHeapObject(r3, literals);
-  __ mov(r2, Operand(Smi::FromInt(instr->hydrogen()->literal_index())));
-  // Boilerplate already exists, constant elements are never accessed.
-  // Pass an empty fixed array.
-  __ mov(r1, Operand(isolate()->factory()->empty_fixed_array()));
-
-  // Pick the right runtime function or stub to call.
-  int length = instr->hydrogen()->length();
-  if (instr->hydrogen()->IsCopyOnWrite()) {
-    ASSERT(instr->hydrogen()->depth() == 1);
-    FastCloneShallowArrayStub::Mode mode =
-        FastCloneShallowArrayStub::COPY_ON_WRITE_ELEMENTS;
-    FastCloneShallowArrayStub stub(mode, DONT_TRACK_ALLOCATION_SITE, length);
-    CallCode(stub.GetCode(isolate()), RelocInfo::CODE_TARGET, instr);
-  } else if (instr->hydrogen()->depth() > 1) {
-    __ Push(r3, r2, r1);
-    CallRuntime(Runtime::kCreateArrayLiteral, 3, instr);
-  } else if (length > FastCloneShallowArrayStub::kMaximumClonedLength) {
-    __ Push(r3, r2, r1);
-    CallRuntime(Runtime::kCreateArrayLiteralShallow, 3, instr);
-  } else {
-    FastCloneShallowArrayStub::Mode mode =
-        boilerplate_elements_kind == FAST_DOUBLE_ELEMENTS
-        ? FastCloneShallowArrayStub::CLONE_DOUBLE_ELEMENTS
-        : FastCloneShallowArrayStub::CLONE_ELEMENTS;
-    FastCloneShallowArrayStub stub(mode, allocation_site_mode, length);
-    CallCode(stub.GetCode(isolate()), RelocInfo::CODE_TARGET, instr);
-  }
-}
-
-
-void LCodeGen::DoObjectLiteral(LObjectLiteral* instr) {
-  Handle<FixedArray> literals = instr->hydrogen()->literals();
-  Handle<FixedArray> constant_properties =
-      instr->hydrogen()->constant_properties();
-
-  // Set up the parameters to the stub/runtime call.
-  __ LoadHeapObject(r3, literals);
-  __ mov(r2, Operand(Smi::FromInt(instr->hydrogen()->literal_index())));
-  __ mov(r1, Operand(constant_properties));
-  int flags = instr->hydrogen()->fast_elements()
-      ? ObjectLiteral::kFastElements
-      : ObjectLiteral::kNoFlags;
-  __ mov(r0, Operand(Smi::FromInt(flags)));
-
-  // Pick the right runtime function or stub to call.
-  int properties_count = instr->hydrogen()->constant_properties_length() / 2;
-  if (instr->hydrogen()->depth() > 1) {
-    __ Push(r3, r2, r1, r0);
-    CallRuntime(Runtime::kCreateObjectLiteral, 4, instr);
-  } else if (flags != ObjectLiteral::kFastElements ||
-      properties_count > FastCloneShallowObjectStub::kMaximumClonedProperties) {
-    __ Push(r3, r2, r1, r0);
-    CallRuntime(Runtime::kCreateObjectLiteralShallow, 4, instr);
-  } else {
-    FastCloneShallowObjectStub stub(properties_count);
-    CallCode(stub.GetCode(isolate()), RelocInfo::CODE_TARGET, instr);
-  }
 }
 
 

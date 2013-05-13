@@ -316,7 +316,7 @@ void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfo(
     // TODO(mstarzinger): We may experiment with rebuilding it or with
     // retaining entries which should survive as we iterate through
     // optimized functions anyway.
-    shared->ClearOptimizedCodeMap();
+    shared->ClearOptimizedCodeMap("during full gc");
   }
   MarkCompactCollector* collector = heap->mark_compact_collector();
   if (collector->is_code_flushing_enabled()) {
@@ -566,8 +566,14 @@ bool StaticMarkingVisitor<StaticVisitor>::IsFlushable(
     return false;
   }
 
-  // If this is a full script wrapped in a function we do no flush the code.
+  // If this is a full script wrapped in a function we do not flush the code.
   if (shared_info->is_toplevel()) {
+    return false;
+  }
+
+  // If this is a function initialized with %SetCode then the one-to-one
+  // relation between SharedFunctionInfo and Code is broken.
+  if (shared_info->dont_flush()) {
     return false;
   }
 

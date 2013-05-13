@@ -100,7 +100,6 @@ namespace internal {
   F(GetOptimizationStatus, 1, 1) \
   F(GetOptimizationCount, 1, 1) \
   F(CompileForOnStackReplacement, 1, 1) \
-  F(SetNewFunctionAttributes, 1, 1) \
   F(AllocateInNewSpace, 1, 1) \
   F(AllocateInOldPointerSpace, 1, 1) \
   F(SetNativeFlag, 1, 1) \
@@ -361,6 +360,7 @@ namespace internal {
   F(TypedArrayGetByteLength, 1, 1) \
   F(TypedArrayGetByteOffset, 1, 1) \
   F(TypedArrayGetLength, 1, 1) \
+  F(TypedArraySetFastCases, 3, 1) \
   \
   /* Statements */ \
   F(NewClosure, 3, 1) \

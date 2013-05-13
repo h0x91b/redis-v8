@@ -83,6 +83,7 @@ class Representation {
     kSmi,
     kInteger32,
     kDouble,
+    kHeapObject,
     kTagged,
     kExternal,
     kNumRepresentations
@@ -95,6 +96,7 @@ class Representation {
   static Representation Smi() { return Representation(kSmi); }
   static Representation Integer32() { return Representation(kInteger32); }
   static Representation Double() { return Representation(kDouble); }
+  static Representation HeapObject() { return Representation(kHeapObject); }
   static Representation External() { return Representation(kExternal); }
 
   static Representation FromKind(Kind kind) { return Representation(kind); }
@@ -103,9 +105,15 @@ class Representation {
     return kind_ == other.kind_;
   }
 
+  bool IsCompatibleForLoad(const Representation& other) const {
+    return (IsDouble() && other.IsDouble()) ||
+        (!IsDouble() && !other.IsDouble());
+  }
+
   bool is_more_general_than(const Representation& other) const {
     ASSERT(kind_ != kExternal);
     ASSERT(other.kind_ != kExternal);
+    if (IsHeapObject()) return other.IsDouble();
     return kind_ > other.kind_;
   }
 
@@ -114,11 +122,9 @@ class Representation {
   }
 
   Representation generalize(Representation other) {
-    if (is_more_general_than(other)) {
-      return *this;
-    } else {
-      return other;
-    }
+    if (other.fits_into(*this)) return *this;
+    if (other.is_more_general_than(*this)) return other;
+    return Representation::Tagged();
   }
 
   Kind kind() const { return static_cast<Kind>(kind_); }
@@ -127,6 +133,7 @@ class Representation {
   bool IsSmi() const { return kind_ == kSmi; }
   bool IsInteger32() const { return kind_ == kInteger32; }
   bool IsDouble() const { return kind_ == kDouble; }
+  bool IsHeapObject() const { return kind_ == kHeapObject; }
   bool IsExternal() const { return kind_ == kExternal; }
   bool IsSpecialization() const {
     return kind_ == kInteger32 || kind_ == kDouble;
@@ -149,20 +156,21 @@ class PropertyDetails BASE_EMBEDDED {
  public:
   PropertyDetails(PropertyAttributes attributes,
                   PropertyType type,
-                  Representation representation,
-                  int index = 0) {
+                  int index) {
     value_ = TypeField::encode(type)
         | AttributesField::encode(attributes)
-        | RepresentationField::encode(EncodeRepresentation(representation))
         | DictionaryStorageField::encode(index);
 
     ASSERT(type == this->type());
     ASSERT(attributes == this->attributes());
-    if (representation.IsNone()) {
-      ASSERT(index == this->dictionary_index());
-    } else {
-      ASSERT(index == this->descriptor_index());
-    }
+  }
+
+  PropertyDetails(PropertyAttributes attributes,
+                  PropertyType type,
+                  Representation representation) {
+    value_ = TypeField::encode(type)
+        | AttributesField::encode(attributes)
+        | RepresentationField::encode(EncodeRepresentation(representation));
   }
 
   int pointer() { return DescriptorPointer::decode(value_); }
@@ -178,17 +186,10 @@ class PropertyDetails BASE_EMBEDDED {
   inline Smi* AsSmi();
 
   static uint8_t EncodeRepresentation(Representation representation) {
-    ASSERT(representation.kind() <= Representation::kTagged);
-    if (representation.kind() < Representation::kInteger32) {
-      return representation.kind();
-    } else {
-      return representation.kind() - 1;
-    }
+    return representation.kind();
   }
 
   static Representation DecodeRepresentation(uint32_t bits) {
-    ASSERT(bits <= Representation::kTagged);
-    if (bits >= Representation::kInteger32) bits += 1;
     return Representation::FromKind(static_cast<Representation::Kind>(bits));
   }
 
@@ -200,10 +201,6 @@ class PropertyDetails BASE_EMBEDDED {
 
   int dictionary_index() {
     return DictionaryStorageField::decode(value_);
-  }
-
-  int descriptor_index() {
-    return DescriptorStorageField::decode(value_);
   }
 
   Representation representation() {
@@ -227,9 +224,8 @@ class PropertyDetails BASE_EMBEDDED {
   class AttributesField:          public BitField<PropertyAttributes, 3,  3> {};
   class DeletedField:             public BitField<uint32_t,           6,  1> {};
   class DictionaryStorageField:   public BitField<uint32_t,           7, 24> {};
-  class DescriptorStorageField:   public BitField<uint32_t,           7, 11> {};
-  class DescriptorPointer:        public BitField<uint32_t,          18, 11> {};
-  class RepresentationField:      public BitField<uint32_t,          29,  2> {};
+  class DescriptorPointer:        public BitField<uint32_t,           7, 11> {};
+  class RepresentationField:      public BitField<uint32_t,          18,  3> {};
 
   static const int kInitialIndex = 1;
 

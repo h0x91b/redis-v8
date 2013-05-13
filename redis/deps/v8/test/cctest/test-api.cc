@@ -2257,6 +2257,7 @@ THREADED_TEST(SymbolProperties) {
 
 
 THREADED_TEST(ArrayBuffer) {
+  i::FLAG_harmony_array_buffer = true;
   i::FLAG_harmony_typed_arrays = true;
 
   LocalContext env;
@@ -2486,6 +2487,82 @@ THREADED_TEST(GlobalHandle) {
 }
 
 
+THREADED_TEST(ResettingGlobalHandle) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::internal::GlobalHandles* global_handles = NULL;
+  int initial_handle_count = 0;
+  v8::Persistent<String> global;
+  {
+    v8::HandleScope scope(isolate);
+    Local<String> str = v8_str("str");
+    global_handles =
+        reinterpret_cast<v8::internal::Isolate*>(isolate)->global_handles();
+    initial_handle_count = global_handles->NumberOfGlobalHandles();
+    global = v8::Persistent<String>::New(isolate, str);
+  }
+  CHECK_EQ(global->Length(), 3);
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count + 1);
+  {
+    v8::HandleScope scope(isolate);
+    Local<String> str = v8_str("longer");
+    global.Reset(isolate, str);
+  }
+  CHECK_EQ(global->Length(), 6);
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count + 1);
+  global.Dispose(isolate);
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count);
+}
+
+
+THREADED_TEST(ResettingGlobalHandleToEmpty) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::internal::GlobalHandles* global_handles = NULL;
+  int initial_handle_count = 0;
+  v8::Persistent<String> global;
+  {
+    v8::HandleScope scope(isolate);
+    Local<String> str = v8_str("str");
+    global_handles =
+        reinterpret_cast<v8::internal::Isolate*>(isolate)->global_handles();
+    initial_handle_count = global_handles->NumberOfGlobalHandles();
+    global = v8::Persistent<String>::New(isolate, str);
+  }
+  CHECK_EQ(global->Length(), 3);
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count + 1);
+  {
+    v8::HandleScope scope(isolate);
+    Local<String> empty;
+    global.Reset(isolate, empty);
+  }
+  CHECK(global.IsEmpty());
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count);
+}
+
+
+THREADED_TEST(ClearAndLeakGlobal) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::internal::GlobalHandles* global_handles = NULL;
+  int initial_handle_count = 0;
+  v8::Persistent<String> global;
+  {
+    v8::HandleScope scope(isolate);
+    Local<String> str = v8_str("str");
+    global_handles =
+        reinterpret_cast<v8::internal::Isolate*>(isolate)->global_handles();
+    initial_handle_count = global_handles->NumberOfGlobalHandles();
+    global = v8::Persistent<String>::New(isolate, str);
+  }
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count + 1);
+  String* str = global.ClearAndLeak();
+  CHECK(global.IsEmpty());
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count + 1);
+  v8::Persistent<String>* new_global =
+      reinterpret_cast<v8::Persistent<String>*>(&str);
+  new_global->Dispose();
+  CHECK_EQ(global_handles->NumberOfGlobalHandles(), initial_handle_count);
+}
+
+
 THREADED_TEST(LocalHandle) {
   v8::HandleScope scope(v8::Isolate::GetCurrent());
   v8::Local<String> local = v8::Local<String>::New(v8_str("str"));
@@ -2509,12 +2586,11 @@ class WeakCallCounter {
 
 
 static void WeakPointerCallback(v8::Isolate* isolate,
-                                Persistent<Value> handle,
-                                void* id) {
-  WeakCallCounter* counter = reinterpret_cast<WeakCallCounter*>(id);
+                                Persistent<Object>* handle,
+                                WeakCallCounter* counter) {
   CHECK_EQ(1234, counter->id());
   counter->increment();
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 
@@ -2537,16 +2613,16 @@ THREADED_TEST(OldApiObjectGroups) {
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
     g1c1 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1c1.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
     g2c1 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2c1.MakeWeak(iso, &counter, &WeakPointerCallback);
   }
 
   Persistent<Object> root = Persistent<Object>::New(iso, g1s1);  // make a root.
@@ -2572,7 +2648,7 @@ THREADED_TEST(OldApiObjectGroups) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
   // But make children strong roots---all the objects (except for children)
   // should be collectable now.
   g1c1.ClearWeak(iso);
@@ -2596,8 +2672,8 @@ THREADED_TEST(OldApiObjectGroups) {
   CHECK_EQ(5, counter.NumberOfWeakCalls());
 
   // And now make children weak again and collect them.
-  g1c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-  g2c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  g1c1.MakeWeak(iso, &counter, &WeakPointerCallback);
+  g2c1.MakeWeak(iso, &counter, &WeakPointerCallback);
 
   HEAP->CollectAllGarbage(i::Heap::kAbortIncrementalMarkingMask);
   CHECK_EQ(7, counter.NumberOfWeakCalls());
@@ -2623,16 +2699,16 @@ THREADED_TEST(ApiObjectGroups) {
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
     g1c1 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1c1.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
     g2c1 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2c1.MakeWeak(iso, &counter, &WeakPointerCallback);
   }
 
   Persistent<Object> root = Persistent<Object>::New(iso, g1s1);  // make a root.
@@ -2660,7 +2736,7 @@ THREADED_TEST(ApiObjectGroups) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
   // But make children strong roots---all the objects (except for children)
   // should be collectable now.
   g1c1.ClearWeak(iso);
@@ -2684,8 +2760,8 @@ THREADED_TEST(ApiObjectGroups) {
   CHECK_EQ(5, counter.NumberOfWeakCalls());
 
   // And now make children weak again and collect them.
-  g1c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-  g2c1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  g1c1.MakeWeak(iso, &counter, &WeakPointerCallback);
+  g2c1.MakeWeak(iso, &counter, &WeakPointerCallback);
 
   heap->CollectAllGarbage(i::Heap::kAbortIncrementalMarkingMask);
   CHECK_EQ(7, counter.NumberOfWeakCalls());
@@ -2712,29 +2788,29 @@ THREADED_TEST(OldApiObjectGroupsCycle) {
     HandleScope scope(iso);
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g1s1.IsWeak(iso));
     CHECK(g1s2.IsWeak(iso));
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g2s1.IsWeak(iso));
     CHECK(g2s2.IsWeak(iso));
 
     g3s1 = Persistent<Object>::New(iso, Object::New());
     g3s2 = Persistent<Object>::New(iso, Object::New());
-    g3s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g3s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g3s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g3s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g3s1.IsWeak(iso));
     CHECK(g3s2.IsWeak(iso));
 
     g4s1 = Persistent<Object>::New(iso, Object::New());
     g4s2 = Persistent<Object>::New(iso, Object::New());
-    g4s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g4s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g4s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g4s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g4s1.IsWeak(iso));
     CHECK(g4s2.IsWeak(iso));
   }
@@ -2769,7 +2845,7 @@ THREADED_TEST(OldApiObjectGroupsCycle) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
 
   // Groups are deleted, rebuild groups.
   {
@@ -2818,29 +2894,29 @@ THREADED_TEST(ApiObjectGroupsCycle) {
     HandleScope scope(iso);
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g1s1.IsWeak(iso));
     CHECK(g1s2.IsWeak(iso));
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g2s1.IsWeak(iso));
     CHECK(g2s2.IsWeak(iso));
 
     g3s1 = Persistent<Object>::New(iso, Object::New());
     g3s2 = Persistent<Object>::New(iso, Object::New());
-    g3s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g3s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g3s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g3s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g3s1.IsWeak(iso));
     CHECK(g3s2.IsWeak(iso));
 
     g4s1 = Persistent<Object>::New(iso, Object::New());
     g4s2 = Persistent<Object>::New(iso, Object::New());
-    g4s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g4s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g4s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g4s2.MakeWeak(iso, &counter, &WeakPointerCallback);
     CHECK(g4s1.IsWeak(iso));
     CHECK(g4s2.IsWeak(iso));
   }
@@ -2877,7 +2953,7 @@ THREADED_TEST(ApiObjectGroupsCycle) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
 
   // Groups are deleted, rebuild groups.
   {
@@ -2928,18 +3004,18 @@ TEST(OldApiObjectGroupsCycleForScavenger) {
     HandleScope scope(iso);
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g3s1 = Persistent<Object>::New(iso, Object::New());
     g3s2 = Persistent<Object>::New(iso, Object::New());
-    g3s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g3s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g3s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g3s2.MakeWeak(iso, &counter, &WeakPointerCallback);
   }
 
   // Make a root.
@@ -2973,7 +3049,7 @@ TEST(OldApiObjectGroupsCycleForScavenger) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
   root.MarkPartiallyDependent(iso);
 
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
@@ -3025,18 +3101,18 @@ TEST(ApiObjectGroupsCycleForScavenger) {
     HandleScope scope(iso);
     g1s1 = Persistent<Object>::New(iso, Object::New());
     g1s2 = Persistent<Object>::New(iso, Object::New());
-    g1s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g1s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g1s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g1s2.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g2s1 = Persistent<Object>::New(iso, Object::New());
     g2s2 = Persistent<Object>::New(iso, Object::New());
-    g2s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g2s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g2s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g2s2.MakeWeak(iso, &counter, &WeakPointerCallback);
 
     g3s1 = Persistent<Object>::New(iso, Object::New());
     g3s2 = Persistent<Object>::New(iso, Object::New());
-    g3s1.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
-    g3s2.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+    g3s1.MakeWeak(iso, &counter, &WeakPointerCallback);
+    g3s2.MakeWeak(iso, &counter, &WeakPointerCallback);
   }
 
   // Make a root.
@@ -3072,7 +3148,7 @@ TEST(ApiObjectGroupsCycleForScavenger) {
   CHECK_EQ(0, counter.NumberOfWeakCalls());
 
   // Weaken the root.
-  root.MakeWeak(iso, reinterpret_cast<void*>(&counter), &WeakPointerCallback);
+  root.MakeWeak(iso, &counter, &WeakPointerCallback);
   root.MarkPartiallyDependent(iso);
 
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
@@ -4636,9 +4712,9 @@ THREADED_TEST(NamedInterceptorDictionaryIC) {
 
 
 THREADED_TEST(NamedInterceptorDictionaryICMultipleContext) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
-
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
+  v8::Local<Context> context1 = Context::New(isolate);
 
   context1->Enter();
   Local<ObjectTemplate> templ = ObjectTemplate::New();
@@ -4673,8 +4749,6 @@ THREADED_TEST(NamedInterceptorDictionaryICMultipleContext) {
   context1->Enter();
   CompileRun("var obj = { x : 0 }; delete obj.x;");
   context1->Exit();
-
-  context1.Dispose(context1->GetIsolate());
 }
 
 
@@ -5449,14 +5523,14 @@ static v8::Handle<Value> HandleLogDelegator(const v8::Arguments& args) {
 
 
 THREADED_TEST(GlobalObjectTemplate) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   Local<ObjectTemplate> global_template = ObjectTemplate::New();
   global_template->Set(v8_str("JSNI_Log"),
                        v8::FunctionTemplate::New(HandleLogDelegator));
-  v8::Persistent<Context> context = Context::New(0, global_template);
-  Context::Scope context_scope(v8::Isolate::GetCurrent(), context);
+  v8::Local<Context> context = Context::New(isolate, 0, global_template);
+  Context::Scope context_scope(context);
   Script::Compile(v8_str("JSNI_Log('LOG')"))->Run();
-  context.Dispose(context->GetIsolate());
 }
 
 
@@ -5958,11 +6032,10 @@ class Whammy {
 };
 
 static void HandleWeakReference(v8::Isolate* isolate,
-                                v8::Persistent<v8::Value> obj,
-                                void* data) {
-  Snorkel* snorkel = reinterpret_cast<Snorkel*>(data);
+                                v8::Persistent<v8::Value>* obj,
+                                Snorkel* snorkel) {
   delete snorkel;
-  obj.ClearWeak(isolate);
+  obj->ClearWeak(isolate);
 }
 
 v8::Handle<Value> WhammyPropertyGetter(Local<String> name,
@@ -5977,7 +6050,9 @@ v8::Handle<Value> WhammyPropertyGetter(Local<String> name,
       v8::Persistent<v8::Object>::New(info.GetIsolate(), obj);
   if (!prev.IsEmpty()) {
     prev->Set(v8_str("next"), obj);
-    prev.MakeWeak(info.GetIsolate(), new Snorkel(), &HandleWeakReference);
+    prev.MakeWeak<Value, Snorkel>(info.GetIsolate(),
+                                  new Snorkel(),
+                                  &HandleWeakReference);
     whammy->objects_[whammy->cursor_].Clear();
   }
   whammy->objects_[whammy->cursor_] = global;
@@ -6016,11 +6091,10 @@ THREADED_TEST(WeakReference) {
 
 
 static void DisposeAndSetFlag(v8::Isolate* isolate,
-                              v8::Persistent<v8::Value> obj,
-                              void* data) {
-  obj.Dispose(isolate);
-  obj.Clear();
-  *(reinterpret_cast<bool*>(data)) = true;
+                              v8::Persistent<v8::Object>* obj,
+                              bool* data) {
+  obj->Dispose(isolate);
+  *(data) = true;
 }
 
 
@@ -6063,21 +6137,19 @@ static void InvokeMarkSweep() {
 
 
 static void ForceScavenge(v8::Isolate* isolate,
-                          v8::Persistent<v8::Value> obj,
-                          void* data) {
-  obj.Dispose(isolate);
-  obj.Clear();
-  *(reinterpret_cast<bool*>(data)) = true;
+                          v8::Persistent<v8::Object>* obj,
+                          bool* data) {
+  obj->Dispose(isolate);
+  *(data) = true;
   InvokeScavenge();
 }
 
 
 static void ForceMarkSweep(v8::Isolate* isolate,
-                           v8::Persistent<v8::Value> obj,
-                           void* data) {
-  obj.Dispose(isolate);
-  obj.Clear();
-  *(reinterpret_cast<bool*>(data)) = true;
+                           v8::Persistent<v8::Object>* obj,
+                           bool* data) {
+  obj->Dispose(isolate);
+  *(data) = true;
   InvokeMarkSweep();
 }
 
@@ -6089,7 +6161,8 @@ THREADED_TEST(GCFromWeakCallbacks) {
   Context::Scope context_scope(context);
 
   static const int kNumberOfGCTypes = 2;
-  v8::NearDeathCallback gc_forcing_callback[kNumberOfGCTypes] =
+  typedef v8::WeakReferenceCallbacks<v8::Object, bool>::Revivable Callback;
+  Callback gc_forcing_callback[kNumberOfGCTypes] =
       {&ForceScavenge, &ForceMarkSweep};
 
   typedef void (*GCInvoker)();
@@ -6113,10 +6186,10 @@ THREADED_TEST(GCFromWeakCallbacks) {
 
 
 static void RevivingCallback(v8::Isolate* isolate,
-                             v8::Persistent<v8::Value> obj,
-                             void* data) {
-  obj.ClearWeak(isolate);
-  *(reinterpret_cast<bool*>(data)) = true;
+                             v8::Persistent<v8::Object>* obj,
+                             bool* data) {
+  obj->ClearWeak(isolate);
+  *(data) = true;
 }
 
 
@@ -7625,7 +7698,8 @@ static void UnreachableSetter(Local<String>, Local<Value>,
 
 
 TEST(AccessControl) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   v8::Handle<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
 
   global_template->SetAccessCheckCallbacks(NamedAccessBlocker,
@@ -7645,7 +7719,7 @@ TEST(AccessControl) {
                                v8::DEFAULT);
 
   // Create an environment
-  v8::Persistent<Context> context0 = Context::New(NULL, global_template);
+  v8::Local<Context> context0 = Context::New(isolate, NULL, global_template);
   context0->Enter();
 
   v8::Handle<v8::Object> global0 = context0->Global();
@@ -7671,9 +7745,9 @@ TEST(AccessControl) {
   Local<Value> el_getter = global0->Get(v8_str("el_getter"));
   Local<Value> el_setter = global0->Get(v8_str("el_setter"));
 
-  v8::HandleScope scope1(v8::Isolate::GetCurrent());
+  v8::HandleScope scope1(isolate);
 
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   v8::Handle<v8::Object> global1 = context1->Global();
@@ -7863,13 +7937,12 @@ TEST(AccessControl) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
 TEST(AccessControlES5) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   v8::Handle<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
 
   global_template->SetAccessCheckCallbacks(NamedAccessBlocker,
@@ -7890,12 +7963,12 @@ TEST(AccessControlES5) {
                                v8::DEFAULT);
 
   // Create an environment
-  v8::Persistent<Context> context0 = Context::New(NULL, global_template);
+  v8::Local<Context> context0 = Context::New(isolate, NULL, global_template);
   context0->Enter();
 
   v8::Handle<v8::Object> global0 = context0->Global();
 
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
   v8::Handle<v8::Object> global1 = context1->Global();
   global1->Set(v8_str("other"), global0);
@@ -7955,7 +8028,8 @@ static bool GetOwnPropertyNamesIndexedBlocker(Local<v8::Object> global,
 
 
 THREADED_TEST(AccessControlGetOwnPropertyNames) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   v8::Handle<v8::ObjectTemplate> obj_template = v8::ObjectTemplate::New();
 
   obj_template->Set(v8_str("x"), v8::Integer::New(42));
@@ -7963,14 +8037,14 @@ THREADED_TEST(AccessControlGetOwnPropertyNames) {
                                         GetOwnPropertyNamesIndexedBlocker);
 
   // Create an environment
-  v8::Persistent<Context> context0 = Context::New(NULL, obj_template);
+  v8::Local<Context> context0 = Context::New(isolate, NULL, obj_template);
   context0->Enter();
 
   v8::Handle<v8::Object> global0 = context0->Global();
 
   v8::HandleScope scope1(v8::Isolate::GetCurrent());
 
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   v8::Handle<v8::Object> global1 = context1->Global();
@@ -7992,8 +8066,6 @@ THREADED_TEST(AccessControlGetOwnPropertyNames) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -8049,7 +8121,8 @@ static v8::Handle<Value> ConstTenGetter(Local<String> name,
 
 
 THREADED_TEST(CrossDomainAccessors) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   v8::Handle<v8::FunctionTemplate> func_template = v8::FunctionTemplate::New();
 
@@ -8071,7 +8144,7 @@ THREADED_TEST(CrossDomainAccessors) {
                                v8::Handle<Value>(),
                                v8::DEFAULT);
 
-  v8::Persistent<Context> context0 = Context::New(NULL, global_template);
+  v8::Local<Context> context0 = Context::New(isolate, NULL, global_template);
   context0->Enter();
 
   Local<v8::Object> global = context0->Global();
@@ -8080,7 +8153,7 @@ THREADED_TEST(CrossDomainAccessors) {
 
   // Enter a new context.
   v8::HandleScope scope1(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   v8::Handle<v8::Object> global1 = context1->Global();
@@ -8096,8 +8169,6 @@ THREADED_TEST(CrossDomainAccessors) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -8127,10 +8198,11 @@ TEST(AccessControlIC) {
   named_access_count = 0;
   indexed_access_count = 0;
 
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // Create an environment.
-  v8::Persistent<Context> context0 = Context::New();
+  v8::Local<Context> context0 = Context::New(isolate);
   context0->Enter();
 
   // Create an object that requires access-check functions to be
@@ -8140,10 +8212,10 @@ TEST(AccessControlIC) {
                                            IndexedAccessCounter);
   Local<v8::Object> object = object_template->NewInstance();
 
-  v8::HandleScope scope1(v8::Isolate::GetCurrent());
+  v8::HandleScope scope1(isolate);
 
   // Create another environment.
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   // Make easy access to the object from the other environment.
@@ -8231,8 +8303,6 @@ TEST(AccessControlIC) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -8276,10 +8346,11 @@ THREADED_TEST(AccessControlFlatten) {
   named_access_count = 0;
   indexed_access_count = 0;
 
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // Create an environment.
-  v8::Persistent<Context> context0 = Context::New();
+  v8::Local<Context> context0 = Context::New(isolate);
   context0->Enter();
 
   // Create an object that requires access-check functions to be
@@ -8289,10 +8360,10 @@ THREADED_TEST(AccessControlFlatten) {
                                            IndexedAccessFlatten);
   Local<v8::Object> object = object_template->NewInstance();
 
-  v8::HandleScope scope1(v8::Isolate::GetCurrent());
+  v8::HandleScope scope1(isolate);
 
   // Create another environment.
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   // Make easy access to the object from the other environment.
@@ -8306,8 +8377,6 @@ THREADED_TEST(AccessControlFlatten) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -8340,10 +8409,11 @@ THREADED_TEST(AccessControlInterceptorIC) {
   named_access_count = 0;
   indexed_access_count = 0;
 
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // Create an environment.
-  v8::Persistent<Context> context0 = Context::New();
+  v8::Local<Context> context0 = Context::New(isolate);
   context0->Enter();
 
   // Create an object that requires access-check functions to be
@@ -8358,10 +8428,10 @@ THREADED_TEST(AccessControlInterceptorIC) {
                                              AccessControlIndexedSetter);
   Local<v8::Object> object = object_template->NewInstance();
 
-  v8::HandleScope scope1(v8::Isolate::GetCurrent());
+  v8::HandleScope scope1(isolate);
 
   // Create another environment.
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context1 = Context::New(isolate);
   context1->Enter();
 
   // Make easy access to the object from the other environment.
@@ -8398,8 +8468,6 @@ THREADED_TEST(AccessControlInterceptorIC) {
 
   context1->Exit();
   context0->Exit();
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -9260,10 +9328,11 @@ THREADED_TEST(CrossEval) {
 // its global throws an exception.  This behavior is consistent with
 // other JavaScript implementations.
 THREADED_TEST(EvalInDetachedGlobal) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
 
-  v8::Persistent<Context> context0 = Context::New();
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Local<Context> context0 = Context::New(isolate);
+  v8::Local<Context> context1 = Context::New(isolate);
 
   // Set up function in context0 that uses eval from context0.
   context0->Enter();
@@ -9288,9 +9357,6 @@ THREADED_TEST(EvalInDetachedGlobal) {
   CHECK(x_value.IsEmpty());
   CHECK(catcher.HasCaught());
   context1->Exit();
-
-  context1.Dispose(context1->GetIsolate());
-  context0.Dispose(context0->GetIsolate());
 }
 
 
@@ -11811,11 +11877,11 @@ v8::Persistent<v8::Object> some_object;
 v8::Persistent<v8::Object> bad_handle;
 
 void NewPersistentHandleCallback(v8::Isolate* isolate,
-                                 v8::Persistent<v8::Value> handle,
+                                 v8::Persistent<v8::Value>* handle,
                                  void*) {
   v8::HandleScope scope(isolate);
   bad_handle = v8::Persistent<v8::Object>::New(isolate, some_object);
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 
@@ -11834,7 +11900,9 @@ THREADED_TEST(NewPersistentHandleFromWeakCallback) {
   // global handle nodes are processed by PostGarbageCollectionProcessing
   // in reverse allocation order, so if second allocated handle is deleted,
   // weak callback of the first handle would be able to 'reallocate' it.
-  handle1.MakeWeak(isolate, NULL, NewPersistentHandleCallback);
+  handle1.MakeWeak<v8::Value, void>(isolate,
+                                    NULL,
+                                    NewPersistentHandleCallback);
   handle2.Dispose(isolate);
   HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
 }
@@ -11843,11 +11911,11 @@ THREADED_TEST(NewPersistentHandleFromWeakCallback) {
 v8::Persistent<v8::Object> to_be_disposed;
 
 void DisposeAndForceGcCallback(v8::Isolate* isolate,
-                               v8::Persistent<v8::Value> handle,
+                               v8::Persistent<v8::Value>* handle,
                                void*) {
   to_be_disposed.Dispose(isolate);
   HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 
@@ -11861,23 +11929,23 @@ THREADED_TEST(DoNotUseDeletedNodesInSecondLevelGc) {
     handle1 = v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
     handle2 = v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
   }
-  handle1.MakeWeak(isolate, NULL, DisposeAndForceGcCallback);
+  handle1.MakeWeak<v8::Value, void>(isolate, NULL, DisposeAndForceGcCallback);
   to_be_disposed = handle2;
   HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
 }
 
 void DisposingCallback(v8::Isolate* isolate,
-                       v8::Persistent<v8::Value> handle,
+                       v8::Persistent<v8::Value>* handle,
                        void*) {
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 void HandleCreatingCallback(v8::Isolate* isolate,
-                            v8::Persistent<v8::Value> handle,
+                            v8::Persistent<v8::Value>* handle,
                             void*) {
   v8::HandleScope scope(isolate);
   v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 
@@ -11892,8 +11960,8 @@ THREADED_TEST(NoGlobalHandlesOrphaningDueToWeakCallback) {
     handle2 = v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
     handle1 = v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
   }
-  handle2.MakeWeak(isolate, NULL, DisposingCallback);
-  handle3.MakeWeak(isolate, NULL, HandleCreatingCallback);
+  handle2.MakeWeak<v8::Value, void>(isolate, NULL, DisposingCallback);
+  handle3.MakeWeak<v8::Value, void>(isolate, NULL, HandleCreatingCallback);
   HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
 }
 
@@ -11921,7 +11989,7 @@ THREADED_TEST(CheckForCrossContextObjectLiterals) {
 }
 
 
-static v8::Handle<Value> NestedScope(v8::Persistent<Context> env) {
+static v8::Handle<Value> NestedScope(v8::Local<Context> env) {
   v8::HandleScope inner(env->GetIsolate());
   env->Enter();
   v8::Handle<Value> three = v8_num(3);
@@ -11932,14 +12000,14 @@ static v8::Handle<Value> NestedScope(v8::Persistent<Context> env) {
 
 
 THREADED_TEST(NestedHandleScopeAndContexts) {
-  v8::HandleScope outer(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> env = Context::New();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope outer(isolate);
+  v8::Local<Context> env = Context::New(isolate);
   env->Enter();
   v8::Handle<Value> value = NestedScope(env);
   v8::Handle<String> str(value->ToString());
   CHECK(!str.IsEmpty());
   env->Exit();
-  env.Dispose(env->GetIsolate());
 }
 
 
@@ -11971,8 +12039,9 @@ static void RunLoopInNewEnv() {
   bar_ptr = NULL;
   foo_ptr = NULL;
 
-  v8::HandleScope outer(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> env = Context::New();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope outer(isolate);
+  v8::Local<Context> env = Context::New(isolate);
   env->Enter();
 
   const char* script =
@@ -12298,11 +12367,11 @@ static int64_t cast(intptr_t x) { return static_cast<int64_t>(x); }
 
 
 THREADED_TEST(ExternalAllocatedMemory) {
-  v8::HandleScope outer(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> env(Context::New());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope outer(isolate);
+  v8::Local<Context> env(Context::New(isolate));
   CHECK(!env.IsEmpty());
   const intptr_t kSize = 1024*1024;
-  v8::Isolate* isolate = env->GetIsolate();
   int64_t baseline = cast(isolate->AdjustAmountOfExternalAllocatedMemory(0));
   CHECK_EQ(baseline + cast(kSize),
            cast(isolate->AdjustAmountOfExternalAllocatedMemory(kSize)));
@@ -12313,8 +12382,14 @@ THREADED_TEST(ExternalAllocatedMemory) {
 
 THREADED_TEST(DisposeEnteredContext) {
   LocalContext outer;
-  v8::HandleScope scope(outer->GetIsolate());
-  { v8::Persistent<v8::Context> inner = v8::Context::New();
+  v8::Isolate* isolate = outer->GetIsolate();
+  v8::Persistent<v8::Context> inner;
+  {
+    v8::HandleScope scope(isolate);
+    inner.Reset(isolate, v8::Context::New(isolate));
+  }
+  v8::HandleScope scope(isolate);
+  {
     inner->Enter();
     inner.Dispose(inner->GetIsolate());
     inner.Clear();
@@ -12634,7 +12709,8 @@ THREADED_TEST(AccessChecksReenabledCorrectly) {
 // This tests that access check information remains on the global
 // object template when creating contexts.
 THREADED_TEST(AccessControlRepeatedContextCreation) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   v8::Handle<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
   global_template->SetAccessCheckCallbacks(NamedSetAccessBlocker,
                                            IndexedSetAccessBlocker);
@@ -12644,14 +12720,15 @@ THREADED_TEST(AccessControlRepeatedContextCreation) {
   i::Handle<i::FunctionTemplateInfo> constructor(
       i::FunctionTemplateInfo::cast(internal_template->constructor()));
   CHECK(!constructor->access_check_info()->IsUndefined());
-  v8::Persistent<Context> context0(Context::New(NULL, global_template));
+  v8::Local<Context> context0(Context::New(isolate, NULL, global_template));
   CHECK(!context0.IsEmpty());
   CHECK(!constructor->access_check_info()->IsUndefined());
 }
 
 
 THREADED_TEST(TurnOnAccessCheck) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // Create an environment with access check to the global object disabled by
   // default.
@@ -12660,8 +12737,8 @@ THREADED_TEST(TurnOnAccessCheck) {
                                            IndexedGetAccessBlocker,
                                            v8::Handle<v8::Value>(),
                                            false);
-  v8::Persistent<Context> context = Context::New(NULL, global_template);
-  Context::Scope context_scope(v8::Isolate::GetCurrent(), context);
+  v8::Local<Context> context = Context::New(isolate, NULL, global_template);
+  Context::Scope context_scope(context);
 
   // Set up a property and a number of functions.
   context->Global()->Set(v8_str("a"), v8_num(1));
@@ -12731,7 +12808,8 @@ static bool NamedGetAccessBlockAandH(Local<v8::Object> obj,
 
 
 THREADED_TEST(TurnOnAccessCheckAndRecompile) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // Create an environment with access check to the global object disabled by
   // default. When the registered access checker will block access to properties
@@ -12741,8 +12819,8 @@ THREADED_TEST(TurnOnAccessCheckAndRecompile) {
                                            IndexedGetAccessBlocker,
                                            v8::Handle<v8::Value>(),
                                            false);
-  v8::Persistent<Context> context = Context::New(NULL, global_template);
-  Context::Scope context_scope(v8::Isolate::GetCurrent(), context);
+  v8::Local<Context> context = Context::New(isolate, NULL, global_template);
+  Context::Scope context_scope(context);
 
   // Set up a property and a number of functions.
   context->Global()->Set(v8_str("a"), v8_num(1));
@@ -13000,9 +13078,10 @@ THREADED_TEST(DictionaryICLoadedFunction) {
 // Test that cross-context new calls use the context of the callee to
 // create the new JavaScript object.
 THREADED_TEST(CrossContextNew) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> context0 = Context::New();
-  v8::Persistent<Context> context1 = Context::New();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
+  v8::Local<Context> context0 = Context::New(isolate);
+  v8::Local<Context> context1 = Context::New(isolate);
 
   // Allow cross-domain access.
   Local<String> token = v8_str("<security token>");
@@ -13023,10 +13102,6 @@ THREADED_TEST(CrossContextNew) {
   CHECK(value->IsInt32());
   CHECK_EQ(42, value->Int32Value());
   context1->Exit();
-
-  // Dispose the contexts to allow them to be garbage collected.
-  context0.Dispose(context0->GetIsolate());
-  context1.Dispose(context1->GetIsolate());
 }
 
 
@@ -13807,9 +13882,10 @@ THREADED_TEST(ForceDeleteIC) {
 
 TEST(InlinedFunctionAcrossContexts) {
   i::FLAG_allow_natives_syntax = true;
-  v8::HandleScope outer_scope(v8::Isolate::GetCurrent());
-  v8::Persistent<v8::Context> ctx1 = v8::Context::New();
-  v8::Persistent<v8::Context> ctx2 = v8::Context::New();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope outer_scope(isolate);
+  v8::Local<v8::Context> ctx1 = v8::Context::New(isolate);
+  v8::Local<v8::Context> ctx2 = v8::Context::New(isolate);
   ctx1->Enter();
 
   {
@@ -13839,15 +13915,13 @@ TEST(InlinedFunctionAcrossContexts) {
         "ReferenceError: G is not defined");
     ctx2->Exit();
     ctx1->Exit();
-    ctx1.Dispose(ctx1->GetIsolate());
   }
-  ctx2.Dispose(ctx2->GetIsolate());
 }
 
 
-v8::Persistent<Context> calling_context0;
-v8::Persistent<Context> calling_context1;
-v8::Persistent<Context> calling_context2;
+static v8::Local<Context> calling_context0;
+static v8::Local<Context> calling_context1;
+static v8::Local<Context> calling_context2;
 
 
 // Check that the call to the callback is initiated in
@@ -13864,11 +13938,15 @@ static v8::Handle<Value> GetCallingContextCallback(const v8::Arguments& args) {
 
 
 THREADED_TEST(GetCallingContext) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
 
-  calling_context0 = Context::New();
-  calling_context1 = Context::New();
-  calling_context2 = Context::New();
+  Local<Context> calling_context0(Context::New(isolate));
+  Local<Context> calling_context1(Context::New(isolate));
+  Local<Context> calling_context2(Context::New(isolate));
+  ::calling_context0 = calling_context0;
+  ::calling_context1 = calling_context1;
+  ::calling_context2 = calling_context2;
 
   // Allow cross-domain access.
   Local<String> token = v8_str("<security token>");
@@ -13899,14 +13977,9 @@ THREADED_TEST(GetCallingContext) {
                                   calling_context1->Global());
   CompileRun("context1.f()");
   calling_context2->Exit();
-
-  // Dispose the contexts to allow them to be garbage collected.
-  calling_context0.Dispose(calling_context0->GetIsolate());
-  calling_context1.Dispose(calling_context1->GetIsolate());
-  calling_context2.Dispose(calling_context2->GetIsolate());
-  calling_context0.Clear();
-  calling_context1.Clear();
-  calling_context2.Clear();
+  ::calling_context0.Clear();
+  ::calling_context1.Clear();
+  ::calling_context2.Clear();
 }
 
 
@@ -15107,6 +15180,7 @@ template <typename ElementType, typename TypedArray,
 void TypedArrayTestHelper(v8::ExternalArrayType array_type,
                           int64_t low, int64_t high) {
   const int kElementCount = 50;
+  i::FLAG_harmony_array_buffer = true;
   i::FLAG_harmony_typed_arrays = true;
 
   LocalContext env;
@@ -15191,6 +15265,7 @@ THREADED_TEST(Uint8ClampedArray) {
 
 #define IS_TYPED_ARRAY_TEST(TypedArray) \
   THREADED_TEST(Is##TypedArray) {                                             \
+    i::FLAG_harmony_array_buffer = true;                                      \
     i::FLAG_harmony_typed_arrays = true;                                      \
     LocalContext env;                                                         \
     v8::Isolate* isolate = env->GetIsolate();                                 \
@@ -15749,17 +15824,20 @@ TEST(Regress2107) {
   const int kShortIdlePauseInMs = 100;
   const int kLongIdlePauseInMs = 1000;
   LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
   v8::HandleScope scope(env->GetIsolate());
   intptr_t initial_size = HEAP->SizeOfObjects();
   // Send idle notification to start a round of incremental GCs.
   v8::V8::IdleNotification(kShortIdlePauseInMs);
   // Emulate 7 page reloads.
   for (int i = 0; i < 7; i++) {
-    v8::Persistent<v8::Context> ctx = v8::Context::New();
-    ctx->Enter();
-    CreateGarbageInOldSpace();
-    ctx->Exit();
-    ctx.Dispose(ctx->GetIsolate());
+    {
+      v8::HandleScope inner_scope(env->GetIsolate());
+      v8::Local<v8::Context> ctx = v8::Context::New(isolate);
+      ctx->Enter();
+      CreateGarbageInOldSpace();
+      ctx->Exit();
+    }
     v8::V8::ContextDisposedNotification();
     v8::V8::IdleNotification(kLongIdlePauseInMs);
   }
@@ -16088,22 +16166,21 @@ THREADED_TEST(SpaghettiStackReThrow) {
 
 TEST(Regress528) {
   v8::V8::Initialize();
-
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
-  v8::Persistent<Context> context;
-  v8::Persistent<Context> other_context;
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope scope(isolate);
+  v8::Local<Context> other_context;
   int gc_count;
 
   // Create a context used to keep the code from aging in the compilation
   // cache.
-  other_context = Context::New();
+  other_context = Context::New(isolate);
 
   // Context-dependent context data creates reference from the compilation
   // cache to the global object.
   const char* source_simple = "1";
-  context = Context::New();
   {
-    v8::HandleScope scope(v8::Isolate::GetCurrent());
+    v8::HandleScope scope(isolate);
+    v8::Local<Context> context = Context::New(isolate);
 
     context->Enter();
     Local<v8::String> obj = v8::String::New("");
@@ -16111,7 +16188,6 @@ TEST(Regress528) {
     CompileRun(source_simple);
     context->Exit();
   }
-  context.Dispose(context->GetIsolate());
   v8::V8::ContextDisposedNotification();
   for (gc_count = 1; gc_count < 10; gc_count++) {
     other_context->Enter();
@@ -16126,15 +16202,14 @@ TEST(Regress528) {
   // Eval in a function creates reference from the compilation cache to the
   // global object.
   const char* source_eval = "function f(){eval('1')}; f()";
-  context = Context::New();
   {
-    v8::HandleScope scope(v8::Isolate::GetCurrent());
+    v8::HandleScope scope(isolate);
+    v8::Local<Context> context = Context::New(isolate);
 
     context->Enter();
     CompileRun(source_eval);
     context->Exit();
   }
-  context.Dispose(context->GetIsolate());
   v8::V8::ContextDisposedNotification();
   for (gc_count = 1; gc_count < 10; gc_count++) {
     other_context->Enter();
@@ -16149,9 +16224,9 @@ TEST(Regress528) {
   // Looking up the line number for an exception creates reference from the
   // compilation cache to the global object.
   const char* source_exception = "function f(){throw 1;} f()";
-  context = Context::New();
   {
-    v8::HandleScope scope(v8::Isolate::GetCurrent());
+    v8::HandleScope scope(isolate);
+    v8::Local<Context> context = Context::New(isolate);
 
     context->Enter();
     v8::TryCatch try_catch;
@@ -16162,7 +16237,6 @@ TEST(Regress528) {
     CHECK_EQ(1, message->GetLineNumber());
     context->Exit();
   }
-  context.Dispose(context->GetIsolate());
   v8::V8::ContextDisposedNotification();
   for (gc_count = 1; gc_count < 10; gc_count++) {
     other_context->Enter();
@@ -16174,7 +16248,6 @@ TEST(Regress528) {
   CHECK_GE(2, gc_count);
   CHECK_EQ(1, GetGlobalObjectsCount());
 
-  other_context.Dispose(other_context->GetIsolate());
   v8::V8::ContextDisposedNotification();
 }
 
@@ -16891,7 +16964,11 @@ TEST(RunTwoIsolatesOnSingleThread) {
   // Run isolate 1.
   v8::Isolate* isolate1 = v8::Isolate::New();
   isolate1->Enter();
-  v8::Persistent<v8::Context> context1 = v8::Context::New();
+  v8::Persistent<v8::Context> context1;
+  {
+    v8::HandleScope scope(isolate1);
+    context1.Reset(isolate1, Context::New(isolate1));
+  }
 
   {
     v8::HandleScope scope(isolate1);
@@ -16907,8 +16984,8 @@ TEST(RunTwoIsolatesOnSingleThread) {
 
   {
     v8::Isolate::Scope iscope(isolate2);
-    context2 = v8::Context::New();
     v8::HandleScope scope(isolate2);
+    context2.Reset(isolate2, Context::New(isolate2));
     v8::Context::Scope cscope(isolate2, context2);
 
     // Run something in new isolate.
@@ -16926,7 +17003,13 @@ TEST(RunTwoIsolatesOnSingleThread) {
   isolate1->Exit();
 
   // Run some stuff in default isolate.
-  v8::Persistent<v8::Context> context_default = v8::Context::New();
+  v8::Persistent<v8::Context> context_default;
+  {
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::Isolate::Scope iscope(isolate);
+    v8::HandleScope scope(isolate);
+    context_default.Reset(isolate, Context::New(isolate));
+  }
 
   {
     v8::HandleScope scope(v8::Isolate::GetCurrent());
@@ -17052,12 +17135,12 @@ TEST(MultipleIsolatesOnIndividualThreads) {
 
 TEST(IsolateDifferentContexts) {
   v8::Isolate* isolate = v8::Isolate::New();
-  Persistent<v8::Context> context;
+  Local<v8::Context> context;
   {
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
-    context = v8::Context::New();
-    v8::Context::Scope context_scope(isolate, context);
+    context = v8::Context::New(isolate);
+    v8::Context::Scope context_scope(context);
     Local<Value> v = CompileRun("2");
     CHECK(v->IsNumber());
     CHECK_EQ(2, static_cast<int>(v->NumberValue()));
@@ -17065,13 +17148,12 @@ TEST(IsolateDifferentContexts) {
   {
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
-    context = v8::Context::New();
-    v8::Context::Scope context_scope(isolate, context);
+    context = v8::Context::New(isolate);
+    v8::Context::Scope context_scope(context);
     Local<Value> v = CompileRun("22");
     CHECK(v->IsNumber());
     CHECK_EQ(22, static_cast<int>(v->NumberValue()));
   }
-  isolate->Dispose();
 }
 
 class InitDefaultIsolateThread : public v8::internal::Thread {
@@ -17960,7 +18042,8 @@ static bool BlockProtoNamedSecurityTestCallback(Local<v8::Object> global,
 
 
 THREADED_TEST(Regress93759) {
-  HandleScope scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  HandleScope scope(isolate);
 
   // Template for object with security check.
   Local<ObjectTemplate> no_proto_template = v8::ObjectTemplate::New();
@@ -17981,7 +18064,7 @@ THREADED_TEST(Regress93759) {
   protected_hidden_proto_template->SetHiddenPrototype(true);
 
   // Context for "foreign" objects used in test.
-  Persistent<Context> context = v8::Context::New();
+  Local<Context> context = v8::Context::New(isolate);
   context->Enter();
 
   // Plain object, no security check.
@@ -18045,8 +18128,6 @@ THREADED_TEST(Regress93759) {
 
   Local<Value> result6 = CompileRun("Object.getPrototypeOf(phidden)");
   CHECK(result6->Equals(Undefined()));
-
-  context.Dispose(context->GetIsolate());
 }
 
 
@@ -18085,14 +18166,15 @@ static void TestReceiver(Local<Value> expected_result,
 
 
 THREADED_TEST(ForeignFunctionReceiver) {
-  HandleScope scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  HandleScope scope(isolate);
 
   // Create two contexts with different "id" properties ('i' and 'o').
   // Call a function both from its own context and from a the foreign
   // context, and see what "this" is bound to (returning both "this"
   // and "this.id" for comparison).
 
-  Persistent<Context> foreign_context = v8::Context::New();
+  Local<Context> foreign_context = v8::Context::New(isolate);
   foreign_context->Enter();
   Local<Value> foreign_function =
     CompileRun("function func() { return { 0: this.id, "
@@ -18173,8 +18255,6 @@ THREADED_TEST(ForeignFunctionReceiver) {
   TestReceiver(o, context->Global(), "func()");
   // Calling with no base.
   TestReceiver(o, context->Global(), "(1,func)()");
-
-  foreign_context.Dispose(foreign_context->GetIsolate());
 }
 
 

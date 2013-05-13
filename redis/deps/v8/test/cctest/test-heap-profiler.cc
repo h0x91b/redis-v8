@@ -1414,7 +1414,7 @@ TEST(GetHeapValue) {
       GetProperty(obj, v8::HeapGraphEdge::kProperty, "n_prop");
   v8::Local<v8::Number> js_n_prop =
       js_obj->Get(v8_str("n_prop")).As<v8::Number>();
-  CHECK(js_n_prop == n_prop->GetHeapValue());
+  CHECK(js_n_prop->NumberValue() == n_prop->GetHeapValue()->NumberValue());
 }
 
 
@@ -1586,9 +1586,9 @@ bool HasWeakGlobalHandle() {
 
 
 static void PersistentHandleCallback(v8::Isolate* isolate,
-                                     v8::Persistent<v8::Value> handle,
+                                     v8::Persistent<v8::Value>* handle,
                                      void*) {
-  handle.Dispose(isolate);
+  handle->Dispose(isolate);
 }
 
 
@@ -1600,7 +1600,9 @@ TEST(WeakGlobalHandle) {
 
   v8::Persistent<v8::Object> handle =
       v8::Persistent<v8::Object>::New(env->GetIsolate(), v8::Object::New());
-  handle.MakeWeak(env->GetIsolate(), NULL, PersistentHandleCallback);
+  handle.MakeWeak<v8::Value, void>(env->GetIsolate(),
+                                   NULL,
+                                   PersistentHandleCallback);
 
   CHECK(HasWeakGlobalHandle());
 }

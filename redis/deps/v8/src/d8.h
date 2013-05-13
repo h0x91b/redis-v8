@@ -273,7 +273,7 @@ class Shell : public i::AllStatic {
   static const char* ToCString(const v8::String::Utf8Value& value);
   static void ReportException(Isolate* isolate, TryCatch* try_catch);
   static Handle<String> ReadFile(Isolate* isolate, const char* name);
-  static Persistent<Context> CreateEvaluationContext(Isolate* isolate);
+  static Local<Context> CreateEvaluationContext(Isolate* isolate);
   static int RunMain(Isolate* isolate, int argc, char* argv[]);
   static int Main(int argc, char* argv[]);
   static void Exit(int exit_code);
@@ -416,8 +416,8 @@ class Shell : public i::AllStatic {
                                            ExternalArrayType type,
                                            int32_t element_size);
   static void ExternalArrayWeakCallback(Isolate* isolate,
-                                        Persistent<Value> object,
-                                        void* data);
+                                        Persistent<Object>* object,
+                                        uint8_t* data);
 };
 
 

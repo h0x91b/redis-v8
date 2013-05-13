@@ -1066,6 +1066,13 @@ class Object : public MaybeObject {
       return Representation::Smi();
     } else if (FLAG_track_double_fields && IsHeapNumber()) {
       return Representation::Double();
+    } else if (FLAG_track_heap_object_fields && !IsUndefined()) {
+      // Don't track undefined as heapobject because it's also used as temporary
+      // value for computed fields that may turn out to be Smi. That combination
+      // will go tagged, so go tagged immediately.
+      // TODO(verwaest): Change once we track computed boilerplate fields.
+      ASSERT(IsHeapObject());
+      return Representation::HeapObject();
     } else {
       return Representation::Tagged();
     }
@@ -1076,9 +1083,15 @@ class Object : public MaybeObject {
       return IsSmi();
     } else if (FLAG_track_double_fields && representation.IsDouble()) {
       return IsNumber();
+    } else if (FLAG_track_heap_object_fields && representation.IsHeapObject()) {
+      return IsHeapObject();
     }
     return true;
   }
+
+  inline MaybeObject* AllocateNewStorageFor(Heap* heap,
+                                            Representation representation,
+                                            PretenureFlag tenure = NOT_TENURED);
 
   // Returns true if the object is of the correct type to be used as a
   // implementation of a JSObject's elements.
@@ -1828,8 +1841,8 @@ class JSObject: public JSReceiver {
 
   // Extend the receiver with a single fast property appeared first in the
   // passed map. This also extends the property backing store if necessary.
-  static void TransitionToMap(Handle<JSObject> object, Handle<Map> map);
-  inline MUST_USE_RESULT MaybeObject* TransitionToMap(Map* map);
+  static void AllocateStorageForMap(Handle<JSObject> object, Handle<Map> map);
+  inline MUST_USE_RESULT MaybeObject* AllocateStorageForMap(Map* map);
 
   static void MigrateInstance(Handle<JSObject> instance);
   inline MUST_USE_RESULT MaybeObject* MigrateInstance();
@@ -2135,10 +2148,12 @@ class JSObject: public JSReceiver {
 
   // Add a property to a fast-case object using a map transition to
   // new_map.
-  MUST_USE_RESULT MaybeObject* AddFastPropertyUsingMap(Map* new_map,
-                                                       Name* name,
-                                                       Object* value,
-                                                       int field_index);
+  MUST_USE_RESULT MaybeObject* AddFastPropertyUsingMap(
+      Map* new_map,
+      Name* name,
+      Object* value,
+      int field_index,
+      Representation representation);
 
   // Add a constant function property to a fast-case object.
   // This leaves a CONSTANT_TRANSITION in the old map, and
@@ -2247,8 +2262,11 @@ class JSObject: public JSReceiver {
       int unused_property_fields);
 
   // Access fast-case object properties at index.
-  inline Object* FastPropertyAt(int index);
-  inline Object* FastPropertyAtPut(int index, Object* value);
+  MUST_USE_RESULT inline MaybeObject* FastPropertyAt(
+      Representation representation,
+      int index);
+  inline Object* RawFastPropertyAt(int index);
+  inline void FastPropertyAtPut(int index, Object* value);
 
   // Access to in object properties.
   inline int GetInObjectPropertyOffset(int index);
@@ -4959,7 +4977,10 @@ class DependentCode: public FixedArray {
     // described by this map changes shape (and transitions to a new map),
     // possibly invalidating the assumptions embedded in the code.
     kPrototypeCheckGroup,
-    kGroupCount = kPrototypeCheckGroup + 1
+    // Group of code that depends on elements not being added to objects with
+    // this map.
+    kElementsCantBeAddedGroup,
+    kGroupCount = kElementsCantBeAddedGroup + 1
   };
 
   // Array for holding the index of the first code object of each group.
@@ -5199,7 +5220,8 @@ class Map: public HeapObject {
 
   int NumberOfFields();
 
-  bool InstancesNeedRewriting(int target_number_of_fields,
+  bool InstancesNeedRewriting(Map* target,
+                              int target_number_of_fields,
                               int target_inobject,
                               int target_unused);
   static Handle<Map> GeneralizeRepresentation(
@@ -5489,6 +5511,8 @@ class Map: public HeapObject {
 
   inline void AddDependentCode(DependentCode::DependencyGroup group,
                                Handle<Code> code);
+
+  bool IsMapInArrayPrototypeChain();
 
   // Dispatched behavior.
   DECLARE_PRINTER(Map)
@@ -5796,7 +5820,7 @@ class SharedFunctionInfo: public HeapObject {
   void InstallFromOptimizedCodeMap(JSFunction* function, int index);
 
   // Clear optimized code map.
-  inline void ClearOptimizedCodeMap();
+  void ClearOptimizedCodeMap(const char* reason);
 
   // Add a new entry to the optimized code map.
   static void AddToOptimizedCodeMap(Handle<SharedFunctionInfo> shared,
@@ -6101,6 +6125,9 @@ class SharedFunctionInfo: public HeapObject {
   // Indicates that code for this function cannot be cached.
   DECL_BOOLEAN_ACCESSORS(dont_cache)
 
+  // Indicates that code for this function cannot be flushed.
+  DECL_BOOLEAN_ACCESSORS(dont_flush)
+
   // Indicates that this function is a generator.
   DECL_BOOLEAN_ACCESSORS(is_generator)
 
@@ -6330,6 +6357,7 @@ class SharedFunctionInfo: public HeapObject {
     kDontOptimize,
     kDontInline,
     kDontCache,
+    kDontFlush,
     kIsGenerator,
     kCompilerHintsCount  // Pseudo entry
   };
@@ -6410,8 +6438,13 @@ class JSGeneratorObject: public JSObject {
   inline int continuation();
   inline void set_continuation(int continuation);
 
-  // [operands]: Saved operand stack.
+  // [operand_stack]: Saved operand stack.
   DECL_ACCESSORS(operand_stack, FixedArray)
+
+  // [stack_handler_index]: Index of first stack handler in operand_stack, or -1
+  // if the captured activation had no stack handler.
+  inline int stack_handler_index();
+  inline void set_stack_handler_index(int stack_handler_index);
 
   // Casting.
   static inline JSGeneratorObject* cast(Object* obj);
@@ -6430,10 +6463,23 @@ class JSGeneratorObject: public JSObject {
   static const int kReceiverOffset = kContextOffset + kPointerSize;
   static const int kContinuationOffset = kReceiverOffset + kPointerSize;
   static const int kOperandStackOffset = kContinuationOffset + kPointerSize;
-  static const int kSize = kOperandStackOffset + kPointerSize;
+  static const int kStackHandlerIndexOffset =
+      kOperandStackOffset + kPointerSize;
+  static const int kSize = kStackHandlerIndexOffset + kPointerSize;
 
   // Resume mode, for use by runtime functions.
   enum ResumeMode { SEND, THROW };
+
+  // Yielding from a generator returns an object with the following inobject
+  // properties.  See Context::generator_result_map() for the map.
+  static const int kResultValuePropertyIndex = 0;
+  static const int kResultDonePropertyIndex = 1;
+  static const int kResultPropertyCount = 2;
+
+  static const int kResultValuePropertyOffset = JSObject::kHeaderSize;
+  static const int kResultDonePropertyOffset =
+      kResultValuePropertyOffset + kPointerSize;
+  static const int kResultSize = kResultDonePropertyOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSGeneratorObject);
@@ -6631,6 +6677,8 @@ class JSFunction: public JSObject {
     return true;
   }
 #endif
+
+  bool PassesHydrogenFilter();
 
   // Layout descriptors. The last property (from kNonWeakFieldsEndOffset to
   // kSize) is weak and has special handling during garbage collection.
@@ -7764,7 +7812,7 @@ class String: public Name {
 
   // String equality operations.
   inline bool Equals(String* other);
-  bool IsUtf8EqualTo(Vector<const char> str);
+  bool IsUtf8EqualTo(Vector<const char> str, bool allow_prefix_match = false);
   bool IsOneByteEqualTo(Vector<const uint8_t> str);
   bool IsTwoByteEqualTo(Vector<const uc16> str);
 
@@ -8722,6 +8770,7 @@ class JSTypedArray: public JSObject {
   static inline JSTypedArray* cast(Object* obj);
 
   ExternalArrayType type();
+  size_t element_size();
 
   // Dispatched behavior.
   DECLARE_PRINTER(JSTypedArray)

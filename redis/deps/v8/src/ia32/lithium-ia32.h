@@ -50,7 +50,6 @@ class LCodeGen;
   V(ArgumentsLength)                            \
   V(ArithmeticD)                                \
   V(ArithmeticT)                                \
-  V(ArrayLiteral)                               \
   V(BitI)                                       \
   V(BitNotI)                                    \
   V(BoundsCheck)                                \
@@ -145,7 +144,6 @@ class LCodeGen;
   V(NumberTagI)                                 \
   V(NumberTagU)                                 \
   V(NumberUntagD)                               \
-  V(ObjectLiteral)                              \
   V(OsrEntry)                                   \
   V(OuterContext)                               \
   V(Parameter)                                  \
@@ -1369,6 +1367,11 @@ class LAddI: public LTemplateInstruction<1, 2, 0> {
   LOperand* left() { return inputs_[0]; }
   LOperand* right() { return inputs_[1]; }
 
+  static bool UseLea(HAdd* add) {
+    return !add->CheckFlag(HValue::kCanOverflow) &&
+        add->BetterLeftOperand()->UseCount() > 1;
+  }
+
   DECLARE_CONCRETE_INSTRUCTION(AddI, "add-i")
   DECLARE_HYDROGEN_ACCESSOR(Add)
 };
@@ -1489,15 +1492,18 @@ class LReturn: public LTemplateInstruction<0, 3, 0> {
 };
 
 
-class LLoadNamedField: public LTemplateInstruction<1, 1, 1> {
+class LLoadNamedField: public LTemplateInstruction<1, 1, 0> {
  public:
-  explicit LLoadNamedField(LOperand* object, LOperand* temp) {
+  explicit LLoadNamedField(LOperand* object) {
     inputs_[0] = object;
-    temps_[0] = temp;
+  }
+
+  virtual bool ClobbersDoubleRegisters() const {
+    return !CpuFeatures::IsSupported(SSE2) &&
+        !hydrogen()->representation().IsDouble();
   }
 
   LOperand* object() { return inputs_[0]; }
-  LOperand* temp() { return temps_[0]; }
 
   DECLARE_CONCRETE_INSTRUCTION(LoadNamedField, "load-named-field")
   DECLARE_HYDROGEN_ACCESSOR(LoadNamedField)
@@ -2554,32 +2560,6 @@ class LAllocate: public LTemplateInstruction<1, 2, 1> {
 
   DECLARE_CONCRETE_INSTRUCTION(Allocate, "allocate")
   DECLARE_HYDROGEN_ACCESSOR(Allocate)
-};
-
-
-class LArrayLiteral: public LTemplateInstruction<1, 1, 0> {
- public:
-  explicit LArrayLiteral(LOperand* context) {
-    inputs_[0] = context;
-  }
-
-  LOperand* context() { return inputs_[0]; }
-
-  DECLARE_CONCRETE_INSTRUCTION(ArrayLiteral, "array-literal")
-  DECLARE_HYDROGEN_ACCESSOR(ArrayLiteral)
-};
-
-
-class LObjectLiteral: public LTemplateInstruction<1, 1, 0> {
- public:
-  explicit LObjectLiteral(LOperand* context) {
-    inputs_[0] = context;
-  }
-
-  LOperand* context() { return inputs_[0]; }
-
-  DECLARE_CONCRETE_INSTRUCTION(ObjectLiteral, "object-literal")
-  DECLARE_HYDROGEN_ACCESSOR(ObjectLiteral)
 };
 
 

@@ -83,19 +83,21 @@ class CcTest {
   const char* name() { return name_; }
   const char* dependency() { return dependency_; }
   bool enabled() { return enabled_; }
-  static void set_default_isolate(v8::Isolate* default_isolate) {
-    default_isolate_ = default_isolate;
-  }
   static v8::Isolate* default_isolate() { return default_isolate_; }
-  static v8::Isolate* isolate() { return context()->GetIsolate(); }
-  static v8::Handle<v8::Context> env() { return context(); }
+
+  static v8::Handle<v8::Context> env() {
+    return v8::Local<v8::Context>::New(default_isolate_, context_);
+  }
+
+  static v8::Isolate* isolate() { return default_isolate_; }
 
   // Helper function to initialize the VM.
   static void InitializeVM(CcTestExtensionFlags extensions = NO_EXTENSIONS);
 
  private:
-  static v8::Handle<v8::Context> context() {
-      return *reinterpret_cast<v8::Handle<v8::Context>*>(&context_);
+  friend int main(int argc, char** argv);
+  static void set_default_isolate(v8::Isolate* default_isolate) {
+    default_isolate_ = default_isolate;
   }
   TestFunction* callback_;
   const char* file_;
@@ -205,8 +207,14 @@ class LocalContext {
   LocalContext(v8::ExtensionConfiguration* extensions = 0,
                v8::Handle<v8::ObjectTemplate> global_template =
                    v8::Handle<v8::ObjectTemplate>(),
-               v8::Handle<v8::Value> global_object = v8::Handle<v8::Value>())
-    : context_(v8::Context::New(extensions, global_template, global_object)) {
+               v8::Handle<v8::Value> global_object = v8::Handle<v8::Value>()) {
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    HandleScope scope(isolate);
+    context_.Reset(isolate,
+                   Context::New(isolate,
+                                extensions,
+                                global_template,
+                                global_object));
     context_->Enter();
     // We can't do this later perhaps because of a fatal error.
     isolate_ = context_->GetIsolate();

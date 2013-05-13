@@ -389,6 +389,14 @@ class HGraph: public ZoneObject {
     return is_recursive_;
   }
 
+  void MarkDependsOnEmptyArrayProtoElements() {
+    depends_on_empty_array_proto_elements_ = true;
+  }
+
+  bool depends_on_empty_array_proto_elements() {
+    return depends_on_empty_array_proto_elements_;
+  }
+
   void RecordUint32Instruction(HInstruction* instr) {
     if (uint32_instructions_ == NULL) {
       uint32_instructions_ = new(zone()) ZoneList<HInstruction*>(4, zone());
@@ -449,6 +457,7 @@ class HGraph: public ZoneObject {
   bool is_recursive_;
   bool use_optimistic_licm_;
   bool has_soft_deoptimize_;
+  bool depends_on_empty_array_proto_elements_;
   int type_change_checksum_;
 
   DISALLOW_COPY_AND_ASSIGN(HGraph);
@@ -982,6 +991,11 @@ class HGraphBuilder {
   HValue* BuildCheckMap(HValue* obj, Handle<Map> map);
 
   // Building common constructs
+  HLoadNamedField* DoBuildLoadNamedField(HValue* object,
+                                         bool inobject,
+                                         Representation representation,
+                                         int offset);
+
   HInstruction* BuildExternalArrayElementAccess(
       HValue* external_elements,
       HValue* checked_key,
@@ -997,6 +1011,7 @@ class HGraphBuilder {
       HValue* dependency,
       ElementsKind elements_kind,
       bool is_store,
+      LoadKeyedHoleMode load_mode,
       KeyedAccessStoreMode store_mode);
 
   HValue* BuildCheckForCapacityGrow(HValue* object,
@@ -1019,6 +1034,7 @@ class HGraphBuilder {
       bool is_js_array,
       ElementsKind elements_kind,
       bool is_store,
+      LoadKeyedHoleMode load_mode,
       KeyedAccessStoreMode store_mode,
       Representation checked_index_representation = Representation::None());
 
@@ -1318,6 +1334,9 @@ class HGraphBuilder {
   HValue* BuildCreateAllocationSiteInfo(HValue* previous_object,
                                         int previous_object_size,
                                         HValue* payload);
+
+  HInstruction* BuildGetNativeContext(HValue* context);
+  HInstruction* BuildGetArrayFunction(HValue* context);
 
  private:
   HGraphBuilder();

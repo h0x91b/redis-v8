@@ -70,7 +70,6 @@ class LChunkBuilder;
   V(ArgumentsElements)                         \
   V(ArgumentsLength)                           \
   V(ArgumentsObject)                           \
-  V(ArrayLiteral)                              \
   V(Bitwise)                                   \
   V(BitNot)                                    \
   V(BlockEntry)                                \
@@ -150,7 +149,6 @@ class LChunkBuilder;
   V(Mod)                                       \
   V(Mul)                                       \
   V(NumericConstraint)                         \
-  V(ObjectLiteral)                             \
   V(OsrEntry)                                  \
   V(OuterContext)                              \
   V(Parameter)                                 \
@@ -206,6 +204,7 @@ class LChunkBuilder;
   V(Calls)                                     \
   V(InobjectFields)                            \
   V(BackingStoreFields)                        \
+  V(DoubleFields)                              \
   V(ElementsKind)                              \
   V(ElementsPointer)                           \
   V(ArrayElements)                             \
@@ -2352,15 +2351,20 @@ class HCallNewArray: public HCallNew {
               Handle<JSGlobalPropertyCell> type_cell)
       : HCallNew(context, constructor, argument_count),
         type_cell_(type_cell) {
+    elements_kind_ = static_cast<ElementsKind>(
+        Smi::cast(type_cell->value())->value());
   }
 
   Handle<JSGlobalPropertyCell> property_cell() const {
     return type_cell_;
   }
 
+  ElementsKind elements_kind() const { return elements_kind_; }
+
   DECLARE_CONCRETE_INSTRUCTION(CallNewArray)
 
  private:
+  ElementsKind elements_kind_;
   Handle<JSGlobalPropertyCell> type_cell_;
 };
 
@@ -3357,16 +3361,27 @@ class HBinaryOperation: public HTemplateInstruction<3> {
   HValue* left() { return OperandAt(1); }
   HValue* right() { return OperandAt(2); }
 
-  // TODO(kasperl): Move these helpers to the IA-32 Lithium
-  // instruction sequence builder.
-  HValue* LeastConstantOperand() {
-    if (IsCommutative() && left()->IsConstant()) return right();
-    return left();
+  // True if switching left and right operands likely generates better code.
+  bool AreOperandsBetterSwitched() {
+    if (!IsCommutative()) return false;
+
+    // Constant operands are better off on the right, they can be inlined in
+    // many situations on most platforms.
+    if (left()->IsConstant()) return true;
+    if (right()->IsConstant()) return false;
+
+    // Otherwise, if there is only one use of the right operand, it would be
+    // better off on the left for platforms that only have 2-arg arithmetic
+    // ops (e.g ia32, x64) that clobber the left operand.
+    return (right()->UseCount() == 1);
   }
 
-  HValue* MostConstantOperand() {
-    if (IsCommutative() && left()->IsConstant()) return left();
-    return right();
+  HValue* BetterLeftOperand() {
+    return AreOperandsBetterSwitched() ? right() : left();
+  }
+
+  HValue* BetterRightOperand() {
+    return AreOperandsBetterSwitched() ? left() : right();
   }
 
   void set_observed_input_representation(int index, Representation rep) {
@@ -5203,15 +5218,24 @@ class HLoadNamedField: public HTemplateInstruction<2> {
       set_representation(Representation::Tagged());
     } else if (FLAG_track_double_fields && field_representation.IsDouble()) {
       set_representation(field_representation);
+    } else if (FLAG_track_heap_object_fields &&
+               field_representation.IsHeapObject()) {
+      set_type(HType::NonPrimitive());
+      set_representation(Representation::Tagged());
     } else {
       set_representation(Representation::Tagged());
     }
     SetFlag(kUseGVN);
-    SetGVNFlag(kDependsOnMaps);
-    if (is_in_object) {
+    if (FLAG_track_double_fields && representation().IsDouble()) {
+      ASSERT(is_in_object);
+      ASSERT(offset == HeapNumber::kValueOffset);
+      SetGVNFlag(kDependsOnDoubleFields);
+    } else if (is_in_object) {
       SetGVNFlag(kDependsOnInobjectFields);
+      SetGVNFlag(kDependsOnMaps);
     } else {
       SetGVNFlag(kDependsOnBackingStoreFields);
+      SetGVNFlag(kDependsOnMaps);
     }
   }
 
@@ -5468,6 +5492,7 @@ class HLoadKeyed
   virtual void PrintDataTo(StringStream* stream);
 
   bool UsesMustHandleHole() const;
+  bool AllUsesCanTreatHoleAsNaN() const;
   bool RequiresHoleCheck() const;
 
   virtual Range* InferRange(Zone* zone);
@@ -5551,7 +5576,7 @@ class HLoadKeyedGeneric: public HTemplateInstruction<3> {
 class HStoreNamedField: public HTemplateInstruction<2> {
  public:
   HStoreNamedField(HValue* obj,
-                   Handle<String> name,
+                   Handle<Name> name,
                    HValue* val,
                    bool in_object,
                    Representation field_representation,
@@ -5565,18 +5590,25 @@ class HStoreNamedField: public HTemplateInstruction<2> {
     SetOperandAt(0, obj);
     SetOperandAt(1, val);
     SetFlag(kTrackSideEffectDominators);
-    SetGVNFlag(kDependsOnNewSpacePromotion);
-    if (is_in_object_) {
+    if (FLAG_track_double_fields && field_representation.IsDouble()) {
+      SetGVNFlag(kChangesDoubleFields);
+    } else if (is_in_object_) {
       SetGVNFlag(kChangesInobjectFields);
+      SetGVNFlag(kDependsOnNewSpacePromotion);
     } else {
       SetGVNFlag(kChangesBackingStoreFields);
+      SetGVNFlag(kDependsOnNewSpacePromotion);
     }
   }
 
   DECLARE_CONCRETE_INSTRUCTION(StoreNamedField)
 
   virtual Representation RequiredInputRepresentation(int index) {
-    if (FLAG_track_fields && index == 1 && field_representation_.IsSmi()) {
+    if (FLAG_track_double_fields &&
+        index == 1 && field_representation_.IsDouble()) {
+      return field_representation_;
+    } else if (FLAG_track_fields &&
+               index == 1 && field_representation_.IsSmi()) {
       return Representation::Integer32();
     }
     return Representation::Tagged();
@@ -5590,7 +5622,7 @@ class HStoreNamedField: public HTemplateInstruction<2> {
   HValue* object() { return OperandAt(0); }
   HValue* value() { return OperandAt(1); }
 
-  Handle<String> name() const { return name_; }
+  Handle<Name> name() const { return name_; }
   bool is_in_object() const { return is_in_object_; }
   int offset() const { return offset_; }
   Handle<Map> transition() const { return transition_; }
@@ -5599,7 +5631,11 @@ class HStoreNamedField: public HTemplateInstruction<2> {
   HValue* new_space_dominator() const { return new_space_dominator_; }
 
   bool NeedsWriteBarrier() {
+    ASSERT(!(FLAG_track_double_fields && field_representation_.IsDouble()) ||
+           transition_.is_null());
     return (!FLAG_track_fields || !field_representation_.IsSmi()) &&
+        // If there is a transition, a new storage object needs to be allocated.
+        !(FLAG_track_double_fields && field_representation_.IsDouble()) &&
         StoringValueNeedsWriteBarrier(value()) &&
         ReceiverObjectNeedsWriteBarrier(object(), new_space_dominator());
   }
@@ -5617,7 +5653,7 @@ class HStoreNamedField: public HTemplateInstruction<2> {
   }
 
  private:
-  Handle<String> name_;
+  Handle<Name> name_;
   bool is_in_object_;
   Representation field_representation_;
   int offset_;
@@ -6048,102 +6084,6 @@ class HMaterializedLiteral: public HTemplateInstruction<V> {
 };
 
 
-class HArrayLiteral: public HMaterializedLiteral<1> {
- public:
-  HArrayLiteral(HValue* context,
-                Handle<HeapObject> boilerplate_object,
-                Handle<FixedArray> literals,
-                int length,
-                int literal_index,
-                int depth,
-                AllocationSiteMode mode)
-      : HMaterializedLiteral<1>(literal_index, depth, mode),
-        length_(length),
-        boilerplate_object_(boilerplate_object),
-        literals_(literals) {
-    SetOperandAt(0, context);
-    SetGVNFlag(kChangesNewSpacePromotion);
-
-    boilerplate_elements_kind_ = boilerplate_object_->IsJSObject()
-        ? Handle<JSObject>::cast(boilerplate_object_)->GetElementsKind()
-        : TERMINAL_FAST_ELEMENTS_KIND;
-
-    is_copy_on_write_ = boilerplate_object_->IsJSObject() &&
-        (Handle<JSObject>::cast(boilerplate_object_)->elements()->map() ==
-         HEAP->fixed_cow_array_map());
-  }
-
-  HValue* context() { return OperandAt(0); }
-  ElementsKind boilerplate_elements_kind() const {
-    return boilerplate_elements_kind_;
-  }
-  Handle<HeapObject> boilerplate_object() const { return boilerplate_object_; }
-  Handle<FixedArray> literals() const { return literals_; }
-  int length() const { return length_; }
-  bool IsCopyOnWrite() const { return is_copy_on_write_; }
-
-  virtual Representation RequiredInputRepresentation(int index) {
-    return Representation::Tagged();
-  }
-  virtual HType CalculateInferredType();
-
-  DECLARE_CONCRETE_INSTRUCTION(ArrayLiteral)
-
- private:
-  int length_;
-  Handle<HeapObject> boilerplate_object_;
-  Handle<FixedArray> literals_;
-  ElementsKind boilerplate_elements_kind_;
-  bool is_copy_on_write_;
-};
-
-
-class HObjectLiteral: public HMaterializedLiteral<1> {
- public:
-  HObjectLiteral(HValue* context,
-                 Handle<FixedArray> constant_properties,
-                 Handle<FixedArray> literals,
-                 bool fast_elements,
-                 int literal_index,
-                 int depth,
-                 bool has_function)
-      : HMaterializedLiteral<1>(literal_index, depth),
-        constant_properties_(constant_properties),
-        constant_properties_length_(constant_properties->length()),
-        literals_(literals),
-        fast_elements_(fast_elements),
-        has_function_(has_function) {
-    SetOperandAt(0, context);
-    SetGVNFlag(kChangesNewSpacePromotion);
-  }
-
-  HValue* context() { return OperandAt(0); }
-  Handle<FixedArray> constant_properties() const {
-    return constant_properties_;
-  }
-  int constant_properties_length() const {
-    return constant_properties_length_;
-  }
-  Handle<FixedArray> literals() const { return literals_; }
-  bool fast_elements() const { return fast_elements_; }
-  bool has_function() const { return has_function_; }
-
-  virtual Representation RequiredInputRepresentation(int index) {
-    return Representation::Tagged();
-  }
-  virtual HType CalculateInferredType();
-
-  DECLARE_CONCRETE_INSTRUCTION(ObjectLiteral)
-
- private:
-  Handle<FixedArray> constant_properties_;
-  int constant_properties_length_;
-  Handle<FixedArray> literals_;
-  bool fast_elements_ : 1;
-  bool has_function_ : 1;
-};
-
-
 class HRegExpLiteral: public HMaterializedLiteral<1> {
  public:
   HRegExpLiteral(HValue* context,
@@ -6264,8 +6204,13 @@ class HToFastProperties: public HUnaryOperation {
   explicit HToFastProperties(HValue* value) : HUnaryOperation(value) {
     // This instruction is not marked as having side effects, but
     // changes the map of the input operand. Use it only when creating
-    // object literals.
-    ASSERT(value->IsObjectLiteral());
+    // object literals via a runtime call.
+    ASSERT(value->IsCallRuntime());
+#ifdef DEBUG
+    const Runtime::Function* function = HCallRuntime::cast(value)->function();
+    ASSERT(function->function_id == Runtime::kCreateObjectLiteral ||
+           function->function_id == Runtime::kCreateObjectLiteralShallow);
+#endif
     set_representation(Representation::Tagged());
   }
 
