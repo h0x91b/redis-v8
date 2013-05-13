@@ -202,13 +202,21 @@ redis.debug_segfault = function(){
 redis.decr = function(key) {
 	redis._runcounter++;
 	redis.last_error = '';
-	return this.__incrby(key,-1);
+	redis.str = this.__incrby(key,-1);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
 redis.decrby = function(key,decrement) {
 	redis._runcounter++;
 	redis.last_error = '';
-	return this.__incrby(key,-decrement);
+	redis.str = this.__incrby(key,-decrement);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
 redis.del = function(key){
@@ -400,13 +408,21 @@ redis.hvals = function(key){
 redis.incr = function(key){
 	redis._runcounter++;
 	redis.last_error = '';
-	return this.__incrby(key,1);
+	redis.str = this.__incrby(key,1);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
 redis.incrby = function(key,increment){
 	redis._runcounter++;
 	redis.last_error = '';
-	return this.__incrby(key,increment);
+	redis.str = this.__incrby(key,increment);
+	if(redis.str===false){
+		redis.last_error = redis.getLastError();
+	}
+	return redis.str;
 }
 
 redis.incrbyfloat = function(key,increment){

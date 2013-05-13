@@ -78,4 +78,35 @@ start_server {tags {"basic"}} {
 	test {V8 JSCALL test} {
 		r jscall redis.get key
 	} {{"ret":"value","cmds":1}}
+	
+	test {V8 JSCALL incr not exists key} {
+		r jscall redis.del incrkey
+		r jscall redis.incr incrkey
+	} {{"ret":1,"cmds":1}}
+	
+	test {V8 JSCALL incr exist key} {
+		r jscall redis.set incrkey 100
+		r jscall redis.incr incrkey
+	} {{"ret":101,"cmds":1}}
+	
+	test {V8 JSCALL incrby 100} {
+		r jscall redis.set incrkey 1000
+		r jscall redis.incrby incrkey 100
+	} {{"ret":1100,"cmds":1}}
+	
+	test {V8 JSCALL incrby JS overflow check} {
+		r jscall redis.set incrkey 9007199254740992
+		r jscall redis.incrby incrkey 1
+	} {{"ret":"9007199254740993","cmds":1}}
+	
+	test {V8 JSCALL incrby overflow check} {
+		r jscall redis.set incrkey {9223372036854775806}
+		assert_error {ERR -increment or decrement would overflow} {r jscall redis.incrby incrkey 10}
+	}
+	
+	test {V8 JSCALL incrby value not integer} {
+		r jscall redis.del incrkey
+		r jscall redis.hset incrkey field value
+		assert_error {ERR -value is not integer} {r jscall redis.incrby incrkey 10}
+	}
 }

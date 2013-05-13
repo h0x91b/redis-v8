@@ -229,28 +229,33 @@ v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
 	setKeyPtr(c->db,key,val);
 	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"set",key,c->db->id);
 	decrRefCountPtr(key);
+	decrRefCountPtr(val);
 	return v8::Boolean::New(true);
 }
 
 v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 	redisClient *c = client;
 	long long value, oldvalue, incr;
-	robj *newvalue;
+	robj *newvalue, *key, *reply;
 	v8::String::Utf8Value strkey(args[0]);
 	Local<Integer> i = Local<Integer>::Cast(args[1]);
 	incr = (long long)(i->IntegerValue());
-	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
-	robj *reply = lookupKeyReadPtr(c->db,key);
+	key = createStringObjectPtr((char*)*strkey,strkey.length());
+	reply = lookupKeyReadPtr(c->db,key);
 	
 	if (reply != NULL && checkTypePtr(c,reply,REDIS_STRING)){
-		v8::Local<v8::String> v8reply = v8::String::New("-value is not integer");
+		memset(lastError,0,4096);
+		strcpy(lastError,"-value is not integer");
+		printf("lastError set to '%s'\n",lastError);
 		decrRefCountPtr(key);
-		return v8reply;
+		return v8::Boolean::New(false);
 	}
     if (getLongLongFromObjectOrReplyPtr(c,reply,&value,NULL) != REDIS_OK) {
-		v8::Local<v8::String> v8reply = v8::String::New("-getLongLongFromObjectOrReply failed");
+		memset(lastError,0,4096);
+		strcpy(lastError,"-getLongLongFromObjectOrReply failed");
+		printf("lastError set to '%s'\n",lastError);
 		decrRefCountPtr(key);
-		return v8reply;
+		return v8::Boolean::New(false);
 	}
 	
 	oldvalue = value;
@@ -259,9 +264,11 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 		|| (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))
 	) 
 	{
-		v8::Local<v8::String> v8reply = v8::String::New("-increment or decrement would overflow");
+		memset(lastError,0,4096);
+		strcpy(lastError,"-increment or decrement would overflow");
+		printf("lastError set to '%s'\n",lastError);
 		decrRefCountPtr(key);
-		return v8reply;
+		return v8::Boolean::New(false);
 	}
 	value += incr;
 	newvalue = createStringObjectFromLongLongPtr(value);
@@ -281,13 +288,13 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 		sprintf(buf,"%lli",value);
 		v8::Local<v8::String> v8reply = v8::String::New(buf);
 		decrRefCountPtr(key);
+		decrRefCountPtr(newvalue);
 		return v8reply;
 	}
-	else {
-		v8::Local<v8::Number> v8reply = v8::Number::New(value);
-		decrRefCountPtr(key);
-		return v8reply;
-	}
+	v8::Local<v8::Number> v8reply = v8::Number::New(value);
+	decrRefCountPtr(key);
+	decrRefCountPtr(newvalue);
+	return v8reply;
 }
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
@@ -519,8 +526,9 @@ RUN_JS_RETURN *call_js(redisClient *c){
 		Handle<Value> exception = trycatch.Exception();
 		String::AsciiValue exception_str(exception);
 		printf("Exception: %s\n", *exception_str);
-		char *errBuf = (char*)zmallocPtr(exception_str.length()+100);
-		memset(errBuf,0,exception_str.length());
+		int length = exception_str.length()+100;
+		char *errBuf = (char*)zmallocPtr(length);
+		memset(errBuf,0,length);
 		if(!strcmp(*exception_str,"null")){
 			sprintf(errBuf,"-Script runs too long, Exception error: \"%s\"",*exception_str);
 		}
