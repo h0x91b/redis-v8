@@ -200,11 +200,15 @@ redis.debug_segfault = function(){
 }
 
 redis.decr = function(key) {
-	return this._run('DECR',key);
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__incrby(key,-1);
 }
 
 redis.decrby = function(key,decrement) {
-	return this._run('DECRBY',key,decrement);
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__incrby(key,-decrement);
 }
 
 redis.del = function(key){
@@ -394,11 +398,15 @@ redis.hvals = function(key){
 }
 
 redis.incr = function(key){
-	return this._run('INCR',key);
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__incrby(key,1);
 }
 
 redis.incrby = function(key,increment){
-	return this._run('INCRBY',key,increment);
+	redis._runcounter++;
+	redis.last_error = '';
+	return this.__incrby(key,increment);
 }
 
 redis.incrbyfloat = function(key,increment){

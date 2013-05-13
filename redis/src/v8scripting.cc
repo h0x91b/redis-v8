@@ -78,6 +78,12 @@ void (*addReplyErrorPtr)(redisClient*,char*);
 robj *(*lookupKeyReadPtr)(redisDb*, robj*);
 void (*setKeyPtr)(redisDb*, robj*, robj*);
 void (*notifyKeyspaceEventPtr)(int, char *, robj *, int );
+int (*checkTypePtr)(redisClient *, robj *, int);
+int (*getLongLongFromObjectOrReplyPtr)(redisClient *, robj *, long long *, const char *);
+robj *(*createStringObjectFromLongLongPtr)(long long value);
+void (*dbOverwritePtr)(redisDb *, robj *, robj *);
+void (*dbAddPtr)(redisDb *, robj *, robj *);
+void (*signalModifiedKeyPtr)(redisDb *, robj *);
 
 redisClient *client=NULL;
 
@@ -168,6 +174,7 @@ v8::Handle<v8::Value> parse_bulk(char *replyPtr){
 
 v8::Handle<v8::Value> parse_response(){
 	char *replyPtr = redisReply;
+	long long lvalue = 0;
 	//printf("replyPtr[0]='%c' reply='%s'\n",replyPtr[0],replyPtr);
 	switch(replyPtr[0]){
 		case '+':
@@ -175,7 +182,14 @@ v8::Handle<v8::Value> parse_response(){
 		case '-':
 			return parse_error(++replyPtr);
 		case ':':
-			return v8::Integer::New(atoi(++replyPtr));
+			lvalue = atoll(++replyPtr);
+			if(lvalue > 9007199254740992 || lvalue < -9007199254740992){
+				char buf[20] = {0};
+				sprintf(buf,"%lli",lvalue);
+				v8::Local<v8::String> v8reply = v8::String::New(buf);
+				return v8reply;
+			}
+			return v8::Integer::New(lvalue);
 		case '$':
 			return parse_string(++replyPtr);
 		case '*':
@@ -216,6 +230,64 @@ v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
 	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"set",key,c->db->id);
 	decrRefCountPtr(key);
 	return v8::Boolean::New(true);
+}
+
+v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
+	redisClient *c = client;
+	long long value, oldvalue, incr;
+	robj *newvalue;
+	v8::String::Utf8Value strkey(args[0]);
+	Local<Integer> i = Local<Integer>::Cast(args[1]);
+	incr = (long long)(i->IntegerValue());
+	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
+	robj *reply = lookupKeyReadPtr(c->db,key);
+	
+	if (reply != NULL && checkTypePtr(c,reply,REDIS_STRING)){
+		v8::Local<v8::String> v8reply = v8::String::New("-value is not integer");
+		decrRefCountPtr(key);
+		return v8reply;
+	}
+    if (getLongLongFromObjectOrReplyPtr(c,reply,&value,NULL) != REDIS_OK) {
+		v8::Local<v8::String> v8reply = v8::String::New("-getLongLongFromObjectOrReply failed");
+		decrRefCountPtr(key);
+		return v8reply;
+	}
+	
+	oldvalue = value;
+    if (
+		(incr < 0 && oldvalue < 0 && incr < (LLONG_MIN-oldvalue))
+		|| (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))
+	) 
+	{
+		v8::Local<v8::String> v8reply = v8::String::New("-increment or decrement would overflow");
+		decrRefCountPtr(key);
+		return v8reply;
+	}
+	value += incr;
+	newvalue = createStringObjectFromLongLongPtr(value);
+	if (reply){
+		dbOverwritePtr(c->db,key,newvalue);
+	}
+	else{
+		dbAddPtr(c->db,key,newvalue);
+	}
+	signalModifiedKeyPtr(c->db,key);
+	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"incrby",key,c->db->id);
+
+	//printf("reply is %s\n",reply->ptr);
+	//v8 max integer is 2^53 (+9007199254740992) (-9007199254740992)
+	if( value > 9007199254740992 || value < -9007199254740992){
+		char buf[20] = {0};
+		sprintf(buf,"%lli",value);
+		v8::Local<v8::String> v8reply = v8::String::New(buf);
+		decrRefCountPtr(key);
+		return v8reply;
+	}
+	else {
+		v8::Local<v8::Number> v8reply = v8::Number::New(value);
+		decrRefCountPtr(key);
+		return v8reply;
+	}
 }
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
@@ -319,6 +391,7 @@ void initV8(){
 	redis->Set(v8::String::New("__run"), v8::FunctionTemplate::New(run),ReadOnly);
 	redis->Set(v8::String::New("__get"), v8::FunctionTemplate::New(raw_get),ReadOnly);
 	redis->Set(v8::String::New("__set"), v8::FunctionTemplate::New(raw_set),ReadOnly);
+	redis->Set(v8::String::New("__incrby"), v8::FunctionTemplate::New(raw_incrby),ReadOnly);
 	redis->Set(v8::String::New("__log"), v8::FunctionTemplate::New(redis_log),ReadOnly);
 	redis->Set(v8::String::New("getLastError"), v8::FunctionTemplate::New(getLastError),ReadOnly);
 	global->Set(v8::String::New("redis"), redis);
@@ -745,9 +818,39 @@ extern "C"
 		setKeyPtr = functionPtr;
 	}
 	
+	void passPointerTodbOverwrite(void (*functionPtr)(redisDb *, robj *, robj *)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTodbOverwrite");
+		dbOverwritePtr = functionPtr;
+	}
+	
+	void passPointerTodbAdd(void (*functionPtr)(redisDb *, robj *, robj *)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTodbAdd");
+		dbAddPtr = functionPtr;
+	}
+	
 	void passPointerTonotifyKeyspaceEvent(void (*functionPtr)(int, char *, robj *, int )){
 		redisLogRawPtr(REDIS_DEBUG, "passPointerTonotifyKeyspaceEvent");
 		notifyKeyspaceEventPtr = functionPtr;
+	}
+	
+	void passPointerTocheckType(int (*functionPtr)(redisClient *, robj *, int)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocheckType");
+		checkTypePtr = functionPtr;
+	}
+	
+	void passPointerTogetLongLongFromObjectOrReply(int (*functionPtr)(redisClient *, robj *, long long *, const char *)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTogetLongLongFromObjectOrReply");
+		getLongLongFromObjectOrReplyPtr = functionPtr;
+	}
+	
+	void passPointerTocreateStringObjectFromLongLong(robj *(*functionPtr)(long long value)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObjectFromLongLong");
+		createStringObjectFromLongLongPtr = functionPtr;
+	}
+	
+	void passPointerTosignalModifiedKey(void (*functionPtr)(redisDb *, robj *)){
+		redisLogRawPtr(REDIS_DEBUG, "passPointerTosignalModifiedKey");
+		signalModifiedKeyPtr = functionPtr;
 	}
 	
 	void config_js_dir(char *_js_dir){

@@ -2792,7 +2792,13 @@ void loadDataFromDisk(void) {
 	passPointerToaddReplyError(addReplyError);
 	passPointerTolookupKeyRead(lookupKeyRead);
 	passPointerTosetKey(setKey);
+	passPointerTodbOverwrite(dbOverwrite);
+	passPointerTodbAdd(dbAdd);
 	passPointerTonotifyKeyspaceEvent(notifyKeyspaceEvent);
+	passPointerTocheckType(checkType);
+	passPointerTogetLongLongFromObjectOrReply(getLongLongFromObjectOrReply);
+	passPointerTocreateStringObjectFromLongLong(createStringObjectFromLongLong);
+	passPointerTosignalModifiedKey(signalModifiedKey);
 	v8setup();
 }
 
