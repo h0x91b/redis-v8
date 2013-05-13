@@ -144,6 +144,7 @@ For compiling redis-v8 you will need folowing packages:
 	svn
 	vim-common
 	jemalloc-devel
+	tclsh8.5
 
 Get redis-v8 source
 
@@ -155,6 +156,11 @@ Start server
 
 	cd src/
 	./redis-server ../redis.conf
+
+Run v8 tests only:
+
+	cd redis-v8/redis
+	tclsh8.5 tests/test_helper.tcl --single v8/v8
 
 
 LICENSE
