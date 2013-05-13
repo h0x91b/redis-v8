@@ -293,7 +293,6 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 	}
 	v8::Local<v8::Number> v8reply = v8::Number::New(value);
 	decrRefCountPtr(key);
-	decrRefCountPtr(newvalue);
 	return v8reply;
 }
 
