@@ -46,46 +46,31 @@ Tested on virtual host with CentOS 6.3 64bit, 1 cpu core 2.4 GHz and 1GB ram:
 
 	$ ./redis-benchmark -q -s /tmp/redis.sock 
 	
-	PING_INLINE: 72992.70 requests per second
-	PING_BULK: 73529.41 requests per second
-	V8 PING_BULK: 27247.96 requests per second
-	V8 PING_BULK 100 inline (result * 100): 778816.19 requests per second
-	V8 PING_BULK 300 inline (result * 300): 970245.75 requests per second
-	SET: 84745.77 requests per second
-	V8 SET 1 inline: 24875.62 requests per second
-	V8 SET 10 inline (result * 10): 169779.30 requests per second
-	V8 SET 100 inline (result * 100): 424989.41 requests per second
-	V8 SET 300 inline (result * 300): 485122.88 requests per second
-	V8 OPTIMIZED SET 1 inline: 26881.72 requests per second
-	V8 OPTIMIZED SET 10 inline (result * 10): 207468.89 requests per second
-	V8 OPTIMIZED SET 100 inline (result * 100): 648508.38 requests per second
-	V8 OPTIMIZED SET 300 inline (result * 300): 839630.56 requests per second
-	GET: 81967.21 requests per second
-	V8 GET 1 inline: 25706.94 requests per second
-	V8 GET 10 inline (result * 10): 171526.58 requests per second
-	V8 GET 100 inline (result * 100): 451060.00 requests per second
-	V8 GET 300 inline (result * 300): 567644.25 requests per second
-	V8 OPTIMIZED GET 1 inline: 27855.15 requests per second
-	V8 OPTIMIZED GET 10 inline (result * 10): 242718.44 requests per second
-	V8 OPTIMIZED GET 100 inline (result * 100): 1064962.75 requests per second
-	V8 OPTIMIZED GET 300 inline (result * 300): 1434720.12 requests per second
-	INCR: 86206.90 requests per second
-	V8 INCR: 25706.94 requests per second
-	V8 INCR 100 inline (result * 100): 458715.56 requests per second
-	V8 INCR 300 inline (result * 300): 529848.06 requests per second
-	LPUSH: 88495.58 requests per second
-	V8 LPUSH 1 inline: 25510.21 requests per second
-	V8 LPUSH 100 inline (result * 100): 381533.75 requests per second
-	V8 LPUSH 300 inline (result * 300): 445368.16 requests per second
-	LPOP: 85470.09 requests per second
-	SADD: 78740.16 requests per second
-	SPOP: 75187.97 requests per second
-	LPUSH (needed to benchmark LRANGE): 80645.16 requests per second
-	LRANGE_100 (first 100 elements): 23696.68 requests per second
-	LRANGE_300 (first 300 elements): 11173.18 requests per second
-	LRANGE_500 (first 450 elements): 8230.45 requests per second
-	LRANGE_600 (first 600 elements): 6464.12 requests per second
-	MSET (10 keys): 37037.04 requests per second
+	PING_INLINE: 71428.57 requests per second
+	PING_BULK: 66225.17 requests per second
+	V8 PING: 22883.29 requests per second
+	SET: 81967.21 requests per second
+	V8 SET JSCALL 1 inline (Worst case): 22271.71 requests per second
+	V8 SET JSCALL 100 inline (result * 100): 625782.25 requests per second
+	V8 SET JSCALL 300 inline (result * 300): 827814.56 requests per second
+	GET: 75187.97 requests per second
+	V8 GET JSCALL 1 inline (Worst case): 22321.43 requests per second
+	V8 GET JSCALL 100 inline (result * 100): 833333.31 requests per second
+	V8 GET JSCALL 300 inline (result * 300): 1206757.88 requests per second
+	INCR: 80645.16 requests per second
+	V8 INCR JSCALL 1 inline (Worst case): 21459.23 requests per second
+	V8 INCR JSCALL 100 inline (result * 100): 713775.88 requests per second
+	V8 INCR JSCALL 300 inline (result * 300): 875401.25 requests per second
+	LPUSH: 73529.41 requests per second
+	LPOP: 66666.66 requests per second
+	SADD: 66225.17 requests per second
+	SPOP: 60240.96 requests per second
+	LPUSH (needed to benchmark LRANGE): 69930.07 requests per second
+	LRANGE_100 (first 100 elements): 20080.32 requests per second
+	LRANGE_300 (first 300 elements): 9569.38 requests per second
+	LRANGE_500 (first 450 elements): 7267.44 requests per second
+	LRANGE_600 (first 600 elements): 6082.73 requests per second
+	MSET (10 keys): 35211.27 requests per second
 
 
 Using
