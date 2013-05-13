@@ -598,21 +598,9 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
-		if (test_is_selected("v8_ping_mbulk")) {
-            len = redisFormatCommand(&cmd,"JS %s","redis.ping()");
-            benchmark("V8 PING_BULK",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_ping_100")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.ping()");
-            benchmark("V8 PING_BULK 100 inline (result * 100)",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_ping_300")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.ping()");
-            benchmark("V8 PING_BULK 300 inline (result * 300)",cmd,len);
+		if (test_is_selected("v8_ping")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.ping");
+            benchmark("V8 PING",cmd,len);
             free(cmd);
         }
 
@@ -622,82 +610,29 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
-		if (test_is_selected("v8_set")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"return redis._set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 SET 1 inline",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_set_10")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<10;i++) redis._set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 SET 10 inline (result * 10)",cmd,len);
+		if (test_is_selected("v8_set_1")) {
+			char *buf = malloc(config.datasize+1);
+			memset(buf,0,config.datasize+1);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.set foo:rand:000000000000 %s",data);
+            benchmark("V8 SET JSCALL 1 inline (Worst case)",cmd,len);
             free(cmd);
 			free(buf);
         }
 
 		if (test_is_selected("v8_set_100")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<100;i++) redis._set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 SET 100 inline (result * 100)",cmd,len);
+			char *buf = malloc(config.datasize+1);
+			memset(buf,0,config.datasize+1);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.set100 foo:rand:000000000000 %s",data);
+            benchmark("V8 SET JSCALL 100 inline (result * 100)",cmd,len);
             free(cmd);
 			free(buf);
         }
-
+		
 		if (test_is_selected("v8_set_300")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<300;i++) redis._set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 SET 300 inline (result * 300)",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_setn")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"return redis.set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 OPTIMIZED SET 1 inline",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_setn_10")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<10;i++) redis.set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 OPTIMIZED SET 10 inline (result * 10)",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_setn_100")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<100;i++) redis.set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 OPTIMIZED SET 100 inline (result * 100)",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_setn_300")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<300;i++) redis.set('foo:rand:000000000000','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 OPTIMIZED SET 300 inline (result * 300)",cmd,len);
+			char *buf = malloc(config.datasize+1);
+			memset(buf,0,config.datasize+1);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.set300 foo:rand:000000000000 %s",data);
+            benchmark("V8 SET JSCALL 300 inline (result * 300)",cmd,len);
             free(cmd);
 			free(buf);
         }
@@ -708,57 +643,21 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
-		if (test_is_selected("v8_get")) {
-            len = redisFormatCommand(&cmd,"JS %s","return redis._get('foo:rand:000000000000')");
-            benchmark("V8 GET 1 inline",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_get_call")) {
-            len = redisFormatCommand(&cmd,"JSCALL redis.get foo:rand:000000000000");
-            benchmark("V8 GET CALL 1 inline",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_get_10")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<10;i++) redis._get('foo:rand:000000000000')");
-            benchmark("V8 GET 10 inline (result * 10)",cmd,len);
+		if (test_is_selected("v8_get_1")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get foo:rand:000000000000");
+            benchmark("V8 GET JSCALL 1 inline (Worst case)",cmd,len);
             free(cmd);
         }
 
 		if (test_is_selected("v8_get_100")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis._get('foo:rand:000000000000')");
-            benchmark("V8 GET 100 inline (result * 100)",cmd,len);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get100 foo:rand:000000000000");
+            benchmark("V8 GET JSCALL 100 inline (result * 100)",cmd,len);
             free(cmd);
         }
 
 		if (test_is_selected("v8_get_300")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis._get('foo:rand:000000000000')");
-            benchmark("V8 GET 300 inline (result * 300)",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_getn")) {
-            len = redisFormatCommand(&cmd,"JS %s","return redis.get('foo:rand:000000000000')");
-            benchmark("V8 OPTIMIZED GET 1 inline",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_getn_10")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<10;i++) redis.get('foo:rand:000000000000')");
-            benchmark("V8 OPTIMIZED GET 10 inline (result * 10)",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_getn_100")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.get('foo:rand:000000000000')");
-            benchmark("V8 OPTIMIZED GET 100 inline (result * 100)",cmd,len);
-            free(cmd);
-        }
-
-		if (test_is_selected("v8_getn_300")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.get('foo:rand:000000000000')");
-            benchmark("V8 OPTIMIZED GET 300 inline (result * 300)",cmd,len);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get300 foo:rand:000000000000");
+            benchmark("V8 GET JSCALL 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
 
@@ -768,21 +667,21 @@ int main(int argc, const char **argv) {
             free(cmd);
         }
 
-		if (test_is_selected("v8_incr")) {
-            len = redisFormatCommand(&cmd,"JS %s","return redis.incr('counter:rand:000000000000')");
-            benchmark("V8 INCR",cmd,len);
+		if (test_is_selected("v8_incr_1")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr foo:rand:000000000001");
+            benchmark("V8 INCR JSCALL 1 inline (Worst case)",cmd,len);
             free(cmd);
         }
 
 		if (test_is_selected("v8_incr_100")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<100;i++) redis.incr('counter:rand:000000000000')");
-            benchmark("V8 INCR 100 inline (result * 100)",cmd,len);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr100 foo:rand:000000000001");
+            benchmark("V8 INCR JSCALL 100 inline (result * 100)",cmd,len);
             free(cmd);
         }
 
 		if (test_is_selected("v8_incr_300")) {
-            len = redisFormatCommand(&cmd,"JS %s","for(var i=0;i<300;i++) redis.incr('counter:rand:000000000000')");
-            benchmark("V8 INCR 300 inline (result * 300)",cmd,len);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr300 foo:rand:000000000001");
+            benchmark("V8 INCR JSCALL 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
 
@@ -790,36 +689,6 @@ int main(int argc, const char **argv) {
             len = redisFormatCommand(&cmd,"LPUSH mylist %s",data);
             benchmark("LPUSH",cmd,len);
             free(cmd);
-        }
-
-		if (test_is_selected("v8_lpush")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"return redis.lpush('mylist','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 LPUSH 1 inline",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_lpush_100")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<100;i++) redis.lpush('mylist','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 LPUSH 100 inline (result * 100)",cmd,len);
-            free(cmd);
-			free(buf);
-        }
-
-		if (test_is_selected("v8_lpush_300")) {
-			char *buf = malloc(config.datasize+100);
-			memset(buf,0,config.datasize+100);
-			sprintf(buf,"for(var i=0;i<300;i++) redis.lpush('mylist','%s')",data);
-            len = redisFormatCommand(&cmd,"JS %s",buf);
-            benchmark("V8 LPUSH 300 inline (result * 300)",cmd,len);
-            free(cmd);
-			free(buf);
         }
 
         if (test_is_selected("lpop")) {
