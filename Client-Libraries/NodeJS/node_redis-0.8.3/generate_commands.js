@@ -32,7 +32,45 @@ http.get({host: "redis.io", path: "/commands.json"}, function (res) {
     });
 
     res.on('end', function () {
-        write_file(JSON.parse(body), "lib/commands.js");
+        body = JSON.parse(body);
+        body.JS = {
+            "summary": "Execute a JS script server side",
+            "complexity": "Depends on the script that is executed.",
+            "arguments": [
+              {
+                "name": "js code",
+                "type": "string"
+              }
+            ],
+            "since": "2.6.0",
+            "group": "scripting"
+        };
+        body.JSCALL = {
+            "summary": "Execute a JS function with a given arguments server side",
+            "complexity": "Depends on the script that is executed.",
+            "arguments": [
+              {
+                "name": "script",
+                "type": "string"
+              },
+              {
+                "name": "arg",
+                "type": "string",
+                "multiple": true
+              }
+            ],
+            "since": "2.6.0",
+            "group": "scripting"
+        }
+        body.JSRELOAD = {
+            "summary": "Reload V8 and user scripts",
+            "complexity": "",
+            "arguments": [
+            ],
+            "since": "2.6.0",
+            "group": "scripting"
+        }
+        write_file(body, "lib/commands.js");
     });
 }).on('error', function (e) {
     console.log("Error fetching command list from redis.io: " + e.message);
