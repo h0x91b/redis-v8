@@ -32,8 +32,33 @@ redis.str = {};
 redis.last_error = '';
 redis.v8_start = +new Date;
 redis._runcounter = 0;
+redis._timeouts = [];
+redis._timeout_id = 1;
 
 window = this;
+
+redis._runtimeouts = function(){
+	if(redis._timeouts.length==0) return true;
+	if(redis._timeouts[0].time > +new Date) return true;
+	var obj = redis._timeouts.shift();
+	obj.func.call(window);
+	return redis._runtimeouts();
+}
+
+function setTimeout(func,delay_ms){
+	var target_time = (+new Date)+delay_ms;
+	var id = redis._timeout_id++;
+	redis._timeouts.push({
+		id: id,
+		func: func,
+		time: target_time
+	});
+	redis._timeouts.sort(function(a,b){
+		if(a.time==b.time) return 0;
+		return a.time > b.time ? 1 : -1;
+	})
+	return id;
+}
 
 function jscall_wrapper_function(){
 	var self, func;

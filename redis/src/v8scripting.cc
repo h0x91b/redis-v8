@@ -46,11 +46,13 @@ v8::Persistent<v8::Context> v8_context;
 
 const char* ToCString(const v8::String::Utf8Value& value);
 void *single_thread_function_for_slow_run_js(void *param);
+void *setTimeoutExec(void *param);
 v8::Handle<v8::Value> parse_response();
 char *js_dir = NULL;
 char *js_flags = NULL;
 int js_code_id = 0;
 pthread_t thread_id_for_single_thread_check;
+pthread_t thread_id_for_setTimeoutExec;
 int js_timeout = 15;
 int js_slow = 250;
 char *last_js_run = NULL;
@@ -297,6 +299,7 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 }
 
 v8::Handle<v8::Value> run(const v8::Arguments& args) {
+	Locker v8Locker;
 	int argc = args.Length();
 	redisCommand *cmd;
 	robj **argv;
@@ -390,6 +393,7 @@ void initV8(){
 	
 	pthread_create(&thread_id_for_single_thread_check, NULL, single_thread_function_for_slow_run_js, (void*)NULL);
 	
+	Locker v8Locker;
 	v8::HandleScope handle_scope;
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
@@ -405,8 +409,7 @@ void initV8(){
 	// Create a new context.
 	v8_context = v8::Context::New(NULL,global);
 	
-	// Enter the created context for compiling and
-	// running the hello world script. 
+	// Enter the created context for compiling and runing
 	v8::Context::Scope context_scope(v8_context);
 	
 	v8::Handle<v8::String> source = v8::String::New((const char*)v8core_js);
@@ -427,6 +430,7 @@ struct RUN_JS_RETURN {
 RUN_JS_RETURN run_js_return;
 
 RUN_JS_RETURN *run_js(char *code){
+	Locker v8Locker;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
@@ -504,6 +508,7 @@ RUN_JS_RETURN *run_js(char *code){
 
 
 RUN_JS_RETURN *call_js(redisClient *c){
+	Locker v8Locker;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	
@@ -559,6 +564,7 @@ RUN_JS_RETURN *call_js(redisClient *c){
 }
 
 void load_user_script(char *file){
+	Locker v8Locker;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
 	char* core = file_get_contents(file);
@@ -621,6 +627,41 @@ struct ThreadJSClientAndCode {
 	redisClient *c;
 	char *code;
 };
+
+void *setTimeoutExec(void *param)
+{
+	while(1){
+		usleep(50000); //50ms
+		
+		Locker v8Locker;
+		v8::HandleScope handle_scope;
+		v8::Context::Scope context_scope(v8_context);
+		v8::Handle<v8::String> source = v8::String::New("redis._runtimeouts()");
+		v8::TryCatch trycatch;
+		v8::Handle<v8::Script> script = v8::Script::Compile(source);
+		if(script.IsEmpty()){
+			Handle<Value> exception = trycatch.Exception();
+			String::AsciiValue exception_str(exception);
+			printf("V8 Exception: %s\n", *exception_str);
+			char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
+			memset(errBuf,0,4096);
+			sprintf(errBuf,"-Compile error: \"%s\"",*exception_str);
+			printf("errBuf is '%s'\n",errBuf);
+			continue;
+		}
+		v8::Handle<v8::Value> result = script->Run();
+		if (result.IsEmpty()) {  
+			Handle<Value> exception = trycatch.Exception();
+			String::AsciiValue exception_str(exception);
+			printf("Exception: %s\n", *exception_str);
+			char *errBuf = (char*)zmallocPtr(4096); //TODO: calc size
+			memset(errBuf,0,4096);
+			sprintf(errBuf,"-Exception error: \"%s\"",*exception_str);
+			continue;
+		}
+	}
+	return 0;
+}
 
 void *single_thread_function_for_slow_run_js(void *param)
 {
@@ -700,6 +741,7 @@ extern "C"
 		load_user_scripts_from_folder(js_dir);
 		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
 		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8 Reload complete\r\n")));
+		pthread_create(&thread_id_for_setTimeoutExec, NULL, setTimeoutExec, (void*)NULL);
 	}
 	
 	void v8setup()
@@ -719,6 +761,7 @@ extern "C"
 		load_user_scripts_from_folder(js_dir);
 		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
 		
+		pthread_create(&thread_id_for_setTimeoutExec, NULL, setTimeoutExec, (void*)NULL);
 	}
 	
 	void passPointerToRedisLogRaw(void (*functionPtr)(int, char*)){
