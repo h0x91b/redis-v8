@@ -100,6 +100,29 @@
 #define REDIS_DEFAULT_REPL_BACKLOG_TIME_LIMIT (60*60)  /* 1 hour */
 #define REDIS_REPL_BACKLOG_MIN_SIZE (1024*16)          /* 16k */
 #define REDIS_BGSAVE_RETRY_DELAY 5 /* Wait a few secs before trying again. */
+#define REDIS_DEFAULT_PID_FILE "/var/run/redis.pid"
+#define REDIS_DEFAULT_SYSLOG_IDENT "redis"
+#define REDIS_DEFAULT_CLUSTER_CONFIG_FILE "nodes.conf"
+#define REDIS_DEFAULT_DAEMONIZE 0
+#define REDIS_DEFAULT_UNIX_SOCKET_PERM 0
+#define REDIS_DEFAULT_TCP_KEEPALIVE 0
+#define REDIS_DEFAULT_LOGFILE ""
+#define REDIS_DEFAULT_SYSLOG_ENABLED 0
+#define REDIS_DEFAULT_STOP_WRITES_ON_BGSAVE_ERROR 1
+#define REDIS_DEFAULT_RDB_COMPRESSION 1
+#define REDIS_DEFAULT_RDB_CHECKSUM 1
+#define REDIS_DEFAULT_RDB_FILENAME "dump.rdb"
+#define REDIS_DEFAULT_SLAVE_SERVE_STALE_DATA 1
+#define REDIS_DEFAULT_SLAVE_READ_ONLY 1
+#define REDIS_DEFAULT_REPL_DISABLE_TCP_NODELAY 0
+#define REDIS_DEFAULT_MAXMEMORY 0
+#define REDIS_DEFAULT_MAXMEMORY_SAMPLES 3
+#define REDIS_DEFAULT_AOF_NO_FSYNC_ON_REWRITE 0
+#define REDIS_DEFAULT_ACTIVE_REHASHING 1
+#define REDIS_DEFAULT_AOF_REWRITE_INCREMENTAL_FSYNC 1
+#define REDIS_DEFAULT_MIN_SLAVES_TO_WRITE 0
+#define REDIS_DEFAULT_MIN_SLAVES_MAX_LAG 10
+#define REDIS_IP_STR_LEN 16
 
 /* Protocol and I/O related defines */
 #define REDIS_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
@@ -576,7 +599,7 @@ struct clusterNode {
     time_t ping_sent;       /* Unix time we sent latest ping */
     time_t pong_received;   /* Unix time we received the pong */
     time_t fail_time;       /* Unix time when FAIL flag was set */
-    char ip[16];                /* Latest known IP address of this node */
+    char ip[REDIS_IP_STR_LEN];  /* Latest known IP address of this node */
     int port;                   /* Latest known port of this node */
     clusterLink *link;          /* TCP/IP link with this node */
     list *fail_reports;         /* List of nodes signaling this as failing */
