@@ -45,9 +45,9 @@ redis._runtimeouts = function(){
 	return redis._runtimeouts();
 }
 
-function setTimeout(func,delay_ms){
+function setTimeout(func,delay_ms,force_id){
 	var target_time = (+new Date)+delay_ms;
-	var id = redis._timeout_id++;
+	var id = force_id || redis._timeout_id++;
 	redis._timeouts.push({
 		id: id,
 		func: func,
@@ -68,6 +68,23 @@ function clearTimeout(id){
 			break;
 		}
 	}
+}
+
+function setInterval(func,delay_ms){
+	var id=null;
+	var interval_func = function(){
+		if(!id)
+			id = setTimeout(interval_func,delay_ms);
+		else
+			setTimeout(interval_func,delay_ms,id);
+		func();
+	}
+	interval_func();
+	return id;
+}
+
+function clearInterval(id){
+	return clearTimeout(id);
 }
 
 function jscall_wrapper_function(){
