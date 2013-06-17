@@ -60,6 +60,16 @@ function setTimeout(func,delay_ms){
 	return id;
 }
 
+function clearTimeout(id){
+	if(!id || typeof id != 'number' || redis._timeouts.length < 1) return false;
+	for(var i=0;i<redis._timeouts.length;i++){
+		if(redis._timeouts[i].id==id){
+			redis._timeouts.splice(i,1);
+			break;
+		}
+	}
+}
+
 function jscall_wrapper_function(){
 	var self, func;
 
