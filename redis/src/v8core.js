@@ -34,6 +34,7 @@ redis.v8_start = +new Date;
 redis._runcounter = 0;
 redis._timeouts = [];
 redis._timeout_id = 1;
+redis._last_interval_id = 0;
 
 window = this;
 
@@ -77,9 +78,10 @@ function setInterval(func,delay_ms){
 			id = setTimeout(interval_func,delay_ms);
 		else
 			setTimeout(interval_func,delay_ms,id);
+		redis._last_interval_id = id;
 		func();
 	}
-	interval_func();
+	interval_func(); 
 	return id;
 }
 

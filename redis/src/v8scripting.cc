@@ -93,6 +93,7 @@ char *redisReply = NULL;
 char bufForString[4096] = {0};
 char lastError[4096] = {0};
 int scriptStart = 0;
+int timeoutScriptStart = 0;
 
 unsigned int GetTickCount(void) 
 {
@@ -649,7 +650,9 @@ void *setTimeoutExec(void *param)
 			printf("errBuf is '%s'\n",errBuf);
 			continue;
 		}
+		timeoutScriptStart = GetTickCount();
 		v8::Handle<v8::Value> result = script->Run();
+		timeoutScriptStart = 0;
 		if (result.IsEmpty()) {  
 			Handle<Value> exception = trycatch.Exception();
 			String::AsciiValue exception_str(exception);
@@ -685,6 +688,12 @@ void *single_thread_function_for_slow_run_js(void *param)
 			redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
 			redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
 			v8::V8::TerminateExecution();
+		if(timeoutScriptStart != 0 && dt > 1*1000){
+			printf("some of timeout/interval runned for %i sec, kill it\n",1);
+			redisLogRawPtr(REDIS_NOTICE,(char *)"some of timeout/interval works to long, kill it.");
+			v8::V8::TerminateExecution();
+			run_js("console.log('kill interval', redis._last_interval_id); clearInterval(redis._last_interval_id)");
+			timeoutScriptStart = 0;
 		}
 	}
 	return 0;
