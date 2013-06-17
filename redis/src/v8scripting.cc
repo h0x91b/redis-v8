@@ -430,7 +430,7 @@ struct RUN_JS_RETURN {
 
 RUN_JS_RETURN run_js_return;
 
-RUN_JS_RETURN *run_js(char *code){
+RUN_JS_RETURN *run_js(char *code, bool async_call=false){
 	Locker v8Locker;
 	v8::HandleScope handle_scope;
 	v8::Context::Scope context_scope(v8_context);
@@ -446,7 +446,11 @@ RUN_JS_RETURN *run_js(char *code){
 	}
 	//memset(wrapcodebuf,0,code_length+170);
 	wrapcodebuf[0] = '\0';
-	sprintf(wrapcodebuf,"inline_redis_func = function(){%s}; redis.inline_return()",code);
+	if(!async_call){
+		sprintf(wrapcodebuf,"inline_redis_func = function(){%s}; redis.inline_return()",code);
+	} else {
+		sprintf(wrapcodebuf,"(function(){ setTimeout(function(){%s},1); return '{\"ret\":true,\"cmds\":0}' })();",code);
+	}
 	
 	//printf("%s\n",wrapcodebuf);
 	
@@ -688,11 +692,14 @@ void *single_thread_function_for_slow_run_js(void *param)
 			redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
 			redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
 			v8::V8::TerminateExecution();
-		if(timeoutScriptStart != 0 && dt > 1*1000){
-			printf("some of timeout/interval runned for %i sec, kill it\n",1);
-			redisLogRawPtr(REDIS_NOTICE,(char *)"some of timeout/interval works to long, kill it.");
+			scriptStart = 0;
+		}
+		
+		if(timeoutScriptStart != 0 && dt > js_timeout*1000){
+			printf("some of timeout/interval runned for %i sec, kill it\n",js_timeout);
+			redisLogRawPtr(REDIS_NOTICE,(char *)"some of timeouts/intervals works to long, kill last one.");
 			v8::V8::TerminateExecution();
-			run_js("console.log('kill interval', redis._last_interval_id); clearInterval(redis._last_interval_id)");
+			run_js("clearInterval(redis._last_interval_id)");
 			timeoutScriptStart = 0;
 		}
 	}
@@ -705,7 +712,25 @@ extern "C"
 		//printf("v8_exec %s\n",code);
 		scriptStart = GetTickCount();
 		last_js_run = code;
-		RUN_JS_RETURN * ret = run_js(code);
+		RUN_JS_RETURN * ret = run_js(code,false);
+		last_js_run = NULL;
+		scriptStart = 0;
+		if(ret->json && ret->json[0]=='-'){
+			printf("run_js return error %s\n",ret->json);
+			addReplyErrorPtr(c,ret->json);
+			if(ret->json!=run_js_returnbuf) zfreePtr(ret->json);
+			return;
+		}
+		robj *obj = createStringObjectPtr(ret->json,ret->len);
+		addReplyBulkPtr(c,obj);
+		decrRefCountPtr(obj);
+	}
+	
+	void v8_exec_async(redisClient *c,char* code){
+		//printf("v8_exec %s\n",code);
+		scriptStart = GetTickCount();
+		last_js_run = code;
+		RUN_JS_RETURN * ret = run_js(code,true);
 		last_js_run = NULL;
 		scriptStart = 0;
 		if(ret->json && ret->json[0]=='-'){

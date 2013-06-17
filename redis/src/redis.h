@@ -1470,6 +1470,7 @@ void redisLogHexDump(int level, char *descr, void *value, size_t len);
 /*V8 section*/
 void v8setup();
 void v8Command(redisClient *c);
+void v8CommandAsync(redisClient *c);
 void v8CommandCall(redisClient *c);
 void v8Reload(redisClient *c);
 
@@ -1504,6 +1505,7 @@ void passPointerTogetLongLongFromObjectOrReply(int (*functionPtr)(redisClient *,
 void passPointerTocreateStringObjectFromLongLong(robj *(*functionPtr)(long long value));
 void passPointerTosignalModifiedKey(void (*functionPtr)(redisDb *, robj *));
 void v8_exec(redisClient *c,char* code);
+void v8_exec_async(redisClient *c,char* code);
 void v8_exec_call(redisClient *c);
 void v8_reload(redisClient *c);
 void config_js_dir(char *js_dir);
