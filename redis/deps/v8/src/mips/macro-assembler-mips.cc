@@ -83,12 +83,11 @@ void MacroAssembler::StoreRoot(Register source,
 
 void MacroAssembler::LoadHeapObject(Register result,
                                     Handle<HeapObject> object) {
-  ALLOW_HANDLE_DEREF(isolate(), "using raw address");
+  AllowDeferredHandleDereference using_raw_address;
   if (isolate()->heap()->InNewSpace(*object)) {
-    Handle<JSGlobalPropertyCell> cell =
-        isolate()->factory()->NewJSGlobalPropertyCell(object);
+    Handle<Cell> cell = isolate()->factory()->NewCell(object);
     li(result, Operand(cell));
-    lw(result, FieldMemOperand(result, JSGlobalPropertyCell::kValueOffset));
+    lw(result, FieldMemOperand(result, Cell::kValueOffset));
   } else {
     li(result, Operand(object));
   }
@@ -2458,7 +2457,7 @@ void MacroAssembler::Jump(Handle<Code> code,
                           const Operand& rt,
                           BranchDelaySlot bd) {
   ASSERT(RelocInfo::IsCodeTarget(rmode));
-  ALLOW_HANDLE_DEREF(isolate(), "embedding raw address");
+  AllowDeferredHandleDereference embedding_raw_address;
   Jump(reinterpret_cast<intptr_t>(code.location()), rmode, cond, rs, rt, bd);
 }
 
@@ -2546,7 +2545,7 @@ int MacroAssembler::CallSize(Handle<Code> code,
                              Register rs,
                              const Operand& rt,
                              BranchDelaySlot bd) {
-  ALLOW_HANDLE_DEREF(isolate(), "using raw address");
+  AllowDeferredHandleDereference using_raw_address;
   return CallSize(reinterpret_cast<Address>(code.location()),
       rmode, cond, rs, rt, bd);
 }
@@ -2567,7 +2566,7 @@ void MacroAssembler::Call(Handle<Code> code,
     SetRecordedAstId(ast_id);
     rmode = RelocInfo::CODE_TARGET_WITH_ID;
   }
-  ALLOW_HANDLE_DEREF(isolate(), "embedding raw address");
+  AllowDeferredHandleDereference embedding_raw_address;
   Call(reinterpret_cast<Address>(code.location()), rmode, cond, rs, rt, bd);
   ASSERT_EQ(CallSize(code, rmode, ast_id, cond, rs, rt, bd),
             SizeOfCodeGeneratedSince(&start));
@@ -3464,10 +3463,9 @@ void MacroAssembler::CompareMapAndBranch(Register obj,
                                          Handle<Map> map,
                                          Label* early_success,
                                          Condition cond,
-                                         Label* branch_to,
-                                         CompareMapMode mode) {
+                                         Label* branch_to) {
   lw(scratch, FieldMemOperand(obj, HeapObject::kMapOffset));
-  CompareMapAndBranch(scratch, map, early_success, cond, branch_to, mode);
+  CompareMapAndBranch(scratch, map, early_success, cond, branch_to);
 }
 
 
@@ -3475,25 +3473,8 @@ void MacroAssembler::CompareMapAndBranch(Register obj_map,
                                          Handle<Map> map,
                                          Label* early_success,
                                          Condition cond,
-                                         Label* branch_to,
-                                         CompareMapMode mode) {
-  Operand right = Operand(map);
-  if (mode == ALLOW_ELEMENT_TRANSITION_MAPS) {
-    ElementsKind kind = map->elements_kind();
-    if (IsFastElementsKind(kind)) {
-      bool packed = IsFastPackedElementsKind(kind);
-      Map* current_map = *map;
-      while (CanTransitionToMoreGeneralFastElementsKind(kind, packed)) {
-        kind = GetNextMoreGeneralFastElementsKind(kind, packed);
-        current_map = current_map->LookupElementsTransitionMap(kind);
-        if (!current_map) break;
-        Branch(early_success, eq, obj_map, right);
-        right = Operand(Handle<Map>(current_map));
-      }
-    }
-  }
-
-  Branch(branch_to, cond, obj_map, right);
+                                         Label* branch_to) {
+  Branch(branch_to, cond, obj_map, Operand(map));
 }
 
 
@@ -3501,13 +3482,12 @@ void MacroAssembler::CheckMap(Register obj,
                               Register scratch,
                               Handle<Map> map,
                               Label* fail,
-                              SmiCheckType smi_check_type,
-                              CompareMapMode mode) {
+                              SmiCheckType smi_check_type) {
   if (smi_check_type == DO_SMI_CHECK) {
     JumpIfSmi(obj, fail);
   }
   Label success;
-  CompareMapAndBranch(obj, scratch, map, &success, ne, fail, mode);
+  CompareMapAndBranch(obj, scratch, map, &success, ne, fail);
   bind(&success);
 }
 
@@ -3929,7 +3909,12 @@ static int AddressOffset(ExternalReference ref0, ExternalReference ref1) {
 
 
 void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
-                                              int stack_space) {
+                                              Address function_address,
+                                              ExternalReference thunk_ref,
+                                              Register thunk_last_arg,
+                                              int stack_space,
+                                              bool returns_handle,
+                                              int return_value_offset_from_fp) {
   ExternalReference next_address =
       ExternalReference::handle_scope_next_address(isolate());
   const int kNextOffset = 0;
@@ -3961,13 +3946,34 @@ void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
   // (4 bytes) will be placed. This is also built into the Simulator.
   // Set up the pointer to the returned value (a0). It was allocated in
   // EnterExitFrame.
-  addiu(a0, fp, ExitFrameConstants::kStackSpaceOffset);
+  if (returns_handle) {
+    addiu(a0, fp, ExitFrameConstants::kStackSpaceOffset);
+  }
+
+  Label profiler_disabled;
+  Label end_profiler_check;
+  bool* is_profiling_flag =
+      isolate()->cpu_profiler()->is_profiling_address();
+  STATIC_ASSERT(sizeof(*is_profiling_flag) == 1);
+  li(t9, reinterpret_cast<int32_t>(is_profiling_flag));
+  lb(t9, MemOperand(t9, 0));
+  beq(t9, zero_reg, &profiler_disabled);
+
+  // Third parameter is the address of the actual getter function.
+  li(thunk_last_arg, reinterpret_cast<int32_t>(function_address));
+  li(t9, Operand(thunk_ref));
+  jmp(&end_profiler_check);
+
+  bind(&profiler_disabled);
+  li(t9, Operand(function));
+
+  bind(&end_profiler_check);
 
   // Native call returns to the DirectCEntry stub which redirects to the
   // return address pushed on stack (could have moved after GC).
   // DirectCEntry stub itself is generated early and never moves.
   DirectCEntryStub stub;
-  stub.GenerateCall(this, function);
+  stub.GenerateCall(this, t9);
 
   if (FLAG_log_timer_events) {
     FrameScope frame(this, StackFrame::MANUAL);
@@ -3978,22 +3984,27 @@ void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
     PopSafepointRegisters();
   }
 
-  // As mentioned above, on MIPS a pointer is returned - we need to dereference
-  // it to get the actual return value (which is also a pointer).
-  lw(v0, MemOperand(v0));
-
   Label promote_scheduled_exception;
   Label delete_allocated_handles;
   Label leave_exit_frame;
+  Label return_value_loaded;
 
-  // If result is non-zero, dereference to get the result value
-  // otherwise set it to undefined.
-  Label skip;
-  LoadRoot(a0, Heap::kUndefinedValueRootIndex);
-  Branch(&skip, eq, v0, Operand(zero_reg));
-  lw(a0, MemOperand(v0));
-  bind(&skip);
-  mov(v0, a0);
+  if (returns_handle) {
+    Label load_return_value;
+
+    // As mentioned above, on MIPS a pointer is returned - we need to
+    // dereference it to get the actual return value (which is also a pointer).
+    lw(v0, MemOperand(v0));
+
+    Branch(&load_return_value, eq, v0, Operand(zero_reg));
+    // Dereference returned value.
+    lw(v0, MemOperand(v0));
+    Branch(&return_value_loaded);
+    bind(&load_return_value);
+  }
+  // Load value from ReturnValue.
+  lw(v0, MemOperand(fp, return_value_offset_from_fp*kPointerSize));
+  bind(&return_value_loaded);
 
   // No more valid handles (the result handle was the last one). Restore
   // previous handle scope.

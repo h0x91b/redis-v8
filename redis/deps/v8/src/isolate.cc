@@ -336,6 +336,9 @@ Isolate* Isolate::default_isolate_ = NULL;
 Thread::LocalStorageKey Isolate::isolate_key_;
 Thread::LocalStorageKey Isolate::thread_id_key_;
 Thread::LocalStorageKey Isolate::per_isolate_thread_data_key_;
+#ifdef DEBUG
+Thread::LocalStorageKey PerThreadAssertScopeBase::thread_local_key;
+#endif  // DEBUG
 Mutex* Isolate::process_wide_mutex_ = OS::CreateMutex();
 Isolate::ThreadDataTable* Isolate::thread_data_table_ = NULL;
 Atomic32 Isolate::isolate_counter_ = 0;
@@ -392,6 +395,9 @@ void Isolate::EnsureDefaultIsolate() {
     isolate_key_ = Thread::CreateThreadLocalKey();
     thread_id_key_ = Thread::CreateThreadLocalKey();
     per_isolate_thread_data_key_ = Thread::CreateThreadLocalKey();
+#ifdef DEBUG
+    PerThreadAssertScopeBase::thread_local_key = Thread::CreateThreadLocalKey();
+#endif  // DEBUG
     thread_data_table_ = new Isolate::ThreadDataTable();
     default_isolate_ = new Isolate();
   }
@@ -835,7 +841,7 @@ Handle<JSArray> Isolate::CaptureCurrentStackTrace(
 }
 
 
-void Isolate::PrintStack() {
+void Isolate::PrintStack(FILE* out) {
   if (stack_trace_nesting_level_ == 0) {
     stack_trace_nesting_level_++;
 
@@ -850,7 +856,7 @@ void Isolate::PrintStack() {
     StringStream accumulator(allocator);
     incomplete_message_ = &accumulator;
     PrintStack(&accumulator);
-    accumulator.OutputToStdOut();
+    accumulator.OutputToFile(out);
     InitializeLoggingAndCounters();
     accumulator.Log();
     incomplete_message_ = NULL;
@@ -865,7 +871,7 @@ void Isolate::PrintStack() {
       "\n\nAttempt to print stack while printing stack (double fault)\n");
     OS::PrintError(
       "If you are lucky you may find a partial stack dump on stdout.\n\n");
-    incomplete_message_->OutputToStdOut();
+    incomplete_message_->OutputToFile(out);
   }
 }
 
@@ -889,7 +895,7 @@ void Isolate::PrintStack(StringStream* accumulator) {
     return;
   }
   // The MentionedObjectCache is not GC-proof at the moment.
-  AssertNoAllocation nogc;
+  DisallowHeapAllocation no_gc;
   ASSERT(StringStream::IsMentionedObjectCacheClear());
 
   // Avoid printing anything if there are no frames.
@@ -974,7 +980,7 @@ bool Isolate::MayNamedAccess(JSObject* receiver, Object* key,
   ASSERT(receiver->IsAccessCheckNeeded());
 
   // The callers of this method are not expecting a GC.
-  AssertNoAllocation no_gc;
+  DisallowHeapAllocation no_gc;
 
   // Skip checks for hidden properties access.  Note, we do not
   // require existence of a context in this case.
@@ -1332,6 +1338,7 @@ void Isolate::DoThrow(Object* exception, MessageLocation* location) {
         }
       }
       Handle<Object> message_obj = MessageHandler::MakeMessageObject(
+          this,
           "uncaught_exception",
           location,
           HandleVector<Object>(&exception_arg, 1),
@@ -1752,7 +1759,8 @@ Isolate::Isolate()
       deferred_handles_head_(NULL),
       optimizing_compiler_thread_(this),
       marking_thread_(NULL),
-      sweeper_thread_(NULL) {
+      sweeper_thread_(NULL),
+      callback_table_(NULL) {
   id_ = NoBarrier_AtomicIncrement(&isolate_counter_, 1);
   TRACE_ISOLATE(constructor);
 
@@ -1779,9 +1787,6 @@ Isolate::Isolate()
   memset(&js_spill_information_, 0, sizeof(js_spill_information_));
   memset(code_kind_statistics_, 0,
          sizeof(code_kind_statistics_[0]) * Code::NUMBER_OF_KINDS);
-
-  compiler_thread_handle_deref_state_ = HandleDereferenceGuard::ALLOW;
-  execution_thread_handle_deref_state_ = HandleDereferenceGuard::ALLOW;
 #endif
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
@@ -2001,6 +2006,9 @@ Isolate::~Isolate() {
 
   delete external_reference_table_;
   external_reference_table_ = NULL;
+
+  delete callback_table_;
+  callback_table_ = NULL;
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   delete debugger_;
@@ -2244,7 +2252,9 @@ bool Isolate::Init(Deserializer* des) {
     stub.InitializeInterfaceDescriptor(
         this, code_stub_interface_descriptor(CodeStub::FastCloneShallowArray));
     CompareNilICStub::InitializeForIsolate(this);
+    ToBooleanStub::InitializeForIsolate(this);
     ArrayConstructorStubBase::InstallDescriptors(this);
+    InternalArrayConstructorStubBase::InstallDescriptors(this);
   }
 
   if (FLAG_parallel_recompilation) optimizing_compiler_thread_.Start();
@@ -2401,34 +2411,6 @@ void Isolate::UnlinkDeferredHandles(DeferredHandles* deferred) {
     deferred->previous_->next_ = deferred->next_;
   }
 }
-
-
-#ifdef DEBUG
-HandleDereferenceGuard::State Isolate::HandleDereferenceGuardState() {
-  if (execution_thread_handle_deref_state_ == HandleDereferenceGuard::ALLOW &&
-      compiler_thread_handle_deref_state_ == HandleDereferenceGuard::ALLOW) {
-    // Short-cut to avoid polling thread id.
-    return HandleDereferenceGuard::ALLOW;
-  }
-  if (FLAG_parallel_recompilation &&
-      optimizing_compiler_thread()->IsOptimizerThread()) {
-    return compiler_thread_handle_deref_state_;
-  } else {
-    return execution_thread_handle_deref_state_;
-  }
-}
-
-
-void Isolate::SetHandleDereferenceGuardState(
-    HandleDereferenceGuard::State state) {
-  if (FLAG_parallel_recompilation &&
-      optimizing_compiler_thread()->IsOptimizerThread()) {
-    compiler_thread_handle_deref_state_ = state;
-  } else {
-    execution_thread_handle_deref_state_ = state;
-  }
-}
-#endif
 
 
 HStatistics* Isolate::GetHStatistics() {

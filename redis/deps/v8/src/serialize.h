@@ -408,12 +408,11 @@ class SnapshotByteSink {
 class SerializationAddressMapper {
  public:
   SerializationAddressMapper()
-      : serialization_map_(new HashMap(&SerializationMatchFun)),
-        no_allocation_(new AssertNoAllocation()) { }
+      : no_allocation_(),
+        serialization_map_(new HashMap(&SerializationMatchFun)) { }
 
   ~SerializationAddressMapper() {
     delete serialization_map_;
-    delete no_allocation_;
   }
 
   bool IsMapped(HeapObject* obj) {
@@ -450,8 +449,8 @@ class SerializationAddressMapper {
     return reinterpret_cast<void*>(v);
   }
 
+  DisallowHeapAllocation no_allocation_;
   HashMap* serialization_map_;
-  AssertNoAllocation* no_allocation_;
   DISALLOW_COPY_AND_ASSIGN(SerializationAddressMapper);
 };
 
@@ -520,7 +519,7 @@ class Serializer : public SerializerDeserializer {
     void VisitExternalReference(RelocInfo* rinfo);
     void VisitCodeTarget(RelocInfo* target);
     void VisitCodeEntry(Address entry_address);
-    void VisitGlobalPropertyCell(RelocInfo* rinfo);
+    void VisitCell(RelocInfo* rinfo);
     void VisitRuntimeEntry(RelocInfo* reloc);
     // Used for seralizing the external strings that hold the natives source.
     void VisitExternalAsciiString(

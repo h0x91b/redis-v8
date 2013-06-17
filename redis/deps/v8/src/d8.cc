@@ -40,11 +40,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-// TODO(dcarney): remove
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_ARROW
-#define V8_ALLOW_ACCESS_TO_RAW_HANDLE_CONSTRUCTOR
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_IMPLICIT
-
 #ifdef V8_SHARED
 #include <assert.h>
 #endif  // V8_SHARED
@@ -89,51 +84,21 @@ static Handle<Value> Throw(const char* message) {
 }
 
 
-// TODO(rossberg): should replace these by proper uses of HasInstance,
-// once we figure out a good way to make the templates global.
-const char kArrayBufferMarkerPropName[] = "d8::_is_array_buffer_";
-const char kArrayMarkerPropName[] = "d8::_is_typed_array_";
-
-
-#define FOR_EACH_STRING(V) \
-  V(ArrayBuffer, "ArrayBuffer") \
-  V(ArrayBufferMarkerPropName, kArrayBufferMarkerPropName) \
-  V(ArrayMarkerPropName, kArrayMarkerPropName) \
-  V(buffer, "buffer") \
-  V(byteLength, "byteLength") \
-  V(byteOffset, "byteOffset") \
-  V(BYTES_PER_ELEMENT, "BYTES_PER_ELEMENT")  \
-  V(length, "length")
-
 
 class PerIsolateData {
  public:
   explicit PerIsolateData(Isolate* isolate) : isolate_(isolate), realms_(NULL) {
     HandleScope scope(isolate);
-#define INIT_STRING(name, value) \
-    name##_string_ = Persistent<String>::New(isolate, String::NewSymbol(value));
-    FOR_EACH_STRING(INIT_STRING)
-#undef INIT_STRING
     isolate->SetData(this);
   }
 
   ~PerIsolateData() {
-#define DISPOSE_STRING(name, value) name##_string_.Dispose(isolate_);
-    FOR_EACH_STRING(DISPOSE_STRING)
-#undef DISPOSE_STRING
     isolate_->SetData(NULL);  // Not really needed, just to be sure...
   }
 
   inline static PerIsolateData* Get(Isolate* isolate) {
     return reinterpret_cast<PerIsolateData*>(isolate->GetData());
   }
-
-#define DEFINE_STRING_GETTER(name, value) \
-  static Handle<String> name##_string(Isolate* isolate) { \
-    return Handle<String>(*Get(isolate)->name##_string_); \
-  }
-  FOR_EACH_STRING(DEFINE_STRING_GETTER)
-#undef DEFINE_STRING_GETTER
 
   class RealmScope {
    public:
@@ -152,10 +117,6 @@ class PerIsolateData {
   int realm_switch_;
   Persistent<Context>* realms_;
   Persistent<Value> realm_shared_;
-
-#define DEFINE_MEMBER(name, value) Persistent<String> name##_string_;
-  FOR_EACH_STRING(DEFINE_MEMBER)
-#undef DEFINE_MEMBER
 
   int RealmFind(Handle<Context> context);
 };
@@ -277,8 +238,10 @@ bool Shell::ExecuteString(Isolate* isolate,
 #if !defined(V8_SHARED)
         } else {
           v8::TryCatch try_catch;
-          Context::Scope context_scope(isolate, utility_context_);
-          Handle<Object> global = utility_context_->Global();
+          v8::Local<v8::Context> context =
+              v8::Local<v8::Context>::New(isolate, utility_context_);
+          v8::Context::Scope context_scope(context);
+          Handle<Object> global = context->Global();
           Handle<Value> fun = global->Get(String::New("Stringify"));
           Handle<Value> argv[1] = { result };
           Handle<Value> s = Handle<Function>::Cast(fun)->Call(global, 1, argv);
@@ -300,8 +263,7 @@ PerIsolateData::RealmScope::RealmScope(PerIsolateData* data) : data_(data) {
   data_->realm_current_ = 0;
   data_->realm_switch_ = 0;
   data_->realms_ = new Persistent<Context>[1];
-  data_->realms_[0] =
-      Persistent<Context>::New(data_->isolate_, Context::GetEntered());
+  data_->realms_[0].Reset(data_->isolate_, Context::GetEntered());
   data_->realm_shared_.Clear();
 }
 
@@ -325,143 +287,152 @@ int PerIsolateData::RealmFind(Handle<Context> context) {
 
 
 // Realm.current() returns the index of the currently active realm.
-Handle<Value> Shell::RealmCurrent(const Arguments& args) {
+void Shell::RealmCurrent(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   int index = data->RealmFind(Context::GetEntered());
-  if (index == -1) return Undefined(isolate);
-  return Number::New(index);
+  if (index == -1) return;
+  args.GetReturnValue().Set(index);
 }
 
 
 // Realm.owner(o) returns the index of the realm that created o.
-Handle<Value> Shell::RealmOwner(const Arguments& args) {
+void Shell::RealmOwner(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   if (args.Length() < 1 || !args[0]->IsObject()) {
-    return Throw("Invalid argument");
+    Throw("Invalid argument");
+    return;
   }
   int index = data->RealmFind(args[0]->ToObject()->CreationContext());
-  if (index == -1) return Undefined(isolate);
-  return Number::New(index);
+  if (index == -1) return;
+  args.GetReturnValue().Set(index);
 }
 
 
 // Realm.global(i) returns the global object of realm i.
 // (Note that properties of global objects cannot be read/written cross-realm.)
-Handle<Value> Shell::RealmGlobal(const Arguments& args) {
+void Shell::RealmGlobal(const v8::FunctionCallbackInfo<v8::Value>& args) {
   PerIsolateData* data = PerIsolateData::Get(args.GetIsolate());
   if (args.Length() < 1 || !args[0]->IsNumber()) {
-    return Throw("Invalid argument");
+    Throw("Invalid argument");
+    return;
   }
   int index = args[0]->Uint32Value();
   if (index >= data->realm_count_ || data->realms_[index].IsEmpty()) {
-    return Throw("Invalid realm index");
+    Throw("Invalid realm index");
+    return;
   }
-  return data->realms_[index]->Global();
+  args.GetReturnValue().Set(
+      Local<Context>::New(args.GetIsolate(), data->realms_[index])->Global());
 }
 
 
 // Realm.create() creates a new realm and returns its index.
-Handle<Value> Shell::RealmCreate(const Arguments& args) {
+void Shell::RealmCreate(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   Persistent<Context>* old_realms = data->realms_;
   int index = data->realm_count_;
   data->realms_ = new Persistent<Context>[++data->realm_count_];
-  for (int i = 0; i < index; ++i) data->realms_[i] = old_realms[i];
+  for (int i = 0; i < index; ++i) {
+    data->realms_[i].Reset(isolate, old_realms[i]);
+  }
   delete[] old_realms;
   Handle<ObjectTemplate> global_template = CreateGlobalTemplate(isolate);
-  data->realms_[index] = Persistent<Context>::New(
+  data->realms_[index].Reset(
       isolate, Context::New(isolate, NULL, global_template));
-  return Number::New(index);
+  args.GetReturnValue().Set(index);
 }
 
 
 // Realm.dispose(i) disposes the reference to the realm i.
-Handle<Value> Shell::RealmDispose(const Arguments& args) {
+void Shell::RealmDispose(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   if (args.Length() < 1 || !args[0]->IsNumber()) {
-    return Throw("Invalid argument");
+    Throw("Invalid argument");
+    return;
   }
   int index = args[0]->Uint32Value();
   if (index >= data->realm_count_ || data->realms_[index].IsEmpty() ||
       index == 0 ||
       index == data->realm_current_ || index == data->realm_switch_) {
-    return Throw("Invalid realm index");
+    Throw("Invalid realm index");
+    return;
   }
   data->realms_[index].Dispose(isolate);
   data->realms_[index].Clear();
-  return Undefined(isolate);
 }
 
 
 // Realm.switch(i) switches to the realm i for consecutive interactive inputs.
-Handle<Value> Shell::RealmSwitch(const Arguments& args) {
+void Shell::RealmSwitch(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   if (args.Length() < 1 || !args[0]->IsNumber()) {
-    return Throw("Invalid argument");
+    Throw("Invalid argument");
+    return;
   }
   int index = args[0]->Uint32Value();
   if (index >= data->realm_count_ || data->realms_[index].IsEmpty()) {
-    return Throw("Invalid realm index");
+    Throw("Invalid realm index");
+    return;
   }
   data->realm_switch_ = index;
-  return Undefined(isolate);
 }
 
 
 // Realm.eval(i, s) evaluates s in realm i and returns the result.
-Handle<Value> Shell::RealmEval(const Arguments& args) {
+void Shell::RealmEval(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   if (args.Length() < 2 || !args[0]->IsNumber() || !args[1]->IsString()) {
-    return Throw("Invalid argument");
+    Throw("Invalid argument");
+    return;
   }
   int index = args[0]->Uint32Value();
   if (index >= data->realm_count_ || data->realms_[index].IsEmpty()) {
-    return Throw("Invalid realm index");
+    Throw("Invalid realm index");
+    return;
   }
   Handle<Script> script = Script::New(args[1]->ToString());
-  if (script.IsEmpty()) return Undefined(isolate);
+  if (script.IsEmpty()) return;
   Local<Context> realm = Local<Context>::New(isolate, data->realms_[index]);
   realm->Enter();
   Handle<Value> result = script->Run();
   realm->Exit();
-  return result;
+  args.GetReturnValue().Set(result);
 }
 
 
 // Realm.shared is an accessor for a single shared value across realms.
-Handle<Value> Shell::RealmSharedGet(Local<String> property,
-                                    const AccessorInfo& info) {
+void Shell::RealmSharedGet(Local<String> property,
+                           const PropertyCallbackInfo<Value>& info) {
   Isolate* isolate = info.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
-  if (data->realm_shared_.IsEmpty()) return Undefined(isolate);
-  return Local<Value>::New(isolate, data->realm_shared_);
+  if (data->realm_shared_.IsEmpty()) return;
+  info.GetReturnValue().Set(data->realm_shared_);
 }
 
 void Shell::RealmSharedSet(Local<String> property,
                            Local<Value> value,
-                           const AccessorInfo& info) {
+                           const PropertyCallbackInfo<void>& info) {
   Isolate* isolate = info.GetIsolate();
   PerIsolateData* data = PerIsolateData::Get(isolate);
   if (!data->realm_shared_.IsEmpty()) data->realm_shared_.Dispose(isolate);
-  data->realm_shared_ = Persistent<Value>::New(isolate, value);
+  data->realm_shared_.Reset(isolate, value);
 }
 
 
-Handle<Value> Shell::Print(const Arguments& args) {
-  Handle<Value> val = Write(args);
+void Shell::Print(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  Write(args);
   printf("\n");
   fflush(stdout);
-  return val;
 }
 
 
-Handle<Value> Shell::Write(const Arguments& args) {
+void Shell::Write(const v8::FunctionCallbackInfo<v8::Value>& args) {
   for (int i = 0; i < args.Length(); i++) {
     HandleScope handle_scope(args.GetIsolate());
     if (i != 0) {
@@ -471,7 +442,10 @@ Handle<Value> Shell::Write(const Arguments& args) {
     // Explicitly catch potential exceptions in toString().
     v8::TryCatch try_catch;
     Handle<String> str_obj = args[i]->ToString();
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
+    if (try_catch.HasCaught()) {
+      try_catch.ReThrow();
+      return;
+    }
 
     v8::String::Utf8Value str(str_obj);
     int n = static_cast<int>(fwrite(*str, sizeof(**str), str.length(), stdout));
@@ -480,32 +454,31 @@ Handle<Value> Shell::Write(const Arguments& args) {
       Exit(1);
     }
   }
-  return Undefined(args.GetIsolate());
 }
 
 
-Handle<Value> Shell::EnableProfiler(const Arguments& args) {
+void Shell::EnableProfiler(const v8::FunctionCallbackInfo<v8::Value>& args) {
   V8::ResumeProfiler();
-  return Undefined(args.GetIsolate());
 }
 
 
-Handle<Value> Shell::DisableProfiler(const Arguments& args) {
+void Shell::DisableProfiler(const v8::FunctionCallbackInfo<v8::Value>& args) {
   V8::PauseProfiler();
-  return Undefined(args.GetIsolate());
 }
 
 
-Handle<Value> Shell::Read(const Arguments& args) {
+void Shell::Read(const v8::FunctionCallbackInfo<v8::Value>& args) {
   String::Utf8Value file(args[0]);
   if (*file == NULL) {
-    return Throw("Error loading file");
+    Throw("Error loading file");
+    return;
   }
   Handle<String> source = ReadFile(args.GetIsolate(), *file);
   if (source.IsEmpty()) {
-    return Throw("Error loading file");
+    Throw("Error loading file");
+    return;
   }
-  return source;
+  args.GetReturnValue().Set(source);
 }
 
 
@@ -539,606 +512,52 @@ Handle<String> Shell::ReadFromStdin(Isolate* isolate) {
 }
 
 
-Handle<Value> Shell::Load(const Arguments& args) {
+void Shell::Load(const v8::FunctionCallbackInfo<v8::Value>& args) {
   for (int i = 0; i < args.Length(); i++) {
     HandleScope handle_scope(args.GetIsolate());
     String::Utf8Value file(args[i]);
     if (*file == NULL) {
-      return Throw("Error loading file");
+      Throw("Error loading file");
+      return;
     }
     Handle<String> source = ReadFile(args.GetIsolate(), *file);
     if (source.IsEmpty()) {
-      return Throw("Error loading file");
+      Throw("Error loading file");
+      return;
     }
     if (!ExecuteString(args.GetIsolate(),
                        source,
                        String::New(*file),
                        false,
                        true)) {
-      return Throw("Error executing file");
+      Throw("Error executing file");
+      return;
     }
   }
-  return Undefined(args.GetIsolate());
-}
-
-static int32_t convertToInt(Local<Value> value_in, TryCatch* try_catch) {
-  if (value_in->IsInt32()) {
-    return value_in->Int32Value();
-  }
-
-  Local<Value> number = value_in->ToNumber();
-  if (try_catch->HasCaught()) return 0;
-
-  ASSERT(number->IsNumber());
-  Local<Int32> int32 = number->ToInt32();
-  if (try_catch->HasCaught() || int32.IsEmpty()) return 0;
-
-  int32_t value = int32->Int32Value();
-  if (try_catch->HasCaught()) return 0;
-
-  return value;
 }
 
 
-static int32_t convertToUint(Local<Value> value_in, TryCatch* try_catch) {
-  int32_t raw_value = convertToInt(value_in, try_catch);
-  if (try_catch->HasCaught()) return 0;
-
-  if (raw_value < 0) {
-    Throw("Array length must not be negative.");
-    return 0;
-  }
-
-  static const int kMaxLength = 0x3fffffff;
-#ifndef V8_SHARED
-  ASSERT(kMaxLength == i::ExternalArray::kMaxLength);
-#endif  // V8_SHARED
-  if (raw_value > static_cast<int32_t>(kMaxLength)) {
-    Throw("Array length exceeds maximum length.");
-  }
-  return raw_value;
-}
-
-
-Handle<Value> Shell::CreateExternalArrayBuffer(Isolate* isolate,
-                                               Handle<Object> buffer,
-                                               int32_t length) {
-  static const int32_t kMaxSize = 0x7fffffff;
-  // Make sure the total size fits into a (signed) int.
-  if (length < 0 || length > kMaxSize) {
-    return Throw("ArrayBuffer exceeds maximum size (2G)");
-  }
-  uint8_t* data = new uint8_t[length];
-  if (data == NULL) {
-    return Throw("Memory allocation failed");
-  }
-  memset(data, 0, length);
-
-  buffer->SetHiddenValue(
-      PerIsolateData::ArrayBufferMarkerPropName_string(isolate), True());
-  Persistent<Object> persistent_array =
-      Persistent<Object>::New(isolate, buffer);
-  persistent_array.MakeWeak(isolate, data, ExternalArrayWeakCallback);
-  persistent_array.MarkIndependent(isolate);
-  isolate->AdjustAmountOfExternalAllocatedMemory(length);
-
-  buffer->SetIndexedPropertiesToExternalArrayData(
-      data, v8::kExternalByteArray, length);
-  buffer->Set(PerIsolateData::byteLength_string(isolate),
-              Int32::New(length, isolate),
-              ReadOnly);
-
-  return buffer;
-}
-
-
-Handle<Value> Shell::ArrayBuffer(const Arguments& args) {
-  if (!args.IsConstructCall()) {
-    Handle<Value>* rec_args = new Handle<Value>[args.Length()];
-    for (int i = 0; i < args.Length(); ++i) rec_args[i] = args[i];
-    Handle<Value> result = args.Callee()->NewInstance(args.Length(), rec_args);
-    delete[] rec_args;
-    return result;
-  }
-
-  if (args.Length() == 0) {
-    return Throw("ArrayBuffer constructor must have one argument");
-  }
-  TryCatch try_catch;
-  int32_t length = convertToUint(args[0], &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-  return CreateExternalArrayBuffer(args.GetIsolate(), args.This(), length);
-}
-
-
-Handle<Object> Shell::CreateExternalArray(Isolate* isolate,
-                                          Handle<Object> array,
-                                          Handle<Object> buffer,
-                                          ExternalArrayType type,
-                                          int32_t length,
-                                          int32_t byteLength,
-                                          int32_t byteOffset,
-                                          int32_t element_size) {
-  ASSERT(element_size == 1 || element_size == 2 ||
-         element_size == 4 || element_size == 8);
-  ASSERT(byteLength == length * element_size);
-
-  void* data = buffer->GetIndexedPropertiesExternalArrayData();
-  ASSERT(data != NULL);
-
-  array->SetIndexedPropertiesToExternalArrayData(
-      static_cast<uint8_t*>(data) + byteOffset, type, length);
-  array->SetHiddenValue(PerIsolateData::ArrayMarkerPropName_string(isolate),
-                        Int32::New(type, isolate));
-  array->Set(PerIsolateData::byteLength_string(isolate),
-             Int32::New(byteLength, isolate),
-             ReadOnly);
-  array->Set(PerIsolateData::byteOffset_string(isolate),
-             Int32::New(byteOffset, isolate),
-             ReadOnly);
-  array->Set(PerIsolateData::length_string(isolate),
-             Int32::New(length, isolate),
-             ReadOnly);
-  array->Set(PerIsolateData::BYTES_PER_ELEMENT_string(isolate),
-             Int32::New(element_size, isolate));
-  array->Set(PerIsolateData::buffer_string(isolate),
-             buffer,
-             ReadOnly);
-
-  return array;
-}
-
-
-Handle<Value> Shell::CreateExternalArray(const Arguments& args,
-                                         ExternalArrayType type,
-                                         int32_t element_size) {
-  Isolate* isolate = args.GetIsolate();
-  if (!args.IsConstructCall()) {
-    Handle<Value>* rec_args = new Handle<Value>[args.Length()];
-    for (int i = 0; i < args.Length(); ++i) rec_args[i] = args[i];
-    Handle<Value> result = args.Callee()->NewInstance(args.Length(), rec_args);
-    delete[] rec_args;
-    return result;
-  }
-
-  TryCatch try_catch;
-  ASSERT(element_size == 1 || element_size == 2 ||
-         element_size == 4 || element_size == 8);
-
-  // All of the following constructors are supported:
-  //   TypedArray(unsigned long length)
-  //   TypedArray(type[] array)
-  //   TypedArray(TypedArray array)
-  //   TypedArray(ArrayBuffer buffer,
-  //              optional unsigned long byteOffset,
-  //              optional unsigned long length)
-  Handle<Object> buffer;
-  int32_t length;
-  int32_t byteLength;
-  int32_t byteOffset;
-  bool init_from_array = false;
-  if (args.Length() == 0) {
-    return Throw("Array constructor must have at least one argument");
-  }
-  if (args[0]->IsObject() &&
-      !args[0]->ToObject()->GetHiddenValue(
-         PerIsolateData::ArrayBufferMarkerPropName_string(isolate)).IsEmpty()) {
-    // Construct from ArrayBuffer.
-    buffer = args[0]->ToObject();
-    int32_t bufferLength = convertToUint(
-        buffer->Get(PerIsolateData::byteLength_string(isolate)), &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-    if (args.Length() < 2 || args[1]->IsUndefined()) {
-      byteOffset = 0;
-    } else {
-      byteOffset = convertToUint(args[1], &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      if (byteOffset > bufferLength) {
-        return Throw("byteOffset out of bounds");
-      }
-      if (byteOffset % element_size != 0) {
-        return Throw("byteOffset must be multiple of element size");
-      }
-    }
-
-    if (args.Length() < 3 || args[2]->IsUndefined()) {
-      byteLength = bufferLength - byteOffset;
-      length = byteLength / element_size;
-      if (byteLength % element_size != 0) {
-        return Throw("buffer size must be multiple of element size");
-      }
-    } else {
-      length = convertToUint(args[2], &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      byteLength = length * element_size;
-      if (byteOffset + byteLength > bufferLength) {
-        return Throw("length out of bounds");
-      }
-    }
-  } else {
-    if (args[0]->IsObject() &&
-        args[0]->ToObject()->Has(PerIsolateData::length_string(isolate))) {
-      // Construct from array.
-      Local<Value> value =
-          args[0]->ToObject()->Get(PerIsolateData::length_string(isolate));
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      length = convertToUint(value, &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      init_from_array = true;
-    } else {
-      // Construct from size.
-      length = convertToUint(args[0], &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-    }
-    byteLength = length * element_size;
-    byteOffset = 0;
-
-    Handle<Object> global = Context::GetCurrent()->Global();
-    Handle<Value> array_buffer =
-        global->Get(PerIsolateData::ArrayBuffer_string(isolate));
-    ASSERT(!try_catch.HasCaught() && array_buffer->IsFunction());
-    Handle<Value> buffer_args[] = { Uint32::New(byteLength, isolate) };
-    Handle<Value> result = Handle<Function>::Cast(array_buffer)->NewInstance(
-        1, buffer_args);
-    if (try_catch.HasCaught()) return result;
-    buffer = result->ToObject();
-  }
-
-  Handle<Object> array =
-      CreateExternalArray(isolate, args.This(), buffer, type, length,
-                          byteLength, byteOffset, element_size);
-
-  if (init_from_array) {
-    Handle<Object> init = args[0]->ToObject();
-    for (int i = 0; i < length; ++i) {
-      Local<Value> value = init->Get(i);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      array->Set(i, value);
-    }
-  }
-
-  return array;
-}
-
-
-Handle<Value> Shell::ArrayBufferSlice(const Arguments& args) {
-  TryCatch try_catch;
-
-  if (!args.This()->IsObject()) {
-    return Throw("'slice' invoked on non-object receiver");
-  }
-
-  Isolate* isolate = args.GetIsolate();
-  Local<Object> self = args.This();
-  Local<Value> marker = self->GetHiddenValue(
-      PerIsolateData::ArrayBufferMarkerPropName_string(isolate));
-  if (marker.IsEmpty()) {
-    return Throw("'slice' invoked on wrong receiver type");
-  }
-
-  int32_t length = convertToUint(
-      self->Get(PerIsolateData::byteLength_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-  if (args.Length() == 0) {
-    return Throw("'slice' must have at least one argument");
-  }
-  int32_t begin = convertToInt(args[0], &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  if (begin < 0) begin += length;
-  if (begin < 0) begin = 0;
-  if (begin > length) begin = length;
-
-  int32_t end;
-  if (args.Length() < 2 || args[1]->IsUndefined()) {
-    end = length;
-  } else {
-    end = convertToInt(args[1], &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    if (end < 0) end += length;
-    if (end < 0) end = 0;
-    if (end > length) end = length;
-    if (end < begin) end = begin;
-  }
-
-  Local<Function> constructor = Local<Function>::Cast(self->GetConstructor());
-  Handle<Value> new_args[] = { Uint32::New(end - begin, isolate) };
-  Handle<Value> result = constructor->NewInstance(1, new_args);
-  if (try_catch.HasCaught()) return result;
-  Handle<Object> buffer = result->ToObject();
-  uint8_t* dest =
-      static_cast<uint8_t*>(buffer->GetIndexedPropertiesExternalArrayData());
-  uint8_t* src = begin + static_cast<uint8_t*>(
-      self->GetIndexedPropertiesExternalArrayData());
-  memcpy(dest, src, end - begin);
-
-  return buffer;
-}
-
-
-Handle<Value> Shell::ArraySubArray(const Arguments& args) {
-  TryCatch try_catch;
-
-  if (!args.This()->IsObject()) {
-    return Throw("'subarray' invoked on non-object receiver");
-  }
-
-  Isolate* isolate = args.GetIsolate();
-  Local<Object> self = args.This();
-  Local<Value> marker =
-      self->GetHiddenValue(PerIsolateData::ArrayMarkerPropName_string(isolate));
-  if (marker.IsEmpty()) {
-    return Throw("'subarray' invoked on wrong receiver type");
-  }
-
-  Handle<Object> buffer =
-      self->Get(PerIsolateData::buffer_string(isolate))->ToObject();
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  int32_t length = convertToUint(
-      self->Get(PerIsolateData::length_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  int32_t byteOffset = convertToUint(
-      self->Get(PerIsolateData::byteOffset_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  int32_t element_size = convertToUint(
-      self->Get(PerIsolateData::BYTES_PER_ELEMENT_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-  if (args.Length() == 0) {
-    return Throw("'subarray' must have at least one argument");
-  }
-  int32_t begin = convertToInt(args[0], &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  if (begin < 0) begin += length;
-  if (begin < 0) begin = 0;
-  if (begin > length) begin = length;
-
-  int32_t end;
-  if (args.Length() < 2 || args[1]->IsUndefined()) {
-    end = length;
-  } else {
-    end = convertToInt(args[1], &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    if (end < 0) end += length;
-    if (end < 0) end = 0;
-    if (end > length) end = length;
-    if (end < begin) end = begin;
-  }
-
-  length = end - begin;
-  byteOffset += begin * element_size;
-
-  Local<Function> constructor = Local<Function>::Cast(self->GetConstructor());
-  Handle<Value> construct_args[] = {
-    buffer, Uint32::New(byteOffset, isolate), Uint32::New(length, isolate)
-  };
-  return constructor->NewInstance(3, construct_args);
-}
-
-
-Handle<Value> Shell::ArraySet(const Arguments& args) {
-  TryCatch try_catch;
-
-  if (!args.This()->IsObject()) {
-    return Throw("'set' invoked on non-object receiver");
-  }
-
-  Isolate* isolate = args.GetIsolate();
-  Local<Object> self = args.This();
-  Local<Value> marker =
-      self->GetHiddenValue(PerIsolateData::ArrayMarkerPropName_string(isolate));
-  if (marker.IsEmpty()) {
-    return Throw("'set' invoked on wrong receiver type");
-  }
-  int32_t length = convertToUint(
-      self->Get(PerIsolateData::length_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-  int32_t element_size = convertToUint(
-      self->Get(PerIsolateData::BYTES_PER_ELEMENT_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-  if (args.Length() == 0) {
-    return Throw("'set' must have at least one argument");
-  }
-  if (!args[0]->IsObject() ||
-      !args[0]->ToObject()->Has(PerIsolateData::length_string(isolate))) {
-    return Throw("'set' invoked with non-array argument");
-  }
-  Handle<Object> source = args[0]->ToObject();
-  int32_t source_length = convertToUint(
-      source->Get(PerIsolateData::length_string(isolate)), &try_catch);
-  if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-  int32_t offset;
-  if (args.Length() < 2 || args[1]->IsUndefined()) {
-    offset = 0;
-  } else {
-    offset = convertToUint(args[1], &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-  }
-  if (offset + source_length > length) {
-    return Throw("offset or source length out of bounds");
-  }
-
-  int32_t source_element_size;
-  if (source->GetHiddenValue(
-          PerIsolateData::ArrayMarkerPropName_string(isolate)).IsEmpty()) {
-    source_element_size = 0;
-  } else {
-    source_element_size = convertToUint(
-        source->Get(PerIsolateData::BYTES_PER_ELEMENT_string(isolate)),
-        &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-  }
-
-  if (element_size == source_element_size &&
-      self->GetConstructor()->StrictEquals(source->GetConstructor())) {
-    // Use memmove on the array buffers.
-    Handle<Object> buffer =
-        self->Get(PerIsolateData::buffer_string(isolate))->ToObject();
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    Handle<Object> source_buffer =
-        source->Get(PerIsolateData::buffer_string(isolate))->ToObject();
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    int32_t byteOffset = convertToUint(
-        self->Get(PerIsolateData::byteOffset_string(isolate)), &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    int32_t source_byteOffset = convertToUint(
-        source->Get(PerIsolateData::byteOffset_string(isolate)), &try_catch);
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-    uint8_t* dest = byteOffset + offset * element_size + static_cast<uint8_t*>(
-        buffer->GetIndexedPropertiesExternalArrayData());
-    uint8_t* src = source_byteOffset + static_cast<uint8_t*>(
-        source_buffer->GetIndexedPropertiesExternalArrayData());
-    memmove(dest, src, source_length * element_size);
-  } else if (source_element_size == 0) {
-    // Source is not a typed array, copy element-wise sequentially.
-    for (int i = 0; i < source_length; ++i) {
-      self->Set(offset + i, source->Get(i));
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-    }
-  } else {
-    // Need to copy element-wise to make the right conversions.
-    Handle<Object> buffer =
-        self->Get(PerIsolateData::buffer_string(isolate))->ToObject();
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-    Handle<Object> source_buffer =
-        source->Get(PerIsolateData::buffer_string(isolate))->ToObject();
-    if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-    if (buffer->StrictEquals(source_buffer)) {
-      // Same backing store, need to handle overlap correctly.
-      // This gets a bit tricky in the case of different element sizes
-      // (which, of course, is extremely unlikely to ever occur in practice).
-      int32_t byteOffset = convertToUint(
-          self->Get(PerIsolateData::byteOffset_string(isolate)), &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-      int32_t source_byteOffset = convertToUint(
-          source->Get(PerIsolateData::byteOffset_string(isolate)), &try_catch);
-      if (try_catch.HasCaught()) return try_catch.ReThrow();
-
-      // Copy as much as we can from left to right.
-      int i = 0;
-      int32_t next_dest_offset = byteOffset + (offset + 1) * element_size;
-      int32_t next_src_offset = source_byteOffset + source_element_size;
-      while (i < length && next_dest_offset <= next_src_offset) {
-        self->Set(offset + i, source->Get(i));
-        ++i;
-        next_dest_offset += element_size;
-        next_src_offset += source_element_size;
-      }
-      // Of what's left, copy as much as we can from right to left.
-      int j = length - 1;
-      int32_t dest_offset = byteOffset + (offset + j) * element_size;
-      int32_t src_offset = source_byteOffset + j * source_element_size;
-      while (j >= i && dest_offset >= src_offset) {
-        self->Set(offset + j, source->Get(j));
-        --j;
-        dest_offset -= element_size;
-        src_offset -= source_element_size;
-      }
-      // There can be at most 8 entries left in the middle that need buffering
-      // (because the largest element_size is 8 times the smallest).
-      ASSERT(j+1 - i <= 8);
-      Handle<Value> temp[8];
-      for (int k = i; k <= j; ++k) {
-        temp[k - i] = source->Get(k);
-      }
-      for (int k = i; k <= j; ++k) {
-        self->Set(offset + k, temp[k - i]);
-      }
-    } else {
-      // Different backing stores, safe to copy element-wise sequentially.
-      for (int i = 0; i < source_length; ++i)
-        self->Set(offset + i, source->Get(i));
-    }
-  }
-
-  return Undefined(args.GetIsolate());
-}
-
-
-void Shell::ExternalArrayWeakCallback(v8::Isolate* isolate,
-                                      Persistent<Object>* object,
-                                      uint8_t* data) {
-  HandleScope scope(isolate);
-  int32_t length = (*object)->Get(
-      PerIsolateData::byteLength_string(isolate))->Uint32Value();
-  isolate->AdjustAmountOfExternalAllocatedMemory(-length);
-  delete[] data;
-  object->Dispose(isolate);
-}
-
-
-Handle<Value> Shell::Int8Array(const Arguments& args) {
-  return CreateExternalArray(args, v8::kExternalByteArray, sizeof(int8_t));
-}
-
-
-Handle<Value> Shell::Uint8Array(const Arguments& args) {
-  return CreateExternalArray(args, kExternalUnsignedByteArray, sizeof(uint8_t));
-}
-
-
-Handle<Value> Shell::Int16Array(const Arguments& args) {
-  return CreateExternalArray(args, kExternalShortArray, sizeof(int16_t));
-}
-
-
-Handle<Value> Shell::Uint16Array(const Arguments& args) {
-  return CreateExternalArray(
-      args, kExternalUnsignedShortArray, sizeof(uint16_t));
-}
-
-
-Handle<Value> Shell::Int32Array(const Arguments& args) {
-  return CreateExternalArray(args, kExternalIntArray, sizeof(int32_t));
-}
-
-
-Handle<Value> Shell::Uint32Array(const Arguments& args) {
-  return CreateExternalArray(args, kExternalUnsignedIntArray, sizeof(uint32_t));
-}
-
-
-Handle<Value> Shell::Float32Array(const Arguments& args) {
-  return CreateExternalArray(
-      args, kExternalFloatArray, sizeof(float));  // NOLINT
-}
-
-
-Handle<Value> Shell::Float64Array(const Arguments& args) {
-  return CreateExternalArray(
-      args, kExternalDoubleArray, sizeof(double));  // NOLINT
-}
-
-
-Handle<Value> Shell::Uint8ClampedArray(const Arguments& args) {
-  return CreateExternalArray(args, kExternalPixelArray, sizeof(uint8_t));
-}
-
-
-Handle<Value> Shell::Quit(const Arguments& args) {
+void Shell::Quit(const v8::FunctionCallbackInfo<v8::Value>& args) {
   int exit_code = args[0]->Int32Value();
   OnExit();
   exit(exit_code);
-  return Undefined(args.GetIsolate());
 }
 
 
-Handle<Value> Shell::Version(const Arguments& args) {
-  return String::New(V8::GetVersion());
+void Shell::Version(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(String::New(V8::GetVersion()));
 }
 
 
 void Shell::ReportException(Isolate* isolate, v8::TryCatch* try_catch) {
   HandleScope handle_scope(isolate);
 #if !defined(V8_SHARED) && defined(ENABLE_DEBUGGER_SUPPORT)
+  Handle<Context> utility_context;
   bool enter_context = !Context::InContext();
-  if (enter_context) utility_context_->Enter();
+  if (enter_context) {
+    utility_context = Local<Context>::New(isolate, utility_context_);
+    utility_context->Enter();
+  }
 #endif  // !V8_SHARED && ENABLE_DEBUGGER_SUPPORT
   v8::String::Utf8Value exception(try_catch->Exception());
   const char* exception_string = ToCString(exception);
@@ -1175,7 +594,7 @@ void Shell::ReportException(Isolate* isolate, v8::TryCatch* try_catch) {
   }
   printf("\n");
 #if !defined(V8_SHARED) && defined(ENABLE_DEBUGGER_SUPPORT)
-  if (enter_context) utility_context_->Exit();
+  if (enter_context) utility_context->Exit();
 #endif  // !V8_SHARED && ENABLE_DEBUGGER_SUPPORT
 }
 
@@ -1185,11 +604,15 @@ Handle<Array> Shell::GetCompletions(Isolate* isolate,
                                     Handle<String> text,
                                     Handle<String> full) {
   HandleScope handle_scope(isolate);
-  Context::Scope context_scope(isolate, utility_context_);
-  Handle<Object> global = utility_context_->Global();
+  v8::Local<v8::Context> utility_context =
+      v8::Local<v8::Context>::New(isolate, utility_context_);
+  v8::Context::Scope context_scope(utility_context);
+  Handle<Object> global = utility_context->Global();
   Handle<Value> fun = global->Get(String::New("GetCompletions"));
   static const int kArgc = 3;
-  Handle<Value> argv[kArgc] = { evaluation_context_->Global(), text, full };
+  v8::Local<v8::Context> evaluation_context =
+      v8::Local<v8::Context>::New(isolate, evaluation_context_);
+  Handle<Value> argv[kArgc] = { evaluation_context->Global(), text, full };
   Handle<Value> val = Handle<Function>::Cast(fun)->Call(global, kArgc, argv);
   return handle_scope.Close(Handle<Array>::Cast(val));
 }
@@ -1199,8 +622,10 @@ Handle<Array> Shell::GetCompletions(Isolate* isolate,
 Handle<Object> Shell::DebugMessageDetails(Isolate* isolate,
                                           Handle<String> message) {
   HandleScope handle_scope(isolate);
-  Context::Scope context_scope(isolate, utility_context_);
-  Handle<Object> global = utility_context_->Global();
+  v8::Local<v8::Context> context =
+      v8::Local<v8::Context>::New(isolate, utility_context_);
+  v8::Context::Scope context_scope(context);
+  Handle<Object> global = context->Global();
   Handle<Value> fun = global->Get(String::New("DebugMessageDetails"));
   static const int kArgc = 1;
   Handle<Value> argv[kArgc] = { message };
@@ -1212,8 +637,10 @@ Handle<Object> Shell::DebugMessageDetails(Isolate* isolate,
 Handle<Value> Shell::DebugCommandToJSONRequest(Isolate* isolate,
                                                Handle<String> command) {
   HandleScope handle_scope(isolate);
-  Context::Scope context_scope(isolate, utility_context_);
-  Handle<Object> global = utility_context_->Global();
+  v8::Local<v8::Context> context =
+      v8::Local<v8::Context>::New(isolate, utility_context_);
+  v8::Context::Scope context_scope(context);
+  Handle<Object> global = context->Global();
   Handle<Value> fun = global->Get(String::New("DebugCommandToJSONRequest"));
   static const int kArgc = 1;
   Handle<Value> argv[kArgc] = { command };
@@ -1225,7 +652,9 @@ Handle<Value> Shell::DebugCommandToJSONRequest(Isolate* isolate,
 void Shell::DispatchDebugMessages() {
   Isolate* isolate = v8::Isolate::GetCurrent();
   HandleScope handle_scope(isolate);
-  v8::Context::Scope scope(isolate, Shell::evaluation_context_);
+  v8::Local<v8::Context> context =
+      v8::Local<v8::Context>::New(isolate, Shell::evaluation_context_);
+  v8::Context::Scope context_scope(context);
   v8::Debug::ProcessDebugMessages();
 }
 #endif  // ENABLE_DEBUGGER_SUPPORT
@@ -1336,9 +765,13 @@ void Shell::InstallUtilityScript(Isolate* isolate) {
   HandleScope scope(isolate);
   // If we use the utility context, we have to set the security tokens so that
   // utility, evaluation and debug context can all access each other.
-  utility_context_->SetSecurityToken(Undefined(isolate));
-  evaluation_context_->SetSecurityToken(Undefined(isolate));
-  Context::Scope utility_scope(isolate, utility_context_);
+  v8::Local<v8::Context> utility_context =
+      v8::Local<v8::Context>::New(isolate, utility_context_);
+  v8::Local<v8::Context> evaluation_context =
+      v8::Local<v8::Context>::New(isolate, evaluation_context_);
+  utility_context->SetSecurityToken(Undefined(isolate));
+  evaluation_context->SetSecurityToken(Undefined(isolate));
+  v8::Context::Scope context_scope(utility_context);
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   if (i::FLAG_debugger) printf("JavaScript debugger enabled\n");
@@ -1347,7 +780,7 @@ void Shell::InstallUtilityScript(Isolate* isolate) {
   debug->Load();
   i::Handle<i::JSObject> js_debug
       = i::Handle<i::JSObject>(debug->debug_context()->global_object());
-  utility_context_->Global()->Set(String::New("$debug"),
+  utility_context->Global()->Set(String::New("$debug"),
                                   Utils::ToLocal(js_debug));
   debug->debug_context()->set_security_token(HEAP->undefined_value());
 #endif  // ENABLE_DEBUGGER_SUPPORT
@@ -1412,26 +845,6 @@ class BZip2Decompressor : public v8::StartupDataDecompressor {
 #endif
 
 
-Handle<FunctionTemplate> Shell::CreateArrayBufferTemplate(
-    InvocationCallback fun) {
-  Handle<FunctionTemplate> buffer_template = FunctionTemplate::New(fun);
-  Local<Template> proto_template = buffer_template->PrototypeTemplate();
-  proto_template->Set(String::New("slice"),
-                      FunctionTemplate::New(ArrayBufferSlice));
-  return buffer_template;
-}
-
-
-Handle<FunctionTemplate> Shell::CreateArrayTemplate(InvocationCallback fun) {
-  Handle<FunctionTemplate> array_template = FunctionTemplate::New(fun);
-  Local<Template> proto_template = array_template->PrototypeTemplate();
-  proto_template->Set(String::New("set"), FunctionTemplate::New(ArraySet));
-  proto_template->Set(String::New("subarray"),
-                      FunctionTemplate::New(ArraySubArray));
-  return array_template;
-}
-
-
 Handle<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
   Handle<ObjectTemplate> global_template = ObjectTemplate::New();
   global_template->Set(String::New("print"), FunctionTemplate::New(Print));
@@ -1468,36 +881,6 @@ Handle<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
   realm_template->SetAccessor(String::New("shared"),
                               RealmSharedGet, RealmSharedSet);
   global_template->Set(String::New("Realm"), realm_template);
-
-  // Bind the handlers for external arrays.
-#ifndef V8_SHARED
-  if (!i::FLAG_harmony_typed_arrays) {
-#endif  // V8_SHARED
-    PropertyAttribute attr =
-        static_cast<PropertyAttribute>(ReadOnly | DontDelete);
-    global_template->Set(PerIsolateData::ArrayBuffer_string(isolate),
-                         CreateArrayBufferTemplate(ArrayBuffer), attr);
-    global_template->Set(String::New("Int8Array"),
-                         CreateArrayTemplate(Int8Array), attr);
-    global_template->Set(String::New("Uint8Array"),
-                         CreateArrayTemplate(Uint8Array), attr);
-    global_template->Set(String::New("Int16Array"),
-                         CreateArrayTemplate(Int16Array), attr);
-    global_template->Set(String::New("Uint16Array"),
-                         CreateArrayTemplate(Uint16Array), attr);
-    global_template->Set(String::New("Int32Array"),
-                         CreateArrayTemplate(Int32Array), attr);
-    global_template->Set(String::New("Uint32Array"),
-                         CreateArrayTemplate(Uint32Array), attr);
-    global_template->Set(String::New("Float32Array"),
-                         CreateArrayTemplate(Float32Array), attr);
-    global_template->Set(String::New("Float64Array"),
-                         CreateArrayTemplate(Float64Array), attr);
-    global_template->Set(String::New("Uint8ClampedArray"),
-                         CreateArrayTemplate(Uint8ClampedArray), attr);
-#ifndef V8_SHARED
-  }
-#endif  // V8_SHARED
 
 #if !defined(V8_SHARED) && !defined(_WIN32) && !defined(_WIN64)
   Handle<ObjectTemplate> os_templ = ObjectTemplate::New();
@@ -1566,16 +949,17 @@ Local<Context> Shell::CreateEvaluationContext(Isolate* isolate) {
   Context::Scope scope(context);
 
 #ifndef V8_SHARED
+  i::Factory* factory = i::Isolate::Current()->factory();
   i::JSArguments js_args = i::FLAG_js_arguments;
   i::Handle<i::FixedArray> arguments_array =
-      FACTORY->NewFixedArray(js_args.argc());
+      factory->NewFixedArray(js_args.argc());
   for (int j = 0; j < js_args.argc(); j++) {
     i::Handle<i::String> arg =
-        FACTORY->NewStringFromUtf8(i::CStrVector(js_args[j]));
+        factory->NewStringFromUtf8(i::CStrVector(js_args[j]));
     arguments_array->set(j, *arg);
   }
   i::Handle<i::JSArray> arguments_jsarray =
-      FACTORY->NewJSArrayWithElements(arguments_array);
+      factory->NewJSArrayWithElements(arguments_array);
   context->Global()->Set(String::New("arguments"),
                          Utils::ToLocal(arguments_jsarray));
 #endif  // V8_SHARED
@@ -1691,35 +1075,41 @@ static char* ReadChars(Isolate* isolate, const char* name, int* size_out) {
   return chars;
 }
 
+static void ReadBufferWeakCallback(v8::Isolate* isolate,
+                                   Persistent<ArrayBuffer>* array_buffer,
+                                   uint8_t* data) {
+  size_t byte_length =
+      Local<ArrayBuffer>::New(isolate, *array_buffer)->ByteLength();
+  isolate->AdjustAmountOfExternalAllocatedMemory(
+      -static_cast<intptr_t>(byte_length));
 
-Handle<Value> Shell::ReadBuffer(const Arguments& args) {
+  delete[] data;
+  array_buffer->Dispose();
+}
+
+void Shell::ReadBuffer(const v8::FunctionCallbackInfo<v8::Value>& args) {
   ASSERT(sizeof(char) == sizeof(uint8_t));  // NOLINT
   String::Utf8Value filename(args[0]);
   int length;
   if (*filename == NULL) {
-    return Throw("Error loading file");
+    Throw("Error loading file");
+    return;
   }
 
+  Isolate* isolate = args.GetIsolate();
   uint8_t* data = reinterpret_cast<uint8_t*>(
       ReadChars(args.GetIsolate(), *filename, &length));
   if (data == NULL) {
-    return Throw("Error reading file");
+    Throw("Error reading file");
+    return;
   }
-  Isolate* isolate = args.GetIsolate();
-  Handle<Object> buffer = Object::New();
-  buffer->SetHiddenValue(
-      PerIsolateData::ArrayBufferMarkerPropName_string(isolate), True());
-  Persistent<Object> persistent_buffer =
-      Persistent<Object>::New(isolate, buffer);
-  persistent_buffer.MakeWeak(isolate, data, ExternalArrayWeakCallback);
-  persistent_buffer.MarkIndependent(isolate);
+  Handle<v8::ArrayBuffer> buffer = ArrayBuffer::New(data, length);
+  v8::Persistent<v8::ArrayBuffer> weak_handle(isolate, buffer);
+  weak_handle.MakeWeak(isolate, data, ReadBufferWeakCallback);
+  weak_handle.MarkIndependent();
   isolate->AdjustAmountOfExternalAllocatedMemory(length);
 
-  buffer->SetIndexedPropertiesToExternalArrayData(
-      data, kExternalUnsignedByteArray, length);
-  buffer->Set(PerIsolateData::byteLength_string(isolate),
-      Int32::New(static_cast<int32_t>(length), isolate), ReadOnly);
-  return buffer;
+  args.GetReturnValue().Set(buffer);
 }
 
 
@@ -1760,7 +1150,9 @@ Handle<String> Shell::ReadFile(Isolate* isolate, const char* name) {
 void Shell::RunShell(Isolate* isolate) {
   Locker locker(isolate);
   HandleScope outer_scope(isolate);
-  Context::Scope context_scope(isolate, evaluation_context_);
+  v8::Local<v8::Context> context =
+      v8::Local<v8::Context>::New(isolate, evaluation_context_);
+  v8::Context::Scope context_scope(context);
   PerIsolateData::RealmScope realm_scope(PerIsolateData::Get(isolate));
   Handle<String> name = String::New("(d8)");
   LineEditor* console = LineEditor::Get();
@@ -2167,8 +1559,36 @@ int Shell::RunMain(Isolate* isolate, int argc, char* argv[]) {
 }
 
 
+#ifdef V8_SHARED
+static void EnableHarmonyTypedArraysViaCommandLine() {
+  int fake_argc = 2;
+  char **fake_argv = new char*[2];
+  fake_argv[0] = NULL;
+  fake_argv[1] = strdup("--harmony-typed-arrays");
+  v8::V8::SetFlagsFromCommandLine(&fake_argc, fake_argv, false);
+  free(fake_argv[1]);
+  delete[] fake_argv;
+}
+#endif
+
+
+class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
+ public:
+  virtual void* Allocate(size_t length) { return malloc(length); }
+  virtual void Free(void* data) { free(data); }
+};
+
+
 int Shell::Main(int argc, char* argv[]) {
   if (!SetOptions(argc, argv)) return 1;
+#ifndef V8_SHARED
+  i::FLAG_harmony_array_buffer = true;
+  i::FLAG_harmony_typed_arrays = true;
+#else
+  EnableHarmonyTypedArraysViaCommandLine();
+#endif
+  ShellArrayBufferAllocator array_buffer_allocator;
+  v8::V8::SetArrayBufferAllocator(&array_buffer_allocator);
   int result = 0;
   Isolate* isolate = Isolate::GetCurrent();
   DumbLineEditor dumb_line_editor(isolate);

@@ -308,7 +308,7 @@ Operand::Operand(Handle<Object> handle) {
 #ifdef DEBUG
   Isolate* isolate = Isolate::Current();
 #endif
-  ALLOW_HANDLE_DEREF(isolate, "using and embedding raw address");
+  AllowDeferredHandleDereference using_raw_address;
   rm_ = no_reg;
   // Verify all Objects referred by code are NOT in new space.
   Object* obj = *handle;
@@ -1368,6 +1368,7 @@ void Assembler::mls(Register dst, Register src1, Register src2, Register srcA,
 void Assembler::sdiv(Register dst, Register src1, Register src2,
                      Condition cond) {
   ASSERT(!dst.is(pc) && !src1.is(pc) && !src2.is(pc));
+  ASSERT(IsEnabled(SUDIV));
   emit(cond | B26 | B25| B24 | B20 | dst.code()*B16 | 0xf * B12 |
        src2.code()*B8 | B4 | src1.code());
 }
@@ -2470,6 +2471,23 @@ void Assembler::vcvt_f32_f64(const SwVfpRegister dst,
                              VFPConversionMode mode,
                              const Condition cond) {
   emit(EncodeVCVT(F32, dst.code(), F64, src.code(), mode, cond));
+}
+
+
+void Assembler::vcvt_f64_s32(const DwVfpRegister dst,
+                             int fraction_bits,
+                             const Condition cond) {
+  // Instruction details available in ARM DDI 0406C.b, A8-874.
+  // cond(31-28) | 11101(27-23) | D(22) | 11(21-20) | 1010(19-16) | Vd(15-12) |
+  // 101(11-9) | sf=1(8) | sx=1(7) | 1(6) | i(5) | 0(4) | imm4(3-0)
+  ASSERT(fraction_bits > 0 && fraction_bits <= 32);
+  ASSERT(CpuFeatures::IsSupported(VFP3));
+  int vd, d;
+  dst.split_code(&vd, &d);
+  int i = ((32 - fraction_bits) >> 4) & 1;
+  int imm4 = (32 - fraction_bits) & 0xf;
+  emit(cond | 0xE*B24 | B23 | d*B22 | 0x3*B20 | B19 | 0x2*B16 |
+       vd*B12 | 0x5*B9 | B8 | B7 | B6 | i*B5 | imm4);
 }
 
 

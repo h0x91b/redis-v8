@@ -88,7 +88,11 @@ function createObserver() {
 }
 
 var observer = createObserver();
+var observer2 = createObserver();
+
 assertEquals("function", typeof observer.callback);
+assertEquals("function", typeof observer2.callback);
+
 var obj = {};
 
 function frozenFunction() {}
@@ -109,8 +113,14 @@ Object.defineProperty(changeRecordWithAccessor, 'name', {
 assertThrows(function() { Object.observe("non-object", observer.callback); }, TypeError);
 assertThrows(function() { Object.observe(obj, nonFunction); }, TypeError);
 assertThrows(function() { Object.observe(obj, frozenFunction); }, TypeError);
+assertThrows(function() { Object.observe(obj, function() {}, 1); }, TypeError);
+assertThrows(function() { Object.observe(obj, function() {}, [undefined]); }, TypeError);
+assertThrows(function() { Object.observe(obj, function() {}, [1]); }, TypeError);
+assertThrows(function() { Object.observe(obj, function() {}, ['foo', null]); }, TypeError);
+assertEquals(obj, Object.observe(obj, observer.callback, ['foo', 'bar', 'baz']));
+assertEquals(obj, Object.observe(obj, observer.callback, []));
+assertEquals(obj, Object.observe(obj, observer.callback, undefined));
 assertEquals(obj, Object.observe(obj, observer.callback));
-
 
 // Object.unobserve
 assertThrows(function() { Object.unobserve(4, observer.callback); }, TypeError);
@@ -130,6 +140,20 @@ assertTrue(notifyDesc.writable);
 assertFalse(notifyDesc.enumerable);
 assertThrows(function() { notifier.notify({}); }, TypeError);
 assertThrows(function() { notifier.notify({ type: 4 }); }, TypeError);
+
+assertThrows(function() { notifier.performChange(1, function(){}); }, TypeError);
+assertThrows(function() { notifier.performChange(undefined, function(){}); }, TypeError);
+assertThrows(function() { notifier.performChange('foo', undefined); }, TypeError);
+assertThrows(function() { notifier.performChange('foo', 'bar'); }, TypeError);
+var testSelf = {};
+notifier.performChange('foo', function() {
+  assertTrue(testSelf === this);
+}, testSelf);
+var self = this;
+notifier.performChange('foo', function() {
+  assertTrue(self === this);
+});
+
 var notify = notifier.notify;
 assertThrows(function() { notify.call(undefined, { type: 'a' }); }, TypeError);
 assertThrows(function() { notify.call(null, { type: 'a' }); }, TypeError);
@@ -195,7 +219,7 @@ reset();
 Object.observe(obj, observer.callback);
 Object.observe(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
 });
 Object.deliverChangeRecords(observer.callback);
 observer.assertCalled();
@@ -205,7 +229,7 @@ observer.assertCalled();
 reset();
 Object.unobserve(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
 });
 Object.deliverChangeRecords(observer.callback);
 observer.assertNotCalled();
@@ -216,7 +240,7 @@ reset();
 Object.unobserve(obj, observer.callback);
 Object.unobserve(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
 });
 Object.deliverChangeRecords(observer.callback);
 observer.assertNotCalled();
@@ -225,11 +249,11 @@ observer.assertNotCalled();
 // Re-observation works and only includes changeRecords after of call.
 reset();
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
 });
 Object.observe(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
 });
 records = undefined;
 Object.deliverChangeRecords(observer.callback);
@@ -240,42 +264,326 @@ observer.assertRecordCount(1);
 reset();
 Object.observe(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
   val: 1
 });
 
 Object.unobserve(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
   val: 2
 });
 
 Object.observe(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
   val: 3
 });
 
 Object.unobserve(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
   val: 4
 });
 
 Object.observe(obj, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo',
+  type: 'updated',
   val: 5
 });
 
 Object.unobserve(obj, observer.callback);
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
-  { object: obj, type: 'foo', val: 1 },
-  { object: obj, type: 'foo', val: 3 },
-  { object: obj, type: 'foo', val: 5 }
+  { object: obj, type: 'updated', val: 1 },
+  { object: obj, type: 'updated', val: 3 },
+  { object: obj, type: 'updated', val: 5 }
 ]);
 
+// Accept
+reset();
+Object.observe(obj, observer.callback, []);
+Object.getNotifier(obj).notify({
+  type: 'new'
+});
+Object.getNotifier(obj).notify({
+  type: 'updated'
+});
+Object.getNotifier(obj).notify({
+  type: 'deleted'
+});
+Object.getNotifier(obj).notify({
+  type: 'reconfigured'
+});
+Object.getNotifier(obj).notify({
+  type: 'prototype'
+});
+Object.deliverChangeRecords(observer.callback);
+observer.assertNotCalled();
+
+reset();
+Object.observe(obj, observer.callback, ['new', 'deleted', 'prototype']);
+Object.getNotifier(obj).notify({
+  type: 'new'
+});
+Object.getNotifier(obj).notify({
+  type: 'updated'
+});
+Object.getNotifier(obj).notify({
+  type: 'deleted'
+});
+Object.getNotifier(obj).notify({
+  type: 'deleted'
+});
+Object.getNotifier(obj).notify({
+  type: 'reconfigured'
+});
+Object.getNotifier(obj).notify({
+  type: 'prototype'
+});
+Object.deliverChangeRecords(observer.callback);
+observer.assertCallbackRecords([
+  { object: obj, type: 'new' },
+  { object: obj, type: 'deleted' },
+  { object: obj, type: 'deleted' },
+  { object: obj, type: 'prototype' }
+]);
+
+reset();
+Object.observe(obj, observer.callback, ['updated', 'foo']);
+Object.getNotifier(obj).notify({
+  type: 'new'
+});
+Object.getNotifier(obj).notify({
+  type: 'updated'
+});
+Object.getNotifier(obj).notify({
+  type: 'deleted'
+});
+Object.getNotifier(obj).notify({
+  type: 'foo'
+});
+Object.getNotifier(obj).notify({
+  type: 'bar'
+});
+Object.getNotifier(obj).notify({
+  type: 'foo'
+});
+Object.deliverChangeRecords(observer.callback);
+observer.assertCallbackRecords([
+  { object: obj, type: 'updated' },
+  { object: obj, type: 'foo' },
+  { object: obj, type: 'foo' }
+]);
+
+reset();
+function Thingy(a, b, c) {
+  this.a = a;
+  this.b = b;
+}
+
+Thingy.MULTIPLY = 'multiply';
+Thingy.INCREMENT = 'increment';
+Thingy.INCREMENT_AND_MULTIPLY = 'incrementAndMultiply';
+
+Thingy.prototype = {
+  increment: function(amount) {
+    var notifier = Object.getNotifier(this);
+
+    notifier.performChange(Thingy.INCREMENT, function() {
+      this.a += amount;
+      this.b += amount;
+    }, this);
+
+    notifier.notify({
+      object: this,
+      type: Thingy.INCREMENT,
+      incremented: amount
+    });
+  },
+
+  multiply: function(amount) {
+    var notifier = Object.getNotifier(this);
+
+    notifier.performChange(Thingy.MULTIPLY, function() {
+      this.a *= amount;
+      this.b *= amount;
+    }, this);
+
+    notifier.notify({
+      object: this,
+      type: Thingy.MULTIPLY,
+      multiplied: amount
+    });
+  },
+
+  incrementAndMultiply: function(incAmount, multAmount) {
+    var notifier = Object.getNotifier(this);
+
+    notifier.performChange(Thingy.INCREMENT_AND_MULTIPLY, function() {
+      this.increment(incAmount);
+      this.multiply(multAmount);
+    }, this);
+
+    notifier.notify({
+      object: this,
+      type: Thingy.INCREMENT_AND_MULTIPLY,
+      incremented: incAmount,
+      multiplied: multAmount
+    });
+  }
+}
+
+Thingy.observe = function(thingy, callback) {
+  Object.observe(thingy, callback, [Thingy.INCREMENT,
+                                    Thingy.MULTIPLY,
+                                    Thingy.INCREMENT_AND_MULTIPLY,
+                                    'updated']);
+}
+
+Thingy.unobserve = function(thingy, callback) {
+  Object.unobserve(thingy);
+}
+
+var thingy = new Thingy(2, 4);
+
+Object.observe(thingy, observer.callback);
+Thingy.observe(thingy, observer2.callback);
+thingy.increment(3);               // { a: 5, b: 7 }
+thingy.b++;                        // { a: 5, b: 8 }
+thingy.multiply(2);                // { a: 10, b: 16 }
+thingy.a++;                        // { a: 11, b: 16 }
+thingy.incrementAndMultiply(2, 2); // { a: 26, b: 36 }
+
+Object.deliverChangeRecords(observer.callback);
+Object.deliverChangeRecords(observer2.callback);
+observer.assertCallbackRecords([
+  { object: thingy, type: 'updated', name: 'a', oldValue: 2 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 4 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 7 },
+  { object: thingy, type: 'updated', name: 'a', oldValue: 5 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 8 },
+  { object: thingy, type: 'updated', name: 'a', oldValue: 10 },
+  { object: thingy, type: 'updated', name: 'a', oldValue: 11 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 16 },
+  { object: thingy, type: 'updated', name: 'a', oldValue: 13 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 18 },
+]);
+observer2.assertCallbackRecords([
+  { object: thingy, type: Thingy.INCREMENT, incremented: 3 },
+  { object: thingy, type: 'updated', name: 'b', oldValue: 7 },
+  { object: thingy, type: Thingy.MULTIPLY, multiplied: 2 },
+  { object: thingy, type: 'updated', name: 'a', oldValue: 10 },
+  {
+    object: thingy,
+    type: Thingy.INCREMENT_AND_MULTIPLY,
+    incremented: 2,
+    multiplied: 2
+  }
+]);
+
+
+reset();
+function RecursiveThingy() {}
+
+RecursiveThingy.MULTIPLY_FIRST_N = 'multiplyFirstN';
+
+RecursiveThingy.prototype = {
+  __proto__: Array.prototype,
+
+  multiplyFirstN: function(amount, n) {
+    if (!n)
+      return;
+    var notifier = Object.getNotifier(this);
+    notifier.performChange(RecursiveThingy.MULTIPLY_FIRST_N, function() {
+      this[n-1] = this[n-1]*amount;
+      this.multiplyFirstN(amount, n-1);
+    }, this);
+
+    notifier.notify({
+      object: this,
+      type: RecursiveThingy.MULTIPLY_FIRST_N,
+      multiplied: amount,
+      n: n
+    });
+  },
+}
+
+RecursiveThingy.observe = function(thingy, callback) {
+  Object.observe(thingy, callback, [RecursiveThingy.MULTIPLY_FIRST_N]);
+}
+
+RecursiveThingy.unobserve = function(thingy, callback) {
+  Object.unobserve(thingy);
+}
+
+var thingy = new RecursiveThingy;
+thingy.push(1, 2, 3, 4);
+
+Object.observe(thingy, observer.callback);
+RecursiveThingy.observe(thingy, observer2.callback);
+thingy.multiplyFirstN(2, 3);                // [2, 4, 6, 4]
+
+Object.deliverChangeRecords(observer.callback);
+Object.deliverChangeRecords(observer2.callback);
+observer.assertCallbackRecords([
+  { object: thingy, type: 'updated', name: '2', oldValue: 3 },
+  { object: thingy, type: 'updated', name: '1', oldValue: 2 },
+  { object: thingy, type: 'updated', name: '0', oldValue: 1 }
+]);
+observer2.assertCallbackRecords([
+  { object: thingy, type: RecursiveThingy.MULTIPLY_FIRST_N, multiplied: 2, n: 3 }
+]);
+
+reset();
+function DeckSuit() {
+  this.push('1', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'A', 'Q', 'K');
+}
+
+DeckSuit.SHUFFLE = 'shuffle';
+
+DeckSuit.prototype = {
+  __proto__: Array.prototype,
+
+  shuffle: function() {
+    var notifier = Object.getNotifier(this);
+    notifier.performChange(DeckSuit.SHUFFLE, function() {
+      this.reverse();
+      this.sort(function() { return Math.random()* 2 - 1; });
+      var cut = this.splice(0, 6);
+      Array.prototype.push.apply(this, cut);
+      this.reverse();
+      this.sort(function() { return Math.random()* 2 - 1; });
+      var cut = this.splice(0, 6);
+      Array.prototype.push.apply(this, cut);
+      this.reverse();
+      this.sort(function() { return Math.random()* 2 - 1; });
+    }, this);
+
+    notifier.notify({
+      object: this,
+      type: DeckSuit.SHUFFLE
+    });
+  },
+}
+
+DeckSuit.observe = function(thingy, callback) {
+  Object.observe(thingy, callback, [DeckSuit.SHUFFLE]);
+}
+
+DeckSuit.unobserve = function(thingy, callback) {
+  Object.unobserve(thingy);
+}
+
+var deck = new DeckSuit;
+
+DeckSuit.observe(deck, observer2.callback);
+deck.shuffle();
+
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: deck, type: DeckSuit.SHUFFLE }
+]);
 
 // Observing multiple objects; records appear in order.
 reset();
@@ -285,20 +593,20 @@ Object.observe(obj, observer.callback);
 Object.observe(obj3, observer.callback);
 Object.observe(obj2, observer.callback);
 Object.getNotifier(obj).notify({
-  type: 'foo1',
+  type: 'new',
 });
 Object.getNotifier(obj2).notify({
-  type: 'foo2',
+  type: 'updated',
 });
 Object.getNotifier(obj3).notify({
-  type: 'foo3',
+  type: 'deleted',
 });
 Object.observe(obj3, observer.callback);
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
-  { object: obj, type: 'foo1' },
-  { object: obj2, type: 'foo2' },
-  { object: obj3, type: 'foo3' }
+  { object: obj, type: 'new' },
+  { object: obj2, type: 'updated' },
+  { object: obj3, type: 'deleted' }
 ]);
 
 
@@ -649,15 +957,15 @@ var arr2 = ['alpha', 'beta'];
 var arr3 = ['hello'];
 arr3[2] = 'goodbye';
 arr3.length = 6;
-var slow_arr = new Array(1000000000);
-slow_arr[500000000] = 'hello';
 Object.defineProperty(arr, '0', {configurable: false});
 Object.defineProperty(arr, '2', {get: function(){}});
 Object.defineProperty(arr2, '0', {get: function(){}, configurable: false});
 Object.observe(arr, observer.callback);
+Array.observe(arr, observer2.callback);
 Object.observe(arr2, observer.callback);
+Array.observe(arr2, observer2.callback);
 Object.observe(arr3, observer.callback);
-Object.observe(slow_arr, observer.callback);
+Array.observe(arr3, observer2.callback);
 arr.length = 2;
 arr.length = 0;
 arr.length = 10;
@@ -670,8 +978,8 @@ arr3.length = 0;
 arr3.length++;
 arr3.length /= 2;
 Object.defineProperty(arr3, 'length', {value: 5});
-Object.defineProperty(arr3, 'length', {value: 10, writable: false});
-slow_arr.length = 100;
+arr3[4] = 5;
+Object.defineProperty(arr3, 'length', {value: 1, writable: false});
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
   { object: arr, name: '3', type: 'deleted', oldValue: 'd' },
@@ -683,7 +991,7 @@ observer.assertCallbackRecords([
   { object: arr, name: 'length', type: 'reconfigured' },
   { object: arr2, name: '1', type: 'deleted', oldValue: 'beta' },
   { object: arr2, name: 'length', type: 'updated', oldValue: 2 },
-  { object: arr2, name: 'length', type: 'reconfigured', oldValue: 1 },
+  { object: arr2, name: 'length', type: 'reconfigured' },
   { object: arr3, name: '2', type: 'deleted', oldValue: 'goodbye' },
   { object: arr3, name: '0', type: 'deleted', oldValue: 'hello' },
   { object: arr3, name: 'length', type: 'updated', oldValue: 6 },
@@ -691,10 +999,60 @@ observer.assertCallbackRecords([
   { object: arr3, name: 'length', type: 'updated', oldValue: 1 },
   { object: arr3, name: 'length', type: 'updated', oldValue: 2 },
   { object: arr3, name: 'length', type: 'updated', oldValue: 1 },
-  { object: arr3, name: 'length', type: 'reconfigured', oldValue: 5 },
+  { object: arr3, name: '4', type: 'new' },
+  { object: arr3, name: '4', type: 'deleted', oldValue: 5 },
+  // TODO(rafaelw): It breaks spec compliance to get two records here.
+  // When the TODO in v8natives.js::DefineArrayProperty is addressed
+  // which prevents DefineProperty from over-writing the magic length
+  // property, these will collapse into a single record.
+  { object: arr3, name: 'length', type: 'updated', oldValue: 5 },
+  { object: arr3, name: 'length', type: 'reconfigured' }
+]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: arr, type: 'splice', index: 2, removed: [, 'd'], addedCount: 0 },
+  { object: arr, type: 'splice', index: 1, removed: ['b'], addedCount: 0 },
+  { object: arr, type: 'splice', index: 1, removed: [], addedCount: 9 },
+  { object: arr2, type: 'splice', index: 1, removed: ['beta'], addedCount: 0 },
+  { object: arr3, type: 'splice', index: 0, removed: ['hello',, 'goodbye',,,,], addedCount: 0 },
+  { object: arr3, type: 'splice', index: 0, removed: [], addedCount: 1 },
+  { object: arr3, type: 'splice', index: 1, removed: [], addedCount: 1 },
+  { object: arr3, type: 'splice', index: 1, removed: [,], addedCount: 0 },
+  { object: arr3, type: 'splice', index: 1, removed: [], addedCount: 4 },
+  { object: arr3, name: '4', type: 'new' },
+  { object: arr3, type: 'splice', index: 1, removed: [,,,5], addedCount: 0 }
+]);
+
+
+// Updating length on large (slow) array
+reset();
+var slow_arr = new Array(1000000000);
+slow_arr[500000000] = 'hello';
+Object.observe(slow_arr, observer.callback);
+var spliceRecords;
+function slowSpliceCallback(records) {
+  spliceRecords = records;
+}
+Array.observe(slow_arr, slowSpliceCallback);
+slow_arr.length = 100;
+Object.deliverChangeRecords(observer.callback);
+observer.assertCallbackRecords([
   { object: slow_arr, name: '500000000', type: 'deleted', oldValue: 'hello' },
   { object: slow_arr, name: 'length', type: 'updated', oldValue: 1000000000 },
 ]);
+Object.deliverChangeRecords(slowSpliceCallback);
+assertEquals(spliceRecords.length, 1);
+// Have to custom assert this splice record because the removed array is huge.
+var splice = spliceRecords[0];
+assertSame(splice.object, slow_arr);
+assertEquals(splice.type, 'splice');
+assertEquals(splice.index, 100);
+assertEquals(splice.addedCount, 0);
+var array_keys = %GetArrayKeys(splice.removed, splice.removed.length);
+assertEquals(array_keys.length, 1);
+assertEquals(array_keys[0], 499999900);
+assertEquals(splice.removed[499999900], 'hello');
+assertEquals(splice.removed.length, 999999900);
 
 
 // Assignments in loops (checking different IC states).
@@ -729,10 +1087,12 @@ observer.assertCallbackRecords([
 ]);
 
 
-// Adding elements past the end of an array should notify on length
+// Adding elements past the end of an array should notify on length for
+// Object.observe and emit "splices" for Array.observe.
 reset();
 var arr = [1, 2, 3];
 Object.observe(arr, observer.callback);
+Array.observe(arr, observer2.callback);
 arr[3] = 10;
 arr[100] = 20;
 Object.defineProperty(arr, '200', {value: 7});
@@ -750,6 +1110,14 @@ observer.assertCallbackRecords([
   { object: arr, name: 'length', type: 'updated', oldValue: 201 },
   { object: arr, name: '50', type: 'new' },
 ]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: arr, type: 'splice', index: 3, removed: [], addedCount: 1 },
+  { object: arr, type: 'splice', index: 4, removed: [], addedCount: 97 },
+  { object: arr, type: 'splice', index: 101, removed: [], addedCount: 100 },
+  { object: arr, type: 'splice', index: 201, removed: [], addedCount: 200 },
+  { object: arr, type: 'new', name: '50' },
+]);
 
 
 // Tests for array methods, first on arrays and then on plain objects
@@ -760,13 +1128,22 @@ observer.assertCallbackRecords([
 reset();
 var array = [1, 2];
 Object.observe(array, observer.callback);
+Array.observe(array, observer2.callback);
 array.push(3, 4);
+array.push(5);
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
   { object: array, name: '2', type: 'new' },
   { object: array, name: 'length', type: 'updated', oldValue: 2 },
   { object: array, name: '3', type: 'new' },
   { object: array, name: 'length', type: 'updated', oldValue: 3 },
+  { object: array, name: '4', type: 'new' },
+  { object: array, name: 'length', type: 'updated', oldValue: 4 },
+]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: array, type: 'splice', index: 2, removed: [], addedCount: 2 },
+  { object: array, type: 'splice', index: 4, removed: [], addedCount: 1 }
 ]);
 
 // Pop
@@ -825,6 +1202,22 @@ observer.assertCallbackRecords([
   { object: array, name: '2', type: 'updated', oldValue: 3 },
 ]);
 
+// Sort
+reset();
+var array = [3, 2, 1];
+Object.observe(array, observer.callback);
+array.sort();
+assertEquals(1, array[0]);
+assertEquals(2, array[1]);
+assertEquals(3, array[2]);
+Object.deliverChangeRecords(observer.callback);
+observer.assertCallbackRecords([
+  { object: array, name: '1', type: 'updated', oldValue: 2 },
+  { object: array, name: '0', type: 'updated', oldValue: 3 },
+  { object: array, name: '2', type: 'updated', oldValue: 1 },
+  { object: array, name: '1', type: 'updated', oldValue: 3 },
+  { object: array, name: '0', type: 'updated', oldValue: 2 },
+]);
 
 //
 // === PLAIN OBJECTS ===
@@ -842,11 +1235,13 @@ observer.assertCallbackRecords([
 ]);
 
 // Pop
-reset()
-var array = {0: 1, 1: 2, length: 2};
+reset();
+var array = [1, 2];
 Object.observe(array, observer.callback);
-Array.prototype.pop.call(array);
-Array.prototype.pop.call(array);
+Array.observe(array, observer2.callback);
+array.pop();
+array.pop();
+array.pop();
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
   { object: array, name: '1', type: 'deleted', oldValue: 2 },
@@ -854,13 +1249,20 @@ observer.assertCallbackRecords([
   { object: array, name: '0', type: 'deleted', oldValue: 1 },
   { object: array, name: 'length', type: 'updated', oldValue: 1 },
 ]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: array, type: 'splice', index: 1, removed: [2], addedCount: 0 },
+  { object: array, type: 'splice', index: 0, removed: [1], addedCount: 0 }
+]);
 
 // Shift
-reset()
-var array = {0: 1, 1: 2, length: 2};
+reset();
+var array = [1, 2];
 Object.observe(array, observer.callback);
-Array.prototype.shift.call(array);
-Array.prototype.shift.call(array);
+Array.observe(array, observer2.callback);
+array.shift();
+array.shift();
+array.shift();
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
   { object: array, name: '0', type: 'updated', oldValue: 1 },
@@ -869,32 +1271,71 @@ observer.assertCallbackRecords([
   { object: array, name: '0', type: 'deleted', oldValue: 2 },
   { object: array, name: 'length', type: 'updated', oldValue: 1 },
 ]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: array, type: 'splice', index: 0, removed: [1], addedCount: 0 },
+  { object: array, type: 'splice', index: 0, removed: [2], addedCount: 0 }
+]);
 
 // Unshift
-reset()
-var array = {0: 1, 1: 2, length: 2};
+reset();
+var array = [1, 2];
 Object.observe(array, observer.callback);
-Array.prototype.unshift.call(array, 3, 4);
+Array.observe(array, observer2.callback);
+array.unshift(3, 4);
+array.unshift(5);
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
   { object: array, name: '3', type: 'new' },
+  { object: array, name: 'length', type: 'updated', oldValue: 2 },
   { object: array, name: '2', type: 'new' },
   { object: array, name: '0', type: 'updated', oldValue: 1 },
   { object: array, name: '1', type: 'updated', oldValue: 2 },
-  { object: array, name: 'length', type: 'updated', oldValue: 2 },
+  { object: array, name: '4', type: 'new' },
+  { object: array, name: 'length', type: 'updated', oldValue: 4 },
+  { object: array, name: '3', type: 'updated', oldValue: 2 },
+  { object: array, name: '2', type: 'updated', oldValue: 1 },
+  { object: array, name: '1', type: 'updated', oldValue: 4 },
+  { object: array, name: '0', type: 'updated', oldValue: 3 },
+]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: array, type: 'splice', index: 0, removed: [], addedCount: 2 },
+  { object: array, type: 'splice', index: 0, removed: [], addedCount: 1 }
 ]);
 
 // Splice
-reset()
-var array = {0: 1, 1: 2, 2: 3, length: 3};
+reset();
+var array = [1, 2, 3];
 Object.observe(array, observer.callback);
-Array.prototype.splice.call(array, 1, 1, 4, 5);
+Array.observe(array, observer2.callback);
+array.splice(1, 0, 4, 5); // 1 4 5 2 3
+array.splice(0, 2); // 5 2 3
+array.splice(1, 2, 6, 7); // 5 6 7
+array.splice(2, 0);
 Object.deliverChangeRecords(observer.callback);
 observer.assertCallbackRecords([
+  { object: array, name: '4', type: 'new' },
+  { object: array, name: 'length', type: 'updated', oldValue: 3 },
   { object: array, name: '3', type: 'new' },
   { object: array, name: '1', type: 'updated', oldValue: 2 },
   { object: array, name: '2', type: 'updated', oldValue: 3 },
-  { object: array, name: 'length', type: 'updated', oldValue: 3 },
+
+  { object: array, name: '0', type: 'updated', oldValue: 1 },
+  { object: array, name: '1', type: 'updated', oldValue: 4 },
+  { object: array, name: '2', type: 'updated', oldValue: 5 },
+  { object: array, name: '4', type: 'deleted', oldValue: 3 },
+  { object: array, name: '3', type: 'deleted', oldValue: 2 },
+  { object: array, name: 'length', type: 'updated', oldValue: 5 },
+
+  { object: array, name: '1', type: 'updated', oldValue: 2 },
+  { object: array, name: '2', type: 'updated', oldValue: 3 },
+]);
+Object.deliverChangeRecords(observer2.callback);
+observer2.assertCallbackRecords([
+  { object: array, type: 'splice', index: 1, removed: [], addedCount: 2 },
+  { object: array, type: 'splice', index: 0, removed: [1, 4], addedCount: 0 },
+  { object: array, type: 'splice', index: 1, removed: [2, 3], addedCount: 2 },
 ]);
 
 // Exercise StoreIC_ArrayLength

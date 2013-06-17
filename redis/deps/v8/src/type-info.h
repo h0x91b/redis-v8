@@ -29,8 +29,8 @@
 #define V8_TYPE_INFO_H_
 
 #include "allocation.h"
-#include "ast.h"
 #include "globals.h"
+#include "types.h"
 #include "zone-inl.h"
 
 namespace v8 {
@@ -114,7 +114,7 @@ class TypeInfo {
     return false;
   }
 
-  static TypeInfo TypeFromValue(Handle<Object> value);
+  static TypeInfo FromValue(Handle<Object> value);
 
   bool Equals(const TypeInfo& other) {
     return type_ == other.type_;
@@ -218,12 +218,11 @@ enum StringStubFeedback {
 
 
 // Forward declarations.
+// TODO(rossberg): these should all go away eventually.
 class Assignment;
-class BinaryOperation;
 class Call;
 class CallNew;
 class CaseClause;
-class CompareOperation;
 class CompilationInfo;
 class CountOperation;
 class Expression;
@@ -231,7 +230,8 @@ class ForInStatement;
 class ICStub;
 class Property;
 class SmallMapList;
-class UnaryOperation;
+class ObjectLiteral;
+class ObjectLiteralProperty;
 
 
 class TypeFeedbackOracle: public ZoneObject {
@@ -248,13 +248,14 @@ class TypeFeedbackOracle: public ZoneObject {
   bool StoreIsPolymorphic(TypeFeedbackId ast_id);
   bool CallIsMonomorphic(Call* expr);
   bool CallNewIsMonomorphic(CallNew* expr);
-  bool ObjectLiteralStoreIsMonomorphic(ObjectLiteral::Property* prop);
+  bool ObjectLiteralStoreIsMonomorphic(ObjectLiteralProperty* prop);
 
-  bool IsForInFastCase(ForInStatement* expr);
+  // TODO(1571) We can't use ForInStatement::ForInType as the return value due
+  // to various cycles in our headers.
+  byte ForInType(ForInStatement* expr);
 
   Handle<Map> LoadMonomorphicReceiverType(Property* expr);
   Handle<Map> StoreMonomorphicReceiverType(TypeFeedbackId id);
-  Handle<Map> CompareNilMonomorphicReceiverType(TypeFeedbackId id);
 
   KeyedAccessStoreMode GetStoreMode(TypeFeedbackId ast_id);
 
@@ -278,42 +279,41 @@ class TypeFeedbackOracle: public ZoneObject {
   void CollectPolymorphicMaps(Handle<Code> code, SmallMapList* types);
 
   CheckType GetCallCheckType(Call* expr);
-  Handle<JSObject> GetPrototypeForPrimitiveCheck(CheckType check);
-
   Handle<JSFunction> GetCallTarget(Call* expr);
   Handle<JSFunction> GetCallNewTarget(CallNew* expr);
-  ElementsKind GetCallNewElementsKind(CallNew* expr);
+  Handle<Cell> GetCallNewAllocationInfoCell(CallNew* expr);
 
-  Handle<Map> GetObjectLiteralStoreMap(ObjectLiteral::Property* prop);
+  Handle<Map> GetObjectLiteralStoreMap(ObjectLiteralProperty* prop);
 
   bool LoadIsBuiltin(Property* expr, Builtins::Name id);
   bool LoadIsStub(Property* expr, ICStub* stub);
 
   // TODO(1571) We can't use ToBooleanStub::Types as the return value because
-  // of various cylces in our headers. Death to tons of implementations in
+  // of various cycles in our headers. Death to tons of implementations in
   // headers!! :-P
-  byte ToBooleanTypes(TypeFeedbackId ast_id);
-
-  // TODO(1571) We can't use CompareNilICStub::Types as the return value because
-  // of various cylces in our headers. Death to tons of implementations in
-  // headers!! :-P
-  byte CompareNilTypes(TypeFeedbackId ast_id);
+  byte ToBooleanTypes(TypeFeedbackId id);
 
   // Get type information for arithmetic operations and compares.
-  TypeInfo UnaryType(UnaryOperation* expr);
-  void BinaryType(BinaryOperation* expr,
-                  TypeInfo* left,
-                  TypeInfo* right,
-                  TypeInfo* result);
-  void CompareType(CompareOperation* expr,
-                   TypeInfo* left_type,
-                   TypeInfo* right_type,
-                   TypeInfo* overall_type);
-  Handle<Map> GetCompareMap(CompareOperation* expr);
-  TypeInfo SwitchType(CaseClause* clause);
+  Handle<Type> UnaryType(TypeFeedbackId id);
+  void BinaryType(TypeFeedbackId id,
+                  Handle<Type>* left,
+                  Handle<Type>* right,
+                  Handle<Type>* result,
+                  bool* has_fixed_right_arg,
+                  int* fixed_right_arg_value);
+
+  void CompareTypes(TypeFeedbackId id,
+                    Handle<Type>* left_type,
+                    Handle<Type>* right_type,
+                    Handle<Type>* overall_type,
+                    Handle<Type>* compare_nil_type);
+
+  Handle<Type> ClauseType(TypeFeedbackId id);
+
   TypeInfo IncrementType(CountOperation* expr);
 
   Zone* zone() const { return zone_; }
+  Isolate* isolate() const { return isolate_; }
 
  private:
   void CollectReceiverTypes(TypeFeedbackId ast_id,
@@ -334,10 +334,10 @@ class TypeFeedbackOracle: public ZoneObject {
 
   // Returns an element from the backing store. Returns undefined if
   // there is no information.
- public:
-  // TODO(mvstanton): how to get this information without making the method
-  // public?
   Handle<Object> GetInfo(TypeFeedbackId ast_id);
+
+  // Return the cell that contains type feedback.
+  Handle<Cell> GetInfoCell(TypeFeedbackId ast_id);
 
  private:
   Handle<Context> native_context_;

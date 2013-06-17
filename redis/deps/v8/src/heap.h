@@ -31,6 +31,7 @@
 #include <cmath>
 
 #include "allocation.h"
+#include "assert-scope.h"
 #include "globals.h"
 #include "incremental-marking.h"
 #include "list.h"
@@ -58,6 +59,8 @@ namespace internal {
   V(Oddball, null_value, NullValue)                                            \
   V(Oddball, true_value, TrueValue)                                            \
   V(Oddball, false_value, FalseValue)                                          \
+  V(Oddball, uninitialized_value, UninitializedValue)                          \
+  V(Map, cell_map, CellMap)                                                    \
   V(Map, global_property_cell_map, GlobalPropertyCellMap)                      \
   V(Map, shared_function_info_map, SharedFunctionInfoMap)                      \
   V(Map, meta_map, MetaMap)                                                    \
@@ -128,7 +131,6 @@ namespace internal {
   V(Map, short_external_ascii_string_map, ShortExternalAsciiStringMap)         \
   V(Map, undetectable_string_map, UndetectableStringMap)                       \
   V(Map, undetectable_ascii_string_map, UndetectableAsciiStringMap)            \
-  V(Map, external_pixel_array_map, ExternalPixelArrayMap)                      \
   V(Map, external_byte_array_map, ExternalByteArrayMap)                        \
   V(Map, external_unsigned_byte_array_map, ExternalUnsignedByteArrayMap)       \
   V(Map, external_short_array_map, ExternalShortArrayMap)                      \
@@ -137,6 +139,21 @@ namespace internal {
   V(Map, external_unsigned_int_array_map, ExternalUnsignedIntArrayMap)         \
   V(Map, external_float_array_map, ExternalFloatArrayMap)                      \
   V(Map, external_double_array_map, ExternalDoubleArrayMap)                    \
+  V(Map, external_pixel_array_map, ExternalPixelArrayMap)                      \
+  V(ExternalArray, empty_external_byte_array,                                  \
+      EmptyExternalByteArray)                                                  \
+  V(ExternalArray, empty_external_unsigned_byte_array,                         \
+      EmptyExternalUnsignedByteArray)                                          \
+  V(ExternalArray, empty_external_short_array, EmptyExternalShortArray)        \
+  V(ExternalArray, empty_external_unsigned_short_array,                        \
+      EmptyExternalUnsignedShortArray)                                         \
+  V(ExternalArray, empty_external_int_array, EmptyExternalIntArray)            \
+  V(ExternalArray, empty_external_unsigned_int_array,                          \
+      EmptyExternalUnsignedIntArray)                                           \
+  V(ExternalArray, empty_external_float_array, EmptyExternalFloatArray)        \
+  V(ExternalArray, empty_external_double_array, EmptyExternalDoubleArray)      \
+  V(ExternalArray, empty_external_pixel_array,                                 \
+      EmptyExternalPixelArray)                                                 \
   V(Map, non_strict_arguments_elements_map, NonStrictArgumentsElementsMap)     \
   V(Map, function_context_map, FunctionContextMap)                             \
   V(Map, catch_context_map, CatchContextMap)                                   \
@@ -167,7 +184,10 @@ namespace internal {
   V(Smi, getter_stub_deopt_pc_offset, GetterStubDeoptPCOffset)                 \
   V(Smi, setter_stub_deopt_pc_offset, SetterStubDeoptPCOffset)                 \
   V(JSObject, observation_state, ObservationState)                             \
-  V(Map, external_map, ExternalMap)
+  V(Map, external_map, ExternalMap)                                            \
+  V(Symbol, frozen_symbol, FrozenSymbol)                                       \
+  V(SeededNumberDictionary, empty_slow_element_dictionary,                     \
+      EmptySlowElementDictionary)
 
 #define ROOT_LIST(V)                                  \
   STRONG_ROOT_LIST(V)                                 \
@@ -273,7 +293,11 @@ namespace internal {
   V(minus_infinity_string, "-Infinity")                                  \
   V(hidden_stack_trace_string, "v8::hidden_stack_trace")                 \
   V(query_colon_string, "(?:)")                                          \
-  V(Generator_string, "Generator")
+  V(Generator_string, "Generator")                                       \
+  V(throw_string, "throw")                                               \
+  V(done_string, "done")                                                 \
+  V(value_string, "value")                                               \
+  V(next_string, "next")
 
 // Forward declarations.
 class GCTracer;
@@ -529,7 +553,7 @@ class Heap {
   int InitialSemiSpaceSize() { return initial_semispace_size_; }
   intptr_t MaxOldGenerationSize() { return max_old_generation_size_; }
   intptr_t MaxExecutableSize() { return max_executable_size_; }
-  int MaxNewSpaceAllocationSize() { return InitialSemiSpaceSize() * 3/4; }
+  int MaxRegularSpaceAllocationSize() { return InitialSemiSpaceSize() * 3/4; }
 
   // Returns the capacity of the heap in bytes w/o growing. Heap grows when
   // more spaces are needed until it reaches the limit.
@@ -565,6 +589,9 @@ class Heap {
   OldSpace* code_space() { return code_space_; }
   MapSpace* map_space() { return map_space_; }
   CellSpace* cell_space() { return cell_space_; }
+  PropertyCellSpace* property_cell_space() {
+    return property_cell_space_;
+  }
   LargeObjectSpace* lo_space() { return lo_space_; }
   PagedSpace* paged_space(int idx) {
     switch (idx) {
@@ -576,6 +603,8 @@ class Heap {
         return map_space();
       case CELL_SPACE:
         return cell_space();
+      case PROPERTY_CELL_SPACE:
+        return property_cell_space();
       case CODE_SPACE:
         return code_space();
       case NEW_SPACE:
@@ -910,11 +939,21 @@ class Heap {
   // Please note this does not perform a garbage collection.
   MUST_USE_RESULT MaybeObject* AllocateSymbol();
 
+  // Allocate a tenured simple cell.
+  // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
+  // failed.
+  // Please note this does not perform a garbage collection.
+  MUST_USE_RESULT MaybeObject* AllocateCell(Object* value);
+
   // Allocate a tenured JS global property cell.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
   // failed.
   // Please note this does not perform a garbage collection.
-  MUST_USE_RESULT MaybeObject* AllocateJSGlobalPropertyCell(Object* value);
+  MUST_USE_RESULT MaybeObject* AllocatePropertyCell(Object* value);
+
+  // Allocate Box.
+  MUST_USE_RESULT MaybeObject* AllocateBox(Object* value,
+                                           PretenureFlag pretenure);
 
   // Allocates a fixed array initialized with undefined values
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -1325,6 +1364,12 @@ class Heap {
   }
   Object* native_contexts_list() { return native_contexts_list_; }
 
+  void set_array_buffers_list(Object* object) {
+    array_buffers_list_ = object;
+  }
+  Object* array_buffers_list() { return array_buffers_list_; }
+
+
   // Number of mark-sweeps.
   unsigned int ms_count() { return ms_count_; }
 
@@ -1475,10 +1520,6 @@ class Heap {
   inline bool IsInGCPostProcessing() { return gc_post_processing_depth_ > 0; }
 
 #ifdef DEBUG
-  bool IsAllocationAllowed() { return allocation_allowed_; }
-  inline void set_allow_allocation(bool allocation_allowed);
-  inline bool allow_allocation(bool enable);
-
   bool disallow_allocation_failure() {
     return disallow_allocation_failure_;
   }
@@ -1528,7 +1569,12 @@ class Heap {
   // Predicate that governs global pre-tenuring decisions based on observed
   // promotion rates of previous collections.
   inline bool ShouldGloballyPretenure() {
-    return new_space_high_promotion_mode_active_;
+    return FLAG_pretenuring && new_space_high_promotion_mode_active_;
+  }
+
+  // This is only needed for testing high promotion mode.
+  void SetNewSpaceHighPromotionModeActive(bool mode) {
+    new_space_high_promotion_mode_active_ = mode;
   }
 
   inline PretenureFlag GetPretenureMode() {
@@ -1543,42 +1589,29 @@ class Heap {
     return PromotedSpaceSizeOfObjects() + PromotedExternalMemorySize();
   }
 
-  // True if we have reached the allocation limit in the old generation that
-  // should force the next GC (caused normally) to be a full one.
-  inline bool OldGenerationPromotionLimitReached() {
-    return PromotedTotalSize() > old_gen_promotion_limit_;
-  }
-
   inline intptr_t OldGenerationSpaceAvailable() {
-    return old_gen_allocation_limit_ - PromotedTotalSize();
+    return old_generation_allocation_limit_ - PromotedTotalSize();
   }
 
   inline intptr_t OldGenerationCapacityAvailable() {
     return max_old_generation_size_ - PromotedTotalSize();
   }
 
-  static const intptr_t kMinimumPromotionLimit = 5 * Page::kPageSize;
-  static const intptr_t kMinimumAllocationLimit =
+  static const intptr_t kMinimumOldGenerationAllocationLimit =
       8 * (Page::kPageSize > MB ? Page::kPageSize : MB);
 
-  intptr_t OldGenPromotionLimit(intptr_t old_gen_size) {
+  intptr_t OldGenerationAllocationLimit(intptr_t old_gen_size) {
     const int divisor = FLAG_stress_compaction ? 10 :
         new_space_high_promotion_mode_active_ ? 1 : 3;
     intptr_t limit =
-        Max(old_gen_size + old_gen_size / divisor, kMinimumPromotionLimit);
+        Max(old_gen_size + old_gen_size / divisor,
+            kMinimumOldGenerationAllocationLimit);
     limit += new_space_.Capacity();
-    limit *= old_gen_limit_factor_;
-    intptr_t halfway_to_the_max = (old_gen_size + max_old_generation_size_) / 2;
-    return Min(limit, halfway_to_the_max);
-  }
-
-  intptr_t OldGenAllocationLimit(intptr_t old_gen_size) {
-    const int divisor = FLAG_stress_compaction ? 8 :
-        new_space_high_promotion_mode_active_ ? 1 : 2;
-    intptr_t limit =
-        Max(old_gen_size + old_gen_size / divisor, kMinimumAllocationLimit);
-    limit += new_space_.Capacity();
-    limit *= old_gen_limit_factor_;
+    // TODO(hpayer): Can be removed when when pretenuring is supported for all
+    // allocation sites.
+    if (IsHighSurvivalRate() && IsStableOrIncreasingSurvivalTrend()) {
+      limit *= 2;
+    }
     intptr_t halfway_to_the_max = (old_gen_size + max_old_generation_size_) / 2;
     return Min(limit, halfway_to_the_max);
   }
@@ -1626,6 +1659,9 @@ class Heap {
   RootListIndex RootIndexForExternalArrayType(
       ExternalArrayType array_type);
 
+  RootListIndex RootIndexForEmptyExternalArray(ElementsKind kind);
+  ExternalArray* EmptyExternalArrayForMap(Map* map);
+
   void RecordStats(HeapStats* stats, bool take_snapshot = false);
 
   // Copy block of memory from src to dst. Size of block should be aligned
@@ -1650,21 +1686,13 @@ class Heap {
 
     if (FLAG_stress_compaction && (gc_count_ & 1) != 0) return true;
 
-    intptr_t total_promoted = PromotedTotalSize();
-
-    intptr_t adjusted_promotion_limit =
-        old_gen_promotion_limit_ - new_space_.Capacity();
-
-    if (total_promoted >= adjusted_promotion_limit) return true;
-
     intptr_t adjusted_allocation_limit =
-        old_gen_allocation_limit_ - new_space_.Capacity() / 5;
+        old_generation_allocation_limit_ - new_space_.Capacity();
 
-    if (PromotedSpaceSizeOfObjects() >= adjusted_allocation_limit) return true;
+    if (PromotedTotalSize() >= adjusted_allocation_limit) return true;
 
     return false;
   }
-
 
   void UpdateNewSpaceReferencesInExternalStringTable(
       ExternalStringTableUpdaterCallback updater_func);
@@ -1942,6 +1970,7 @@ class Heap {
   OldSpace* code_space_;
   MapSpace* map_space_;
   CellSpace* cell_space_;
+  PropertyCellSpace* property_cell_space_;
   LargeObjectSpace* lo_space_;
   HeapState gc_state_;
   int gc_post_processing_depth_;
@@ -1971,8 +2000,6 @@ class Heap {
 #undef ROOT_ACCESSOR
 
 #ifdef DEBUG
-  bool allocation_allowed_;
-
   // If the --gc-interval flag is set to a positive value, this
   // variable holds the value indicating the number of allocations
   // remain until the next failure and garbage collection.
@@ -1990,17 +2017,9 @@ class Heap {
 
   // Limit that triggers a global GC on the next (normally caused) GC.  This
   // is checked when we have already decided to do a GC to help determine
-  // which collector to invoke.
-  intptr_t old_gen_promotion_limit_;
-
-  // Limit that triggers a global GC as soon as is reasonable.  This is
-  // checked before expanding a paged space in the old generation and on
-  // every allocation in large object space.
-  intptr_t old_gen_allocation_limit_;
-
-  // Sometimes the heuristics dictate that those limits are increased.  This
-  // variable records that fact.
-  int old_gen_limit_factor_;
+  // which collector to invoke, before expanding a paged space in the old
+  // generation and on every allocation in large object space.
+  intptr_t old_generation_allocation_limit_;
 
   // Used to adjust the limits that control the timing of the next GC.
   intptr_t size_of_old_gen_at_last_old_space_gc_;
@@ -2018,9 +2037,11 @@ class Heap {
 
   // Indicates that an allocation has failed in the old generation since the
   // last GC.
-  int old_gen_exhausted_;
+  bool old_gen_exhausted_;
 
   Object* native_contexts_list_;
+
+  Object* array_buffers_list_;
 
   StoreBufferRebuilder store_buffer_rebuilder_;
 
@@ -2106,8 +2127,11 @@ class Heap {
   // (since both AllocateRaw and AllocateRawMap are inlined).
   MUST_USE_RESULT inline MaybeObject* AllocateRawMap();
 
-  // Allocate an uninitialized object in the global property cell space.
+  // Allocate an uninitialized object in the simple cell space.
   MUST_USE_RESULT inline MaybeObject* AllocateRawCell();
+
+  // Allocate an uninitialized object in the global property cell space.
+  MUST_USE_RESULT inline MaybeObject* AllocateRawPropertyCell();
 
   // Initializes a JSObject based on its map.
   void InitializeJSObjectFromMap(JSObject* obj,
@@ -2140,6 +2164,10 @@ class Heap {
   // Allocate empty fixed array.
   MUST_USE_RESULT MaybeObject* AllocateEmptyFixedArray();
 
+  // Allocate empty external array of given type.
+  MUST_USE_RESULT MaybeObject* AllocateEmptyExternalArray(
+      ExternalArrayType array_type);
+
   // Allocate empty fixed double array.
   MUST_USE_RESULT MaybeObject* AllocateEmptyFixedDoubleArray();
 
@@ -2160,6 +2188,9 @@ class Heap {
 
   // Code to be run before and after mark-compact.
   void MarkCompactPrologue();
+
+  void ProcessNativeContexts(WeakObjectRetainer* retainer, bool record_slots);
+  void ProcessArrayBuffers(WeakObjectRetainer* retainer, bool record_slots);
 
   // Record statistics before and after garbage collection.
   void ReportStatisticsBeforeGC();
@@ -2262,7 +2293,6 @@ class Heap {
 
   void StartIdleRound() {
     mark_sweeps_since_idle_round_started_ = 0;
-    ms_count_at_last_idle_notification_ = ms_count_;
   }
 
   void FinishIdleRound() {
@@ -2339,7 +2369,6 @@ class Heap {
   bool last_idle_notification_gc_count_init_;
 
   int mark_sweeps_since_idle_round_started_;
-  int ms_count_at_last_idle_notification_;
   unsigned int gc_count_at_last_idle_gc_;
   int scavenges_since_last_idle_round_;
 
@@ -2422,6 +2451,8 @@ class HeapStats {
   int* size_per_type;                   // 22
   int* os_error;                        // 23
   int* end_marker;                      // 24
+  intptr_t* property_cell_space_size;   // 25
+  intptr_t* property_cell_space_capacity;    // 26
 };
 
 
@@ -2695,43 +2726,6 @@ class DescriptorLookupCache {
 };
 
 
-// A helper class to document/test C++ scopes where we do not
-// expect a GC. Usage:
-//
-// /* Allocation not allowed: we cannot handle a GC in this scope. */
-// { AssertNoAllocation nogc;
-//   ...
-// }
-
-#ifdef DEBUG
-inline bool EnterAllocationScope(Isolate* isolate, bool allow_allocation);
-inline void ExitAllocationScope(Isolate* isolate, bool last_state);
-#endif
-
-
-class AssertNoAllocation {
- public:
-  inline AssertNoAllocation();
-  inline ~AssertNoAllocation();
-
-#ifdef DEBUG
- private:
-  bool last_state_;
-#endif
-};
-
-
-class DisableAssertNoAllocation {
- public:
-  inline DisableAssertNoAllocation();
-  inline ~DisableAssertNoAllocation();
-
-#ifdef DEBUG
- private:
-  bool last_state_;
-#endif
-};
-
 // GCTracer collects and prints ONE line after each garbage collector
 // invocation IFF --trace_gc is used.
 
@@ -2751,6 +2745,8 @@ class GCTracer BASE_EMBEDDED {
       MC_UPDATE_POINTERS_TO_EVACUATED,
       MC_UPDATE_POINTERS_BETWEEN_EVACUATED,
       MC_UPDATE_MISC_POINTERS,
+      MC_WEAKMAP_PROCESS,
+      MC_WEAKMAP_CLEAR,
       MC_FLUSH_CODE,
       kNumberOfScopes
     };
@@ -3046,7 +3042,7 @@ class PathTracer : public ObjectVisitor {
         what_to_find_(what_to_find),
         visit_mode_(visit_mode),
         object_stack_(20),
-        no_alloc() {}
+        no_allocation() {}
 
   virtual void VisitPointers(Object** start, Object** end);
 
@@ -3075,7 +3071,7 @@ class PathTracer : public ObjectVisitor {
   VisitMode visit_mode_;
   List<Object*> object_stack_;
 
-  AssertNoAllocation no_alloc;  // i.e. no gc allowed.
+  DisallowHeapAllocation no_allocation;  // i.e. no gc allowed.
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PathTracer);

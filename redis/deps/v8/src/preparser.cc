@@ -659,6 +659,17 @@ PreParser::Statement PreParser::ParseWhileStatement(bool* ok) {
 }
 
 
+bool PreParser::CheckInOrOf(bool accept_OF) {
+  if (peek() == i::Token::IN ||
+      (allow_for_of() && accept_OF && peek() == i::Token::IDENTIFIER &&
+       scanner_->is_next_contextual_keyword(v8::internal::CStrVector("of")))) {
+    Next();
+    return true;
+  }
+  return false;
+}
+
+
 PreParser::Statement PreParser::ParseForStatement(bool* ok) {
   // ForStatement ::
   //   'for' '(' Expression? ';' Expression? ';' Expression? ')' Statement
@@ -673,10 +684,10 @@ PreParser::Statement PreParser::ParseForStatement(bool* ok) {
       VariableDeclarationProperties decl_props = kHasNoInitializers;
       ParseVariableDeclarations(
           kForStatement, &decl_props, &decl_count, CHECK_OK);
-      bool accept_IN = decl_count == 1 &&
-          !(is_let && decl_props == kHasInitializers);
-      if (peek() == i::Token::IN && accept_IN) {
-        Expect(i::Token::IN, CHECK_OK);
+      bool has_initializers = decl_props == kHasInitializers;
+      bool accept_IN = decl_count == 1 && !(is_let && has_initializers);
+      bool accept_OF = !has_initializers;
+      if (accept_IN && CheckInOrOf(accept_OF)) {
         ParseExpression(true, CHECK_OK);
         Expect(i::Token::RPAREN, CHECK_OK);
 
@@ -684,9 +695,8 @@ PreParser::Statement PreParser::ParseForStatement(bool* ok) {
         return Statement::Default();
       }
     } else {
-      ParseExpression(false, CHECK_OK);
-      if (peek() == i::Token::IN) {
-        Expect(i::Token::IN, CHECK_OK);
+      Expression lhs = ParseExpression(false, CHECK_OK);
+      if (CheckInOrOf(lhs.IsIdentifier())) {
         ParseExpression(true, CHECK_OK);
         Expect(i::Token::RPAREN, CHECK_OK);
 

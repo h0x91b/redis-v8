@@ -261,3 +261,147 @@ assertEquals(some_object20, obj20);
 assertEquals(100, o20.smi);
 assertEquals(100, o20.dbl);
 assertEquals(100, o20.dbl);
+
+function attr_mismatch_obj(v, writable) {
+  var o = {};
+  o.some_value = v;
+  Object.defineProperty(o, "second_value", {value:10, writable:writable});
+  return o;
+}
+
+function is_writable(o, p) {
+  return Object.getOwnPropertyDescriptor(o,p).writable;
+}
+
+var writable = attr_mismatch_obj(10, true);
+var non_writable1 = attr_mismatch_obj(10.5, false);
+assertTrue(is_writable(writable,"second_value"));
+assertFalse(is_writable(non_writable1,"second_value"));
+writable.some_value = 20.5;
+assertTrue(is_writable(writable,"second_value"));
+var non_writable2 = attr_mismatch_obj(10.5, false);
+assertTrue(%HaveSameMap(non_writable1, non_writable2));
+
+function test_f(v) {
+  var o = {};
+  o.vbf = v;
+  o.func = test_f;
+  return o;
+}
+
+function test_fic(o) {
+  return o.vbf;
+}
+
+var ftest1 = test_f(10);
+var ftest2 = test_f(10);
+var ftest3 = test_f(10.5);
+var ftest4 = test_f(10);
+assertFalse(%HaveSameMap(ftest1, ftest3));
+assertTrue(%HaveSameMap(ftest3, ftest4));
+ftest2.func = is_writable;
+test_fic(ftest1);
+test_fic(ftest2);
+test_fic(ftest3);
+test_fic(ftest4);
+assertTrue(%HaveSameMap(ftest1, ftest3));
+assertTrue(%HaveSameMap(ftest3, ftest4));
+
+// Test representations and transition conversions.
+function read_first_double(o) {
+  return o.first_double;
+}
+var df1 = {};
+df1.first_double=1.6;
+read_first_double(df1);
+read_first_double(df1);
+function some_function1() { return 10; }
+var df2 = {};
+df2.first_double = 1.7;
+df2.second_function = some_function1;
+function some_function2() { return 20; }
+var df3 = {};
+df3.first_double = 1.7;
+df3.second_function = some_function2;
+df1.first_double = 10;
+read_first_double(df1);
+
+// Test boilerplates with computed values.
+function none_boilerplate(a) {
+  return {"a_none":a};
+}
+%OptimizeFunctionOnNextCall(none_boilerplate);
+var none_double1 = none_boilerplate(1.7);
+var none_double2 = none_boilerplate(1.9);
+assertTrue(%HaveSameMap(none_double1, none_double2));
+assertEquals(1.7, none_double1.a_none);
+assertEquals(1.9, none_double2.a_none);
+none_double2.a_none = 3.5;
+var none_double1 = none_boilerplate(1.7);
+var none_double2 = none_boilerplate(3.5);
+
+function none_to_smi(a) {
+  return {"a_smi":a};
+}
+
+var none_smi1 = none_to_smi(1);
+var none_smi2 = none_to_smi(2);
+%OptimizeFunctionOnNextCall(none_to_smi);
+var none_smi3 = none_to_smi(3);
+assertTrue(%HaveSameMap(none_smi1, none_smi2));
+assertTrue(%HaveSameMap(none_smi1, none_smi3));
+assertEquals(1, none_smi1.a_smi);
+assertEquals(2, none_smi2.a_smi);
+assertEquals(3, none_smi3.a_smi);
+
+function none_to_double(a) {
+  return {"a_double":a};
+}
+
+var none_to_double1 = none_to_double(1.5);
+var none_to_double2 = none_to_double(2.8);
+%OptimizeFunctionOnNextCall(none_to_double);
+var none_to_double3 = none_to_double(3.7);
+assertTrue(%HaveSameMap(none_to_double1, none_to_double2));
+assertTrue(%HaveSameMap(none_to_double1, none_to_double3));
+assertEquals(1.5, none_to_double1.a_double);
+assertEquals(2.8, none_to_double2.a_double);
+assertEquals(3.7, none_to_double3.a_double);
+
+function none_to_object(a) {
+  return {"an_object":a};
+}
+
+var none_to_object1 = none_to_object(true);
+var none_to_object2 = none_to_object(false);
+%OptimizeFunctionOnNextCall(none_to_object);
+var none_to_object3 = none_to_object(3.7);
+assertTrue(%HaveSameMap(none_to_object1, none_to_object2));
+assertTrue(%HaveSameMap(none_to_object1, none_to_object3));
+assertEquals(true, none_to_object1.an_object);
+assertEquals(false, none_to_object2.an_object);
+assertEquals(3.7, none_to_object3.an_object);
+
+function double_to_object(a) {
+  var o = {"d_to_h":1.8};
+  o.d_to_h = a;
+  return o;
+}
+
+var dh1 = double_to_object(true);
+var dh2 = double_to_object(false);
+assertTrue(%HaveSameMap(dh1, dh2));
+assertEquals(true, dh1.d_to_h);
+assertEquals(false, dh2.d_to_h);
+
+function smi_to_object(a) {
+  var o = {"s_to_t":18};
+  o.s_to_t = a;
+  return o;
+}
+
+var st1 = smi_to_object(true);
+var st2 = smi_to_object(false);
+assertTrue(%HaveSameMap(st1, st2));
+assertEquals(true, st1.s_to_t);
+assertEquals(false, st2.s_to_t);

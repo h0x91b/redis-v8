@@ -170,6 +170,7 @@ DEFINE_bool(harmony_array_buffer, false,
             "enable harmony array buffer")
 DEFINE_implication(harmony_typed_arrays, harmony_array_buffer)
 DEFINE_bool(harmony_generators, false, "enable harmony generators")
+DEFINE_bool(harmony_iteration, false, "enable harmony iteration (for-of)")
 DEFINE_bool(harmony, false, "enable all harmony features (except typeof)")
 DEFINE_implication(harmony, harmony_scoping)
 DEFINE_implication(harmony, harmony_modules)
@@ -178,6 +179,7 @@ DEFINE_implication(harmony, harmony_proxies)
 DEFINE_implication(harmony, harmony_collections)
 DEFINE_implication(harmony, harmony_observation)
 DEFINE_implication(harmony, harmony_generators)
+DEFINE_implication(harmony, harmony_iteration)
 DEFINE_implication(harmony_modules, harmony_scoping)
 DEFINE_implication(harmony_observation, harmony_collections)
 // TODO[dslomov] add harmony => harmony_typed_arrays
@@ -192,12 +194,17 @@ DEFINE_bool(compiled_keyed_stores, true, "use optimizing compiler to "
 DEFINE_bool(clever_optimizations,
             true,
             "Optimize object size, Array shift, DOM strings and string +")
-DEFINE_bool(pretenure_literals, true, "allocate literals in old space")
+DEFINE_bool(pretenuring, true, "allocate objects in old space")
+// TODO(hpayer): We will remove this flag as soon as we have pretenuring
+// support for specific allocation sites.
+DEFINE_bool(pretenuring_call_new, false, "pretenure call new")
 DEFINE_bool(track_fields, true, "track fields with only smi values")
 DEFINE_bool(track_double_fields, true, "track fields with double values")
 DEFINE_bool(track_heap_object_fields, true, "track fields with heap values")
+DEFINE_bool(track_computed_fields, true, "track computed boilerplate fields")
 DEFINE_implication(track_double_fields, track_fields)
 DEFINE_implication(track_heap_object_fields, track_fields)
+DEFINE_implication(track_computed_fields, track_fields)
 
 // Flags for data representation optimizations
 DEFINE_bool(unbox_double_arrays, true, "automatically unbox arrays of doubles")
@@ -207,7 +214,6 @@ DEFINE_bool(string_slices, true, "use string slices")
 DEFINE_bool(crankshaft, true, "use crankshaft")
 DEFINE_string(hydrogen_filter, "", "optimization filter")
 DEFINE_bool(use_range, true, "use hydrogen range analysis")
-DEFINE_bool(eliminate_dead_phis, true, "eliminate dead phis")
 DEFINE_bool(use_gvn, true, "use hydrogen global value numbering")
 DEFINE_bool(use_canonicalizing, true, "use hydrogen instruction canonicalizing")
 DEFINE_bool(use_inlining, true, "use function inlining")
@@ -252,6 +258,8 @@ DEFINE_bool(array_bounds_checks_elimination, true,
             "perform array bounds checks elimination")
 DEFINE_bool(array_index_dehoisting, true,
             "perform array index dehoisting")
+DEFINE_bool(analyze_environment_liveness, true,
+            "analyze liveness of environment slots and zap dead values")
 DEFINE_bool(dead_code_elimination, true, "use dead code elimination")
 DEFINE_bool(fold_constants, true, "use constant folding")
 DEFINE_bool(trace_dead_code_elimination, false, "trace dead code elimination")
@@ -259,7 +267,7 @@ DEFINE_bool(unreachable_code_elimination, false,
             "eliminate unreachable code (hidden behind soft deopts)")
 DEFINE_bool(track_allocation_sites, true,
             "Use allocation site info to reduce transitions")
-DEFINE_bool(optimize_constructed_arrays, false,
+DEFINE_bool(optimize_constructed_arrays, true,
             "Use allocation site info on constructed arrays")
 DEFINE_bool(trace_osr, false, "trace on-stack replacement")
 DEFINE_int(stress_runs, 0, "number of stress runs")
@@ -269,6 +277,8 @@ DEFINE_bool(lookup_sample_by_shared, true,
             "info, not JSFunction itself")
 DEFINE_bool(cache_optimized_code, true,
             "cache optimized code for closures")
+DEFINE_bool(flush_optimized_code_cache, true,
+            "flushes the cache of optimized code for closures on every GC")
 DEFINE_bool(inline_construct, true, "inline constructor calls")
 DEFINE_bool(inline_arguments, true, "inline functions with arguments object")
 DEFINE_bool(inline_accessors, true, "inline JavaScript accessors")
@@ -307,7 +317,7 @@ DEFINE_bool(weighted_back_edges, false,
            // 0x1700 fits in the immediate field of an ARM instruction.
 DEFINE_int(interrupt_budget, 0x1700,
            "execution budget before interrupt is triggered")
-DEFINE_int(type_info_threshold, 15,
+DEFINE_int(type_info_threshold, 30,
            "percentage of ICs that must have type info to allow optimization")
 DEFINE_int(self_opt_count, 130, "call count before self-optimization")
 
@@ -376,6 +386,8 @@ DEFINE_bool(stack_trace_on_abort, true,
             "print a stack trace if an assertion failure occurs")
 
 // codegen-ia32.cc / codegen-arm.cc
+DEFINE_bool(trace_codegen, false,
+            "print name of functions for which code is generated")
 DEFINE_bool(trace, false, "trace function calls")
 DEFINE_bool(mask_constants_with_cookie,
             true,
@@ -465,6 +477,7 @@ DEFINE_bool(flush_code, true,
             "flush code that we expect not to use again (during full gc)")
 DEFINE_bool(flush_code_incrementally, true,
             "flush code that we expect not to use again (incrementally)")
+DEFINE_bool(trace_code_flushing, false, "trace code flushing progress")
 DEFINE_bool(age_code, true,
             "track un-executed functions to age code and flush only "
             "old code")
@@ -634,8 +647,6 @@ DEFINE_bool(enable_slow_asserts, false,
             "enable asserts that are slow to execute")
 
 // codegen-ia32.cc / codegen-arm.cc
-DEFINE_bool(trace_codegen, false,
-            "print name of functions for which code is generated")
 DEFINE_bool(print_source, false, "pretty print source code")
 DEFINE_bool(print_builtin_source, false,
             "pretty print source code for builtins")

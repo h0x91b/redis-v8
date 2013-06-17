@@ -36,6 +36,8 @@ static int fatal_error_handler_nesting_depth = 0;
 
 // Contains protection against recursive calls (faults while handling faults).
 extern "C" void V8_Fatal(const char* file, int line, const char* format, ...) {
+  i::AllowHandleDereference allow_deref;
+  i::AllowDeferredHandleDereference allow_deferred_deref;
   fflush(stdout);
   fflush(stderr);
   fatal_error_handler_nesting_depth++;
@@ -53,7 +55,7 @@ extern "C" void V8_Fatal(const char* file, int line, const char* format, ...) {
   if (fatal_error_handler_nesting_depth < 3) {
     if (i::FLAG_stack_trace_on_abort) {
       // Call this one twice on double fault
-      i::Isolate::Current()->PrintStack();
+      i::Isolate::Current()->PrintStack(stderr);
     }
   }
   i::OS::Abort();

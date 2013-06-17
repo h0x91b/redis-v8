@@ -148,6 +148,7 @@ static void VerifyMarking(Heap* heap) {
   VerifyMarking(heap->old_data_space());
   VerifyMarking(heap->code_space());
   VerifyMarking(heap->cell_space());
+  VerifyMarking(heap->property_cell_space());
   VerifyMarking(heap->map_space());
   VerifyMarking(heap->new_space());
 
@@ -229,6 +230,7 @@ static void VerifyEvacuation(Heap* heap) {
   VerifyEvacuation(heap->old_data_space());
   VerifyEvacuation(heap->code_space());
   VerifyEvacuation(heap->cell_space());
+  VerifyEvacuation(heap->property_cell_space());
   VerifyEvacuation(heap->map_space());
   VerifyEvacuation(heap->new_space());
 
@@ -283,7 +285,7 @@ class VerifyNativeContextSeparationVisitor: public ObjectVisitor {
               array->set_length(length);
             }
             break;
-          case JS_GLOBAL_PROPERTY_CELL_TYPE:
+          case CELL_TYPE:
           case JS_PROXY_TYPE:
           case JS_VALUE_TYPE:
           case TYPE_FEEDBACK_INFO_TYPE:
@@ -375,6 +377,7 @@ bool MarkCompactCollector::StartCompaction(CompactionMode mode) {
     if (FLAG_trace_fragmentation) {
       TraceFragmentation(heap()->map_space());
       TraceFragmentation(heap()->cell_space());
+      TraceFragmentation(heap()->property_cell_space());
     }
 
     heap()->old_pointer_space()->EvictEvacuationCandidatesFromFreeLists();
@@ -468,6 +471,7 @@ void MarkCompactCollector::VerifyMarkbitsAreClean() {
   VerifyMarkbitsAreClean(heap_->old_data_space());
   VerifyMarkbitsAreClean(heap_->code_space());
   VerifyMarkbitsAreClean(heap_->cell_space());
+  VerifyMarkbitsAreClean(heap_->property_cell_space());
   VerifyMarkbitsAreClean(heap_->map_space());
   VerifyMarkbitsAreClean(heap_->new_space());
 
@@ -529,6 +533,7 @@ void MarkCompactCollector::ClearMarkbits() {
   ClearMarkbitsInPagedSpace(heap_->old_pointer_space());
   ClearMarkbitsInPagedSpace(heap_->old_data_space());
   ClearMarkbitsInPagedSpace(heap_->cell_space());
+  ClearMarkbitsInPagedSpace(heap_->property_cell_space());
   ClearMarkbitsInNewSpace(heap_->new_space());
 
   LargeObjectIterator it(heap_->lo_space());
@@ -648,6 +653,8 @@ const char* AllocationSpaceName(AllocationSpace space) {
     case CODE_SPACE: return "CODE_SPACE";
     case MAP_SPACE: return "MAP_SPACE";
     case CELL_SPACE: return "CELL_SPACE";
+    case PROPERTY_CELL_SPACE:
+      return "PROPERTY_CELL_SPACE";
     case LO_SPACE: return "LO_SPACE";
     default:
       UNREACHABLE();
@@ -1002,6 +1009,11 @@ void CodeFlusher::ProcessJSFunctionCandidates() {
     Code* code = shared->code();
     MarkBit code_mark = Marking::MarkBitFrom(code);
     if (!code_mark.Get()) {
+      if (FLAG_trace_code_flushing && shared->is_compiled()) {
+        PrintF("[code-flushing clears: ");
+        shared->ShortPrint();
+        PrintF(" - age: %d]\n", code->GetAge());
+      }
       shared->set_code(lazy_compile);
       candidate->set_code(lazy_compile);
     } else {
@@ -1039,6 +1051,11 @@ void CodeFlusher::ProcessSharedFunctionInfoCandidates() {
     Code* code = candidate->code();
     MarkBit code_mark = Marking::MarkBitFrom(code);
     if (!code_mark.Get()) {
+      if (FLAG_trace_code_flushing && candidate->is_compiled()) {
+        PrintF("[code-flushing clears: ");
+        candidate->ShortPrint();
+        PrintF(" - age: %d]\n", code->GetAge());
+      }
       candidate->set_code(lazy_compile);
     }
 
@@ -1054,9 +1071,79 @@ void CodeFlusher::ProcessSharedFunctionInfoCandidates() {
 }
 
 
+void CodeFlusher::ProcessOptimizedCodeMaps() {
+  static const int kEntriesStart = SharedFunctionInfo::kEntriesStart;
+  static const int kEntryLength = SharedFunctionInfo::kEntryLength;
+  static const int kContextOffset = 0;
+  static const int kCodeOffset = 1;
+  static const int kLiteralsOffset = 2;
+  STATIC_ASSERT(kEntryLength == 3);
+
+  SharedFunctionInfo* holder = optimized_code_map_holder_head_;
+  SharedFunctionInfo* next_holder;
+  while (holder != NULL) {
+    next_holder = GetNextCodeMap(holder);
+    ClearNextCodeMap(holder);
+
+    FixedArray* code_map = FixedArray::cast(holder->optimized_code_map());
+    int new_length = kEntriesStart;
+    int old_length = code_map->length();
+    for (int i = kEntriesStart; i < old_length; i += kEntryLength) {
+      Code* code = Code::cast(code_map->get(i + kCodeOffset));
+      MarkBit code_mark = Marking::MarkBitFrom(code);
+      if (!code_mark.Get()) {
+        continue;
+      }
+
+      // Update and record the context slot in the optimized code map.
+      Object** context_slot = HeapObject::RawField(code_map,
+          FixedArray::OffsetOfElementAt(new_length));
+      code_map->set(new_length++, code_map->get(i + kContextOffset));
+      ASSERT(Marking::IsBlack(
+          Marking::MarkBitFrom(HeapObject::cast(*context_slot))));
+      isolate_->heap()->mark_compact_collector()->
+          RecordSlot(context_slot, context_slot, *context_slot);
+
+      // Update and record the code slot in the optimized code map.
+      Object** code_slot = HeapObject::RawField(code_map,
+          FixedArray::OffsetOfElementAt(new_length));
+      code_map->set(new_length++, code_map->get(i + kCodeOffset));
+      ASSERT(Marking::IsBlack(
+          Marking::MarkBitFrom(HeapObject::cast(*code_slot))));
+      isolate_->heap()->mark_compact_collector()->
+          RecordSlot(code_slot, code_slot, *code_slot);
+
+      // Update and record the literals slot in the optimized code map.
+      Object** literals_slot = HeapObject::RawField(code_map,
+          FixedArray::OffsetOfElementAt(new_length));
+      code_map->set(new_length++, code_map->get(i + kLiteralsOffset));
+      ASSERT(Marking::IsBlack(
+          Marking::MarkBitFrom(HeapObject::cast(*literals_slot))));
+      isolate_->heap()->mark_compact_collector()->
+          RecordSlot(literals_slot, literals_slot, *literals_slot);
+    }
+
+    // Trim the optimized code map if entries have been removed.
+    if (new_length < old_length) {
+      holder->TrimOptimizedCodeMap(old_length - new_length);
+    }
+
+    holder = next_holder;
+  }
+
+  optimized_code_map_holder_head_ = NULL;
+}
+
+
 void CodeFlusher::EvictCandidate(SharedFunctionInfo* shared_info) {
   // Make sure previous flushing decisions are revisited.
   isolate_->heap()->incremental_marking()->RecordWrites(shared_info);
+
+  if (FLAG_trace_code_flushing) {
+    PrintF("[code-flushing abandons function-info: ");
+    shared_info->ShortPrint();
+    PrintF("]\n");
+  }
 
   SharedFunctionInfo* candidate = shared_function_info_candidates_head_;
   SharedFunctionInfo* next_candidate;
@@ -1089,6 +1176,12 @@ void CodeFlusher::EvictCandidate(JSFunction* function) {
   isolate_->heap()->incremental_marking()->RecordWrites(function);
   isolate_->heap()->incremental_marking()->RecordWrites(function->shared());
 
+  if (FLAG_trace_code_flushing) {
+    PrintF("[code-flushing abandons closure: ");
+    function->shared()->ShortPrint();
+    PrintF("]\n");
+  }
+
   JSFunction* candidate = jsfunction_candidates_head_;
   JSFunction* next_candidate;
   if (candidate == function) {
@@ -1107,6 +1200,42 @@ void CodeFlusher::EvictCandidate(JSFunction* function) {
       }
 
       candidate = next_candidate;
+    }
+  }
+}
+
+
+void CodeFlusher::EvictOptimizedCodeMap(SharedFunctionInfo* code_map_holder) {
+  ASSERT(!FixedArray::cast(code_map_holder->optimized_code_map())->
+         get(SharedFunctionInfo::kNextMapIndex)->IsUndefined());
+
+  // Make sure previous flushing decisions are revisited.
+  isolate_->heap()->incremental_marking()->RecordWrites(code_map_holder);
+
+  if (FLAG_trace_code_flushing) {
+    PrintF("[code-flushing abandons code-map: ");
+    code_map_holder->ShortPrint();
+    PrintF("]\n");
+  }
+
+  SharedFunctionInfo* holder = optimized_code_map_holder_head_;
+  SharedFunctionInfo* next_holder;
+  if (holder == code_map_holder) {
+    next_holder = GetNextCodeMap(code_map_holder);
+    optimized_code_map_holder_head_ = next_holder;
+    ClearNextCodeMap(code_map_holder);
+  } else {
+    while (holder != NULL) {
+      next_holder = GetNextCodeMap(holder);
+
+      if (next_holder == code_map_holder) {
+        next_holder = GetNextCodeMap(code_map_holder);
+        SetNextCodeMap(holder, next_holder);
+        ClearNextCodeMap(code_map_holder);
+        break;
+      }
+
+      holder = next_holder;
     }
   }
 }
@@ -1133,6 +1262,18 @@ void CodeFlusher::EvictSharedFunctionInfoCandidates() {
     candidate = next_candidate;
   }
   ASSERT(shared_function_info_candidates_head_ == NULL);
+}
+
+
+void CodeFlusher::EvictOptimizedCodeMaps() {
+  SharedFunctionInfo* holder = optimized_code_map_holder_head_;
+  SharedFunctionInfo* next_holder;
+  while (holder != NULL) {
+    next_holder = GetNextCodeMap(holder);
+    EvictOptimizedCodeMap(holder);
+    holder = next_holder;
+  }
+  ASSERT(optimized_code_map_holder_head_ == NULL);
 }
 
 
@@ -1359,15 +1500,13 @@ class MarkCompactMarkingVisitor
             FIXED_ARRAY_TYPE) return;
 
     // Make sure this is a RegExp that actually contains code.
-    if (re->TypeTagUnchecked() != JSRegExp::IRREGEXP) return;
+    if (re->TypeTag() != JSRegExp::IRREGEXP) return;
 
-    Object* code = re->DataAtUnchecked(JSRegExp::code_index(is_ascii));
+    Object* code = re->DataAt(JSRegExp::code_index(is_ascii));
     if (!code->IsSmi() &&
         HeapObject::cast(code)->map()->instance_type() == CODE_TYPE) {
       // Save a copy that can be reinstated if we need the code again.
-      re->SetDataAtUnchecked(JSRegExp::saved_code_index(is_ascii),
-                             code,
-                             heap);
+      re->SetDataAt(JSRegExp::saved_code_index(is_ascii), code);
 
       // Saving a copy might create a pointer into compaction candidate
       // that was not observed by marker.  This might happen if JSRegExp data
@@ -1379,9 +1518,8 @@ class MarkCompactMarkingVisitor
           RecordSlot(slot, slot, code);
 
       // Set a number in the 0-255 range to guarantee no smi overflow.
-      re->SetDataAtUnchecked(JSRegExp::code_index(is_ascii),
-                             Smi::FromInt(heap->sweep_generation() & 0xff),
-                             heap);
+      re->SetDataAt(JSRegExp::code_index(is_ascii),
+                    Smi::FromInt(heap->sweep_generation() & 0xff));
     } else if (code->IsSmi()) {
       int value = Smi::cast(code)->value();
       // The regexp has not been compiled yet or there was a compilation error.
@@ -1392,12 +1530,10 @@ class MarkCompactMarkingVisitor
 
       // Check if we should flush now.
       if (value == ((heap->sweep_generation() - kRegExpCodeThreshold) & 0xff)) {
-        re->SetDataAtUnchecked(JSRegExp::code_index(is_ascii),
-                               Smi::FromInt(JSRegExp::kUninitializedValue),
-                               heap);
-        re->SetDataAtUnchecked(JSRegExp::saved_code_index(is_ascii),
-                               Smi::FromInt(JSRegExp::kUninitializedValue),
-                               heap);
+        re->SetDataAt(JSRegExp::code_index(is_ascii),
+                      Smi::FromInt(JSRegExp::kUninitializedValue));
+        re->SetDataAt(JSRegExp::saved_code_index(is_ascii),
+                      Smi::FromInt(JSRegExp::kUninitializedValue));
       }
     }
   }
@@ -1968,22 +2104,16 @@ void MarkCompactCollector::MarkImplicitRefGroups() {
 // marking stack have been marked, or are overflowed in the heap.
 void MarkCompactCollector::EmptyMarkingDeque() {
   while (!marking_deque_.IsEmpty()) {
-    while (!marking_deque_.IsEmpty()) {
-      HeapObject* object = marking_deque_.Pop();
-      ASSERT(object->IsHeapObject());
-      ASSERT(heap()->Contains(object));
-      ASSERT(Marking::IsBlack(Marking::MarkBitFrom(object)));
+    HeapObject* object = marking_deque_.Pop();
+    ASSERT(object->IsHeapObject());
+    ASSERT(heap()->Contains(object));
+    ASSERT(Marking::IsBlack(Marking::MarkBitFrom(object)));
 
-      Map* map = object->map();
-      MarkBit map_mark = Marking::MarkBitFrom(map);
-      MarkObject(map, map_mark);
+    Map* map = object->map();
+    MarkBit map_mark = Marking::MarkBitFrom(map);
+    MarkObject(map, map_mark);
 
-      MarkCompactMarkingVisitor::IterateBody(map, object);
-    }
-
-    // Process encountered weak maps, mark objects only reachable by those
-    // weak maps and repeat until fix-point is reached.
-    ProcessWeakMaps();
+    MarkCompactMarkingVisitor::IterateBody(map, object);
   }
 }
 
@@ -2025,6 +2155,11 @@ void MarkCompactCollector::RefillMarkingDeque() {
                              heap()->cell_space());
   if (marking_deque_.IsFull()) return;
 
+  DiscoverGreyObjectsInSpace(heap(),
+                             &marking_deque_,
+                             heap()->property_cell_space());
+  if (marking_deque_.IsFull()) return;
+
   LargeObjectIterator lo_it(heap()->lo_space());
   DiscoverGreyObjectsWithIterator(heap(),
                                   &marking_deque_,
@@ -2048,13 +2183,16 @@ void MarkCompactCollector::ProcessMarkingDeque() {
 }
 
 
-void MarkCompactCollector::ProcessExternalMarking(RootMarkingVisitor* visitor) {
+// Mark all objects reachable (transitively) from objects on the marking
+// stack including references only considered in the atomic marking pause.
+void MarkCompactCollector::ProcessEphemeralMarking(ObjectVisitor* visitor) {
   bool work_to_do = true;
   ASSERT(marking_deque_.IsEmpty());
   while (work_to_do) {
     isolate()->global_handles()->IterateObjectGroups(
         visitor, &IsUnmarkedHeapObjectWithHeap);
     MarkImplicitRefGroups();
+    ProcessWeakMaps();
     work_to_do = !marking_deque_.IsEmpty();
     ProcessMarkingDeque();
   }
@@ -2115,9 +2253,27 @@ void MarkCompactCollector::MarkLiveObjects() {
       HeapObjectIterator cell_iterator(heap()->cell_space());
       HeapObject* cell;
       while ((cell = cell_iterator.Next()) != NULL) {
-        ASSERT(cell->IsJSGlobalPropertyCell());
+        ASSERT(cell->IsCell());
         if (IsMarked(cell)) {
-          int offset = JSGlobalPropertyCell::kValueOffset;
+          int offset = Cell::kValueOffset;
+          MarkCompactMarkingVisitor::VisitPointer(
+              heap(),
+              reinterpret_cast<Object**>(cell->address() + offset));
+        }
+      }
+    }
+    {
+      HeapObjectIterator js_global_property_cell_iterator(
+          heap()->property_cell_space());
+      HeapObject* cell;
+      while ((cell = js_global_property_cell_iterator.Next()) != NULL) {
+        ASSERT(cell->IsPropertyCell());
+        if (IsMarked(cell)) {
+          int offset = PropertyCell::kValueOffset;
+          MarkCompactMarkingVisitor::VisitPointer(
+              heap(),
+              reinterpret_cast<Object**>(cell->address() + offset));
+          offset = PropertyCell::kTypeOffset;
           MarkCompactMarkingVisitor::VisitPointer(
               heap(),
               reinterpret_cast<Object**>(cell->address() + offset));
@@ -2131,12 +2287,12 @@ void MarkCompactCollector::MarkLiveObjects() {
 
   // The objects reachable from the roots are marked, yet unreachable
   // objects are unmarked.  Mark objects reachable due to host
-  // application specific logic.
-  ProcessExternalMarking(&root_visitor);
+  // application specific logic or through Harmony weak maps.
+  ProcessEphemeralMarking(&root_visitor);
 
-  // The objects reachable from the roots or object groups are marked,
-  // yet unreachable objects are unmarked.  Mark objects reachable
-  // only from weak global handles.
+  // The objects reachable from the roots, weak maps or object groups
+  // are marked, yet unreachable objects are unmarked.  Mark objects
+  // reachable only from weak global handles.
   //
   // First we identify nonlive weak handles and mark them as pending
   // destruction.
@@ -2149,9 +2305,9 @@ void MarkCompactCollector::MarkLiveObjects() {
     EmptyMarkingDeque();
   }
 
-  // Repeat host application specific marking to mark unmarked objects
-  // reachable from the weak roots.
-  ProcessExternalMarking(&root_visitor);
+  // Repeat host application specific and Harmony weak maps marking to
+  // mark unmarked objects reachable from the weak roots.
+  ProcessEphemeralMarking(&root_visitor);
 
   AfterMarking();
 }
@@ -2292,7 +2448,7 @@ void MarkCompactCollector::ClearNonLiveReferences() {
       // This map is used for inobject slack tracking and has been detached
       // from SharedFunctionInfo during the mark phase.
       // Since it survived the GC, reattach it now.
-      map->unchecked_constructor()->unchecked_shared()->AttachInitialMap(map);
+      JSFunction::cast(map->constructor())->shared()->AttachInitialMap(map);
     }
 
     ClearNonLivePrototypeTransitions(map);
@@ -2323,13 +2479,11 @@ void MarkCompactCollector::ClearNonLivePrototypeTransitions(Map* map) {
       int proto_index = proto_offset + new_number_of_transitions * step;
       int map_index = map_offset + new_number_of_transitions * step;
       if (new_number_of_transitions != i) {
-        prototype_transitions->set_unchecked(
-            heap_,
+        prototype_transitions->set(
             proto_index,
             prototype,
             UPDATE_WRITE_BARRIER);
-        prototype_transitions->set_unchecked(
-            heap_,
+        prototype_transitions->set(
             map_index,
             cached_map,
             SKIP_WRITE_BARRIER);
@@ -2372,24 +2526,27 @@ void MarkCompactCollector::ClearNonLiveMapTransitions(Map* map,
 
 
 void MarkCompactCollector::ClearAndDeoptimizeDependentCode(Map* map) {
-  AssertNoAllocation no_allocation_scope;
+  DisallowHeapAllocation no_allocation;
   DependentCode* entries = map->dependent_code();
   DependentCode::GroupStartIndexes starts(entries);
   int number_of_entries = starts.number_of_entries();
   if (number_of_entries == 0) return;
   for (int i = 0; i < number_of_entries; i++) {
+    // If the entry is compilation info then the map must be alive,
+    // and ClearAndDeoptimizeDependentCode shouldn't be called.
+    ASSERT(entries->is_code_at(i));
     Code* code = entries->code_at(i);
     if (IsMarked(code) && !code->marked_for_deoptimization()) {
       code->set_marked_for_deoptimization(true);
     }
-    entries->clear_code_at(i);
+    entries->clear_at(i);
   }
   map->set_dependent_code(DependentCode::cast(heap()->empty_fixed_array()));
 }
 
 
 void MarkCompactCollector::ClearNonLiveDependentCode(Map* map) {
-  AssertNoAllocation no_allocation_scope;
+  DisallowHeapAllocation no_allocation;
   DependentCode* entries = map->dependent_code();
   DependentCode::GroupStartIndexes starts(entries);
   int number_of_entries = starts.number_of_entries();
@@ -2399,15 +2556,17 @@ void MarkCompactCollector::ClearNonLiveDependentCode(Map* map) {
   for (int g = 0; g < DependentCode::kGroupCount; g++) {
     int group_number_of_entries = 0;
     for (int i = starts.at(g); i < starts.at(g + 1); i++) {
-      Code* code = entries->code_at(i);
-      if (IsMarked(code) && !code->marked_for_deoptimization()) {
+      Object* obj = entries->object_at(i);
+      ASSERT(obj->IsCode() || IsMarked(obj));
+      if (IsMarked(obj) &&
+          (!obj->IsCode() || !Code::cast(obj)->marked_for_deoptimization())) {
         if (new_number_of_entries + group_number_of_entries != i) {
-          entries->set_code_at(new_number_of_entries +
-                               group_number_of_entries, code);
+          entries->set_object_at(
+              new_number_of_entries + group_number_of_entries, obj);
         }
-        Object** slot = entries->code_slot_at(new_number_of_entries +
-                                              group_number_of_entries);
-        RecordSlot(slot, slot, code);
+        Object** slot = entries->slot_at(new_number_of_entries +
+                                         group_number_of_entries);
+        RecordSlot(slot, slot, obj);
         group_number_of_entries++;
       }
     }
@@ -2417,12 +2576,13 @@ void MarkCompactCollector::ClearNonLiveDependentCode(Map* map) {
     new_number_of_entries += group_number_of_entries;
   }
   for (int i = new_number_of_entries; i < number_of_entries; i++) {
-    entries->clear_code_at(i);
+    entries->clear_at(i);
   }
 }
 
 
 void MarkCompactCollector::ProcessWeakMaps() {
+  GCTracer::Scope gc_scope(tracer_, GCTracer::Scope::MC_WEAKMAP_PROCESS);
   Object* weak_map_obj = encountered_weak_maps();
   while (weak_map_obj != Smi::FromInt(0)) {
     ASSERT(MarkCompactCollector::IsMarked(HeapObject::cast(weak_map_obj)));
@@ -2448,6 +2608,7 @@ void MarkCompactCollector::ProcessWeakMaps() {
 
 
 void MarkCompactCollector::ClearWeakMaps() {
+  GCTracer::Scope gc_scope(tracer_, GCTracer::Scope::MC_WEAKMAP_CLEAR);
   Object* weak_map_obj = encountered_weak_maps();
   while (weak_map_obj != Smi::FromInt(0)) {
     ASSERT(MarkCompactCollector::IsMarked(HeapObject::cast(weak_map_obj)));
@@ -3256,11 +3417,27 @@ void MarkCompactCollector::EvacuateNewSpaceAndCandidates() {
   for (HeapObject* cell = cell_iterator.Next();
        cell != NULL;
        cell = cell_iterator.Next()) {
-    if (cell->IsJSGlobalPropertyCell()) {
+    if (cell->IsCell()) {
+      Address value_address = reinterpret_cast<Address>(cell) +
+          (Cell::kValueOffset - kHeapObjectTag);
+      updating_visitor.VisitPointer(reinterpret_cast<Object**>(value_address));
+    }
+  }
+
+  HeapObjectIterator js_global_property_cell_iterator(
+      heap_->property_cell_space());
+  for (HeapObject* cell = js_global_property_cell_iterator.Next();
+       cell != NULL;
+       cell = js_global_property_cell_iterator.Next()) {
+    if (cell->IsPropertyCell()) {
       Address value_address =
           reinterpret_cast<Address>(cell) +
-          (JSGlobalPropertyCell::kValueOffset - kHeapObjectTag);
+          (PropertyCell::kValueOffset - kHeapObjectTag);
       updating_visitor.VisitPointer(reinterpret_cast<Object**>(value_address));
+      Address type_address =
+          reinterpret_cast<Address>(cell) +
+          (PropertyCell::kTypeOffset - kHeapObjectTag);
+      updating_visitor.VisitPointer(reinterpret_cast<Object**>(type_address));
     }
   }
 
@@ -3922,6 +4099,7 @@ void MarkCompactCollector::SweepSpaces() {
   SweepSpace(heap()->code_space(), PRECISE);
 
   SweepSpace(heap()->cell_space(), PRECISE);
+  SweepSpace(heap()->property_cell_space(), PRECISE);
 
   EvacuateNewSpaceAndCandidates();
 
@@ -3954,6 +4132,10 @@ void MarkCompactCollector::EnableCodeFlushing(bool enable) {
     code_flusher_->EvictAllCandidates();
     delete code_flusher_;
     code_flusher_ = NULL;
+  }
+
+  if (FLAG_trace_code_flushing) {
+    PrintF("[code-flushing is now %s]\n", enable ? "on" : "off");
   }
 }
 

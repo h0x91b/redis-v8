@@ -29,10 +29,6 @@
 
 #include <stdlib.h>
 
-// TODO(dcarney): remove
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_ARROW
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_IMPLICIT
-
 #include "v8.h"
 
 #include "api.h"
@@ -147,12 +143,14 @@ class DebugLocalContext {
   inline ~DebugLocalContext() {
     context_->Exit();
   }
+  inline v8::Local<v8::Context> context() { return context_; }
   inline v8::Context* operator->() { return *context_; }
   inline v8::Context* operator*() { return *context_; }
   inline bool IsReady() { return !context_.IsEmpty(); }
   void ExposeDebug() {
     v8::internal::Isolate* isolate =
         reinterpret_cast<v8::internal::Isolate*>(context_->GetIsolate());
+    v8::internal::Factory* factory = isolate->factory();
     v8::internal::Debug* debug = isolate->debug();
     // Expose the debug context global object in the global object for testing.
     debug->Load();
@@ -162,7 +160,7 @@ class DebugLocalContext {
     Handle<JSGlobalProxy> global(Handle<JSGlobalProxy>::cast(
         v8::Utils::OpenHandle(*context_->Global())));
     Handle<v8::internal::String> debug_string =
-        FACTORY->InternalizeOneByteString(STATIC_ASCII_VECTOR("debug"));
+        factory->InternalizeOneByteString(STATIC_ASCII_VECTOR("debug"));
     SetProperty(isolate, global, debug_string,
                 Handle<Object>(debug->debug_context()->global_proxy(), isolate),
                 DONT_ENUM,
@@ -408,7 +406,7 @@ Handle<FixedArray> GetDebuggedFunctions() {
 
   // Allocate array for the debugged functions
   Handle<FixedArray> debugged_functions =
-      FACTORY->NewFixedArray(count);
+      Isolate::Current()->factory()->NewFixedArray(count);
 
   // Run through the debug info objects and collect all functions.
   count = 0;
@@ -791,8 +789,8 @@ static void DebugEventCounter(v8::DebugEvent event,
     // Check whether the exception was uncaught.
     v8::Local<v8::String> fun_name = v8::String::New("uncaught");
     v8::Local<v8::Function> fun =
-        v8::Function::Cast(*event_data->Get(fun_name));
-    v8::Local<v8::Value> result = *fun->Call(event_data, 0, NULL);
+        v8::Local<v8::Function>::Cast(event_data->Get(fun_name));
+    v8::Local<v8::Value> result = fun->Call(event_data, 0, NULL);
     if (result->IsTrue()) {
       uncaught_exception_hit_count++;
     }
@@ -850,8 +848,8 @@ static void DebugEventEvaluate(v8::DebugEvent event,
       v8::Handle<v8::Value> result =
           evaluate_check_function->Call(exec_state, argc, argv);
       if (!result->IsTrue()) {
-        v8::String::AsciiValue ascii(checks[i].expected->ToString());
-        V8_Fatal(__FILE__, __LINE__, "%s != %s", checks[i].expr, *ascii);
+        v8::String::Utf8Value utf8(checks[i].expected->ToString());
+        V8_Fatal(__FILE__, __LINE__, "%s != %s", checks[i].expr, *utf8);
       }
     }
   }
@@ -923,7 +921,7 @@ static void DebugEventStepSequence(v8::DebugEvent event,
     v8::Handle<v8::Value> result = frame_function_name->Call(exec_state,
                                                              argc, argv);
     CHECK(result->IsString());
-    v8::String::AsciiValue function_name(result->ToString());
+    v8::String::Utf8Value function_name(result->ToString());
     CHECK_EQ(1, StrLength(*function_name));
     CHECK_EQ((*function_name)[0],
               expected_step_sequence[break_point_hit_count]);
@@ -4285,7 +4283,7 @@ static v8::Handle<v8::Array> IndexedEnum(const v8::AccessorInfo&) {
 
 static v8::Handle<v8::Value> NamedGetter(v8::Local<v8::String> name,
                                          const v8::AccessorInfo& info) {
-  v8::String::AsciiValue n(name);
+  v8::String::Utf8Value n(name);
   if (strcmp(*n, "a") == 0) {
     return v8::String::New("AA");
   } else if (strcmp(*n, "b") == 0) {
@@ -6460,7 +6458,7 @@ static void ExecuteScriptForContextCheck() {
   // Enter and run function in the context.
   {
     v8::Context::Scope context_scope(context_1);
-    expected_context = v8::Local<v8::Context>(*context_1);
+    expected_context = context_1;
     expected_context_data = data_1;
     v8::Local<v8::Function> f = CompileFunction(source, "f");
     f->Call(context_1->Global(), 0, NULL);
@@ -6626,7 +6624,15 @@ TEST(ScriptCollectedEventContext) {
     v8::HandleScope scope(isolate);
     context.Reset(isolate, v8::Context::New(isolate));
   }
-  context->Enter();
+
+  // Enter context.  We can't have a handle to the context in the outer
+  // scope, so we have to do it the hard way.
+  {
+    v8::HandleScope scope(isolate);
+    v8::Local<v8::Context> local_context =
+        v8::Local<v8::Context>::New(isolate, context);
+    local_context->Enter();
+  }
 
   // Request the loaded scripts to initialize the debugger script cache.
   debug->GetLoadedScripts();
@@ -6639,7 +6645,13 @@ TEST(ScriptCollectedEventContext) {
   v8::Script::Compile(v8::String::New("eval('a=1')"))->Run();
   v8::Script::Compile(v8::String::New("eval('a=2')"))->Run();
 
-  context->Exit();
+  // Leave context
+  {
+    v8::HandleScope scope(isolate);
+    v8::Local<v8::Context> local_context =
+        v8::Local<v8::Context>::New(isolate, context);
+    local_context->Exit();
+  }
   context.Dispose(isolate);
 
   // Do garbage collection to collect the script above which is no longer
@@ -7008,7 +7020,7 @@ v8::Handle<v8::Context> debugger_context;
 static v8::Handle<v8::Value> NamedGetterWithCallingContextCheck(
     v8::Local<v8::String> name,
     const v8::AccessorInfo& info) {
-  CHECK_EQ(0, strcmp(*v8::String::AsciiValue(name), "a"));
+  CHECK_EQ(0, strcmp(*v8::String::Utf8Value(name), "a"));
   v8::Handle<v8::Context> current = v8::Context::GetCurrent();
   CHECK(current == debugee_context);
   CHECK(current != debugger_context);
@@ -7030,11 +7042,11 @@ static void DebugEventGetAtgumentPropertyValue(
   if (event == v8::Break) {
     break_point_hit_count++;
     CHECK(debugger_context == v8::Context::GetCurrent());
-    v8::Handle<v8::Function> func(v8::Function::Cast(*CompileRun(
+    v8::Handle<v8::Function> func = v8::Handle<v8::Function>::Cast(CompileRun(
         "(function(exec_state) {\n"
         "    return (exec_state.frame(0).argumentValue(0).property('a').\n"
         "            value().value() == 1);\n"
-        "})")));
+        "})"));
     const int argc = 1;
     v8::Handle<v8::Value> argv[argc] = { exec_state };
     v8::Handle<v8::Value> result = func->Call(exec_state, argc, argv);
@@ -7052,7 +7064,7 @@ TEST(CallingContextIsNotDebugContext) {
 
   // Save handles to the debugger and debugee contexts to be used in
   // NamedGetterWithCallingContextCheck.
-  debugee_context = v8::Local<v8::Context>(*env);
+  debugee_context = env.context();
   debugger_context = v8::Utils::ToLocal(debug->debug_context());
 
   // Create object with 'a' property accessor.

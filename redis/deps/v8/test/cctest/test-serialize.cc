@@ -29,10 +29,6 @@
 
 #include "sys/stat.h"
 
-// TODO(dcarney): remove
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_IMPLICIT
-#define V8_ALLOW_ACCESS_TO_PERSISTENT_ARROW
-
 #include "v8.h"
 
 #include "debug.h"
@@ -199,7 +195,8 @@ class FileByteSink : public SnapshotByteSink {
       int data_space_used,
       int code_space_used,
       int map_space_used,
-      int cell_space_used);
+      int cell_space_used,
+      int property_cell_space_used);
 
  private:
   FILE* fp_;
@@ -213,7 +210,8 @@ void FileByteSink::WriteSpaceUsed(
       int data_space_used,
       int code_space_used,
       int map_space_used,
-      int cell_space_used) {
+      int cell_space_used,
+      int property_cell_space_used) {
   int file_name_length = StrLength(file_name_) + 10;
   Vector<char> name = Vector<char>::New(file_name_length + 1);
   OS::SNPrintF(name, "%s.size", file_name_);
@@ -225,6 +223,7 @@ void FileByteSink::WriteSpaceUsed(
   fprintf(fp, "code %d\n", code_space_used);
   fprintf(fp, "map %d\n", map_space_used);
   fprintf(fp, "cell %d\n", cell_space_used);
+  fprintf(fp, "property cell %d\n", property_cell_space_used);
   fclose(fp);
 }
 
@@ -240,7 +239,8 @@ static bool WriteToFile(const char* snapshot_file) {
       ser.CurrentAllocationAddress(OLD_DATA_SPACE),
       ser.CurrentAllocationAddress(CODE_SPACE),
       ser.CurrentAllocationAddress(MAP_SPACE),
-      ser.CurrentAllocationAddress(CELL_SPACE));
+      ser.CurrentAllocationAddress(CELL_SPACE),
+      ser.CurrentAllocationAddress(PROPERTY_CELL_SPACE));
 
   return true;
 }
@@ -290,14 +290,15 @@ static void Deserialize() {
 
 
 static void SanityCheck() {
+  Isolate* isolate = Isolate::Current();
   v8::HandleScope scope(v8::Isolate::GetCurrent());
 #ifdef VERIFY_HEAP
   HEAP->Verify();
 #endif
-  CHECK(Isolate::Current()->global_object()->IsJSObject());
-  CHECK(Isolate::Current()->native_context()->IsContext());
+  CHECK(isolate->global_object()->IsJSObject());
+  CHECK(isolate->native_context()->IsContext());
   CHECK(HEAP->string_table()->IsStringTable());
-  CHECK(!FACTORY->InternalizeOneByteString(
+  CHECK(!isolate->factory()->InternalizeOneByteString(
       STATIC_ASCII_VECTOR("Empty"))->IsFailure());
 }
 
@@ -373,16 +374,19 @@ TEST(PartialSerialization) {
     Serializer::Enable();
     v8::V8::Initialize();
     Isolate* isolate = Isolate::Current();
+    v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
     Heap* heap = isolate->heap();
 
     v8::Persistent<v8::Context> env;
     {
       HandleScope scope(isolate);
-      env.Reset(v8::Isolate::GetCurrent(),
-                v8::Context::New(v8::Isolate::GetCurrent()));
+      env.Reset(v8_isolate, v8::Context::New(v8_isolate));
     }
     ASSERT(!env.IsEmpty());
-    env->Enter();
+    {
+      v8::HandleScope handle_scope(v8_isolate);
+      v8::Local<v8::Context>::New(v8_isolate, env)->Enter();
+    }
     // Make sure all builtin scripts are cached.
     { HandleScope scope(isolate);
       for (int i = 0; i < Natives::GetBuiltinsCount(); i++) {
@@ -394,7 +398,7 @@ TEST(PartialSerialization) {
 
     Object* raw_foo;
     {
-      v8::HandleScope handle_scope(env->GetIsolate());
+      v8::HandleScope handle_scope(v8_isolate);
       v8::Local<v8::String> foo = v8::String::New("foo");
       ASSERT(!foo.IsEmpty());
       raw_foo = *(v8::Utils::OpenHandle(*foo));
@@ -404,8 +408,11 @@ TEST(PartialSerialization) {
     Vector<char> startup_name = Vector<char>::New(file_name_length + 1);
     OS::SNPrintF(startup_name, "%s.startup", FLAG_testing_serialization_file);
 
-    env->Exit();
-    env.Dispose(env->GetIsolate());
+    {
+      v8::HandleScope handle_scope(v8_isolate);
+      v8::Local<v8::Context>::New(v8_isolate, env)->Exit();
+    }
+    env.Dispose(v8_isolate);
 
     FileByteSink startup_sink(startup_name.start());
     StartupSerializer startup_serializer(&startup_sink);
@@ -422,7 +429,8 @@ TEST(PartialSerialization) {
         p_ser.CurrentAllocationAddress(OLD_DATA_SPACE),
         p_ser.CurrentAllocationAddress(CODE_SPACE),
         p_ser.CurrentAllocationAddress(MAP_SPACE),
-        p_ser.CurrentAllocationAddress(CELL_SPACE));
+        p_ser.CurrentAllocationAddress(CELL_SPACE),
+        p_ser.CurrentAllocationAddress(PROPERTY_CELL_SPACE));
 
     startup_sink.WriteSpaceUsed(
         startup_serializer.CurrentAllocationAddress(NEW_SPACE),
@@ -430,7 +438,8 @@ TEST(PartialSerialization) {
         startup_serializer.CurrentAllocationAddress(OLD_DATA_SPACE),
         startup_serializer.CurrentAllocationAddress(CODE_SPACE),
         startup_serializer.CurrentAllocationAddress(MAP_SPACE),
-        startup_serializer.CurrentAllocationAddress(CELL_SPACE));
+        startup_serializer.CurrentAllocationAddress(CELL_SPACE),
+        startup_serializer.CurrentAllocationAddress(PROPERTY_CELL_SPACE));
     startup_name.Dispose();
   }
 }
@@ -443,7 +452,8 @@ static void ReserveSpaceForSnapshot(Deserializer* deserializer,
   OS::SNPrintF(name, "%s.size", file_name);
   FILE* fp = OS::FOpen(name.start(), "r");
   name.Dispose();
-  int new_size, pointer_size, data_size, code_size, map_size, cell_size;
+  int new_size, pointer_size, data_size, code_size, map_size, cell_size,
+      property_cell_size;
 #ifdef _MSC_VER
   // Avoid warning about unsafe fscanf from MSVC.
   // Please note that this is only fine if %c and %s are not being used.
@@ -455,6 +465,7 @@ static void ReserveSpaceForSnapshot(Deserializer* deserializer,
   CHECK_EQ(1, fscanf(fp, "code %d\n", &code_size));
   CHECK_EQ(1, fscanf(fp, "map %d\n", &map_size));
   CHECK_EQ(1, fscanf(fp, "cell %d\n", &cell_size));
+  CHECK_EQ(1, fscanf(fp, "property cell %d\n", &property_cell_size));
 #ifdef _MSC_VER
 #undef fscanf
 #endif
@@ -465,6 +476,7 @@ static void ReserveSpaceForSnapshot(Deserializer* deserializer,
   deserializer->set_reservation(CODE_SPACE, code_size);
   deserializer->set_reservation(MAP_SPACE, map_size);
   deserializer->set_reservation(CELL_SPACE, cell_size);
+  deserializer->set_reservation(PROPERTY_CELL_SPACE, property_cell_size);
 }
 
 
@@ -512,16 +524,19 @@ TEST(ContextSerialization) {
     Serializer::Enable();
     v8::V8::Initialize();
     Isolate* isolate = Isolate::Current();
+    v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
     Heap* heap = isolate->heap();
 
     v8::Persistent<v8::Context> env;
     {
       HandleScope scope(isolate);
-      env.Reset(v8::Isolate::GetCurrent(),
-                v8::Context::New(v8::Isolate::GetCurrent()));
+      env.Reset(v8_isolate, v8::Context::New(v8_isolate));
     }
     ASSERT(!env.IsEmpty());
-    env->Enter();
+    {
+      v8::HandleScope handle_scope(v8_isolate);
+      v8::Local<v8::Context>::New(v8_isolate, env)->Enter();
+    }
     // Make sure all builtin scripts are cached.
     { HandleScope scope(isolate);
       for (int i = 0; i < Natives::GetBuiltinsCount(); i++) {
@@ -536,11 +551,14 @@ TEST(ContextSerialization) {
     Vector<char> startup_name = Vector<char>::New(file_name_length + 1);
     OS::SNPrintF(startup_name, "%s.startup", FLAG_testing_serialization_file);
 
-    env->Exit();
+    {
+      v8::HandleScope handle_scope(v8_isolate);
+      v8::Local<v8::Context>::New(v8_isolate, env)->Exit();
+    }
 
-    Object* raw_context = *(v8::Utils::OpenHandle(*env));
+    i::Object* raw_context = *v8::Utils::OpenPersistent(env);
 
-    env.Dispose(env->GetIsolate());
+    env.Dispose(v8_isolate);
 
     FileByteSink startup_sink(startup_name.start());
     StartupSerializer startup_serializer(&startup_sink);
@@ -557,7 +575,8 @@ TEST(ContextSerialization) {
         p_ser.CurrentAllocationAddress(OLD_DATA_SPACE),
         p_ser.CurrentAllocationAddress(CODE_SPACE),
         p_ser.CurrentAllocationAddress(MAP_SPACE),
-        p_ser.CurrentAllocationAddress(CELL_SPACE));
+        p_ser.CurrentAllocationAddress(CELL_SPACE),
+        p_ser.CurrentAllocationAddress(PROPERTY_CELL_SPACE));
 
     startup_sink.WriteSpaceUsed(
         startup_serializer.CurrentAllocationAddress(NEW_SPACE),
@@ -565,7 +584,8 @@ TEST(ContextSerialization) {
         startup_serializer.CurrentAllocationAddress(OLD_DATA_SPACE),
         startup_serializer.CurrentAllocationAddress(CODE_SPACE),
         startup_serializer.CurrentAllocationAddress(MAP_SPACE),
-        startup_serializer.CurrentAllocationAddress(CELL_SPACE));
+        startup_serializer.CurrentAllocationAddress(CELL_SPACE),
+        startup_serializer.CurrentAllocationAddress(PROPERTY_CELL_SPACE));
     startup_name.Dispose();
   }
 }

@@ -873,6 +873,7 @@ function DefineArrayProperty(obj, p, desc, should_throw) {
   // Step 3 - Special handling for length property.
   if (p === "length") {
     var length = obj.length;
+    var old_length = length;
     if (!desc.hasValue()) {
       return DefineObjectProperty(obj, "length", desc, should_throw);
     }
@@ -889,8 +890,24 @@ function DefineArrayProperty(obj, p, desc, should_throw) {
       }
     }
     var threw = false;
+
+    var emit_splice = %IsObserved(obj) && new_length !== old_length;
+    var removed;
+    if (emit_splice) {
+      BeginPerformSplice(obj);
+      removed = [];
+      if (new_length < old_length)
+        removed.length = old_length - new_length;
+    }
+
     while (new_length < length--) {
-      if (!Delete(obj, ToString(length), false)) {
+      var index = ToString(length);
+      if (emit_splice) {
+        var deletedDesc = GetOwnProperty(obj, index);
+        if (deletedDesc && deletedDesc.hasValue())
+          removed[length - new_length] = deletedDesc.getValue();
+      }
+      if (!Delete(obj, index, false)) {
         new_length = length + 1;
         threw = true;
         break;
@@ -902,13 +919,17 @@ function DefineArrayProperty(obj, p, desc, should_throw) {
     // respective TODO in Runtime_DefineOrRedefineDataProperty.
     // For the time being, we need a hack to prevent Object.observe from
     // generating two change records.
-    var isObserved = %IsObserved(obj);
-    if (isObserved) %SetIsObserved(obj, false);
     obj.length = new_length;
     desc.value_ = void 0;
     desc.hasValue_ = false;
     threw = !DefineObjectProperty(obj, "length", desc, should_throw) || threw;
-    if (isObserved) %SetIsObserved(obj, true);
+    if (emit_splice) {
+      EndPerformSplice(obj);
+      EnqueueSpliceRecord(obj,
+          new_length < old_length ? new_length : old_length,
+          removed,
+          new_length > old_length ? new_length - old_length : 0);
+    }
     if (threw) {
       if (should_throw) {
         throw MakeTypeError("redefine_disallowed", [p]);
@@ -916,27 +937,24 @@ function DefineArrayProperty(obj, p, desc, should_throw) {
         return false;
       }
     }
-    if (isObserved) {
-      var new_desc = GetOwnProperty(obj, "length");
-      var updated = length_desc.value_ !== new_desc.value_;
-      var reconfigured = length_desc.writable_ !== new_desc.writable_ ||
-          length_desc.configurable_ !== new_desc.configurable_ ||
-          length_desc.enumerable_ !== new_desc.configurable_;
-      if (updated || reconfigured) {
-        NotifyChange(reconfigured ? "reconfigured" : "updated",
-            obj, "length", length_desc.value_);
-      }
-    }
     return true;
   }
 
   // Step 4 - Special handling for array index.
   var index = ToUint32(p);
+  var emit_splice = false;
   if (ToString(index) == p && index != 4294967295) {
     var length = obj.length;
+    if (index >= length && %IsObserved(obj)) {
+      emit_splice = true;
+      BeginPerformSplice(obj);
+    }
+
     var length_desc = GetOwnProperty(obj, "length");
     if ((index >= length && !length_desc.isWritable()) ||
         !DefineObjectProperty(obj, p, desc, true)) {
+      if (emit_splice)
+        EndPerformSplice(obj);
       if (should_throw) {
         throw MakeTypeError("define_disallowed", [p]);
       } else {
@@ -945,6 +963,10 @@ function DefineArrayProperty(obj, p, desc, should_throw) {
     }
     if (index >= length) {
       obj.length = index + 1;
+    }
+    if (emit_splice) {
+      EndPerformSplice(obj);
+      EnqueueSpliceRecord(obj, length, [], index + 1 - length);
     }
     return true;
   }
@@ -1225,20 +1247,27 @@ function ObjectFreeze(obj) {
   if (!IS_SPEC_OBJECT(obj)) {
     throw MakeTypeError("called_on_non_object", ["Object.freeze"]);
   }
-  if (%IsJSProxy(obj)) {
-    ProxyFix(obj);
-  }
-  var names = ObjectGetOwnPropertyNames(obj);
-  for (var i = 0; i < names.length; i++) {
-    var name = names[i];
-    var desc = GetOwnProperty(obj, name);
-    if (desc.isWritable() || desc.isConfigurable()) {
-      if (IsDataDescriptor(desc)) desc.setWritable(false);
-      desc.setConfigurable(false);
-      DefineOwnProperty(obj, name, desc, true);
+  var isProxy = %IsJSProxy(obj);
+  if (isProxy || %HasNonStrictArgumentsElements(obj)) {
+    if (isProxy) {
+      ProxyFix(obj);
     }
+    var names = ObjectGetOwnPropertyNames(obj);
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      var desc = GetOwnProperty(obj, name);
+      if (desc.isWritable() || desc.isConfigurable()) {
+        if (IsDataDescriptor(desc)) desc.setWritable(false);
+        desc.setConfigurable(false);
+        DefineOwnProperty(obj, name, desc, true);
+      }
+    }
+    %PreventExtensions(obj);
+  } else {
+    // TODO(adamk): Is it worth going to this fast path if the
+    // object's properties are already in dictionary mode?
+    %ObjectFreeze(obj);
   }
-  %PreventExtensions(obj);
   return obj;
 }
 
@@ -1757,28 +1786,36 @@ function FunctionBind(this_arg) { // Length is 1.
 }
 
 
-function NewFunction(arg1) {  // length == 1
-  var n = %_ArgumentsLength();
+function NewFunctionString(arguments, function_token) {
+  var n = arguments.length;
   var p = '';
   if (n > 1) {
-    p = new InternalArray(n - 1);
-    for (var i = 0; i < n - 1; i++) p[i] = %_Arguments(i);
-    p = Join(p, n - 1, ',', NonStringToString);
+    p = ToString(arguments[0]);
+    for (var i = 1; i < n - 1; i++) {
+      p += ',' + ToString(arguments[i]);
+    }
     // If the formal parameters string include ) - an illegal
     // character - it may make the combined function expression
     // compile. We avoid this problem by checking for this early on.
-    if (p.indexOf(')') != -1) throw MakeSyntaxError('paren_in_arg_string',[]);
+    if (%_CallFunction(p, ')', StringIndexOf) != -1) {
+      throw MakeSyntaxError('paren_in_arg_string', []);
+    }
     // If the formal parameters include an unbalanced block comment, the
     // function must be rejected. Since JavaScript does not allow nested
     // comments we can include a trailing block comment to catch this.
     p += '\n/' + '**/';
   }
-  var body = (n > 0) ? ToString(%_Arguments(n - 1)) : '';
-  var source = '(function(' + p + ') {\n' + body + '\n})';
+  var body = (n > 0) ? ToString(arguments[n - 1]) : '';
+  return '(' + function_token + '(' + p + ') {\n' + body + '\n})';
+}
 
+
+function FunctionConstructor(arg1) {  // length == 1
+  var source = NewFunctionString(arguments, 'function');
   var global_receiver = %GlobalReceiver(global);
+  // Compile the string in the constructor and not a helper so that errors
+  // appear to come from here.
   var f = %_CallFunction(global_receiver, %CompileString(source, true));
-
   %FunctionMarkNameShouldPrintAsAnonymous(f);
   return f;
 }
@@ -1789,7 +1826,7 @@ function NewFunction(arg1) {  // length == 1
 function SetUpFunction() {
   %CheckIsBootstrapping();
 
-  %SetCode($Function, NewFunction);
+  %SetCode($Function, FunctionConstructor);
   %SetProperty($Function.prototype, "constructor", $Function, DONT_ENUM);
 
   InstallFunctions($Function.prototype, DONT_ENUM, $Array(

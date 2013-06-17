@@ -53,6 +53,7 @@
         'test-bignum.cc',
         'test-bignum-dtoa.cc',
         'test-circular-queue.cc',
+        'test-compare-nil-ic-stub.cc',
         'test-compiler.cc',
         'test-conversions.cc',
         'test-cpu-profiler.cc',
@@ -98,10 +99,12 @@
         'test-strtod.cc',
         'test-thread-termination.cc',
         'test-threads.cc',
+        'test-types.cc',
         'test-unbound-queue.cc',
         'test-utils.cc',
         'test-version.cc',
-        'test-weakmaps.cc'
+        'test-weakmaps.cc',
+        'test-weaktypedarrays.cc'
       ],
       'conditions': [
         ['v8_target_arch=="ia32"', {

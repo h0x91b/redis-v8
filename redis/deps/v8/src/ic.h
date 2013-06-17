@@ -62,7 +62,7 @@ namespace internal {
   ICU(CompareIC_Miss)                                 \
   ICU(CompareNilIC_Miss)                              \
   ICU(Unreachable)                                    \
-  ICU(ToBoolean_Patch)
+  ICU(ToBooleanIC_Miss)
 //
 // IC is the base class for LoadIC, StoreIC, CallIC, KeyedLoadIC,
 // and KeyedStoreIC.
@@ -369,6 +369,7 @@ class LoadIC: public IC {
   static void GenerateMiss(MacroAssembler* masm);
   static void GenerateMegamorphic(MacroAssembler* masm);
   static void GenerateNormal(MacroAssembler* masm);
+  static void GenerateRuntimeGetProperty(MacroAssembler* masm);
 
   MUST_USE_RESULT MaybeObject* Load(State state,
                                     Handle<Object> object,
@@ -378,8 +379,7 @@ class LoadIC: public IC {
   virtual Code::Kind kind() const { return Code::LOAD_IC; }
 
   virtual Handle<Code> generic_stub() const {
-    UNREACHABLE();
-    return Handle<Code>::null();
+    return isolate()->builtins()->LoadIC_Slow();
   }
 
   virtual Handle<Code> megamorphic_stub() {
@@ -511,8 +511,8 @@ class StoreIC: public IC {
   static void GenerateMegamorphic(MacroAssembler* masm,
                                   StrictModeFlag strict_mode);
   static void GenerateNormal(MacroAssembler* masm);
-  static void GenerateGlobalProxy(MacroAssembler* masm,
-                                  StrictModeFlag strict_mode);
+  static void GenerateRuntimeSetProperty(MacroAssembler* masm,
+                                         StrictModeFlag strict_mode);
 
   MUST_USE_RESULT MaybeObject* Store(
       State state,
@@ -531,6 +531,12 @@ class StoreIC: public IC {
   // Stub accessors.
   virtual Handle<Code> megamorphic_stub_strict() {
     return isolate()->builtins()->StoreIC_Megamorphic_Strict();
+  }
+  virtual Handle<Code> generic_stub() const {
+    return isolate()->builtins()->StoreIC_Generic();
+  }
+  virtual Handle<Code> generic_stub_strict() const {
+    return isolate()->builtins()->StoreIC_Generic_Strict();
   }
   virtual Handle<Code> global_proxy_stub() {
     return isolate()->builtins()->StoreIC_GlobalProxy();
@@ -684,6 +690,8 @@ class UnaryOpIC: public IC {
     GENERIC
   };
 
+  static Handle<Type> TypeInfoToType(TypeInfo info, Isolate* isolate);
+
   explicit UnaryOpIC(Isolate* isolate) : IC(NO_EXTRA_FRAME, isolate) { }
 
   void patch(Code* code);
@@ -711,6 +719,12 @@ class BinaryOpIC: public IC {
     GENERIC
   };
 
+  static void StubInfoToType(int minor_key,
+                             Handle<Type>* left,
+                             Handle<Type>* right,
+                             Handle<Type>* result,
+                             Isolate* isolate);
+
   explicit BinaryOpIC(Isolate* isolate) : IC(NO_EXTRA_FRAME, isolate) { }
 
   void patch(Code* code);
@@ -718,6 +732,9 @@ class BinaryOpIC: public IC {
   static const char* GetName(TypeInfo type_info);
 
   static State ToState(TypeInfo type_info);
+
+ private:
+  static Handle<Type> TypeInfoToType(TypeInfo binary_type, Isolate* isolate);
 };
 
 
@@ -740,6 +757,19 @@ class CompareIC: public IC {
     KNOWN_OBJECT,   // JSObject with specific map (faster check)
     GENERIC
   };
+
+  static State NewInputState(State old_state, Handle<Object> value);
+
+  static Handle<Type> StateToType(Isolate* isolate,
+                                  State state,
+                                  Handle<Map> map = Handle<Map>());
+
+  static void StubInfoToType(int stub_minor_key,
+                             Handle<Type>* left_type,
+                             Handle<Type>* right_type,
+                             Handle<Type>* overall_type,
+                             Handle<Map> map,
+                             Isolate* isolate);
 
   CompareIC(Isolate* isolate, Token::Value op)
       : IC(EXTRA_CALL_FRAME, isolate), op_(op) { }
@@ -787,23 +817,18 @@ class CompareNilIC: public IC {
 
   static Handle<Code> GetUninitialized();
 
-  static Code* GetRawUninitialized(EqualityKind kind, NilValue nil);
-
   static void Clear(Address address, Code* target);
 
-  void patch(Code* code);
-
-  static MUST_USE_RESULT MaybeObject* DoCompareNilSlow(EqualityKind kind,
-                                                       NilValue nil,
+  static MUST_USE_RESULT MaybeObject* DoCompareNilSlow(NilValue nil,
                                                        Handle<Object> object);
 };
 
 
 class ToBooleanIC: public IC {
  public:
-  explicit ToBooleanIC(Isolate* isolate) : IC(NO_EXTRA_FRAME, isolate) { }
+  explicit ToBooleanIC(Isolate* isolate) : IC(EXTRA_CALL_FRAME, isolate) { }
 
-  void patch(Code* code);
+  MaybeObject* ToBoolean(Handle<Object> object, Code::ExtraICState state);
 };
 
 
@@ -814,6 +839,7 @@ void PatchInlinedSmiCode(Address address, InlinedSmiCheck check);
 DECLARE_RUNTIME_FUNCTION(MaybeObject*, KeyedLoadIC_MissFromStubFailure);
 DECLARE_RUNTIME_FUNCTION(MaybeObject*, KeyedStoreIC_MissFromStubFailure);
 DECLARE_RUNTIME_FUNCTION(MaybeObject*, CompareNilIC_Miss);
+DECLARE_RUNTIME_FUNCTION(MaybeObject*, ToBooleanIC_Miss);
 
 
 } }  // namespace v8::internal

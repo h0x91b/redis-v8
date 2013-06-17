@@ -420,7 +420,7 @@ static void CompileCallLoadPropertyWithInterceptor(
 
 
 // Number of pointers to be reserved on stack for fast API call.
-static const int kFastApiCallArguments = 4;
+static const int kFastApiCallArguments = FunctionCallbackArguments::kArgsLength;
 
 
 // Reserves space for the extra arguments to API function in the
@@ -469,10 +469,12 @@ static void GenerateFastApiCall(MacroAssembler* masm,
   //                           (first fast api call extra argument)
   //  -- esp[12]             : api call data
   //  -- esp[16]             : isolate
-  //  -- esp[20]             : last argument
+  //  -- esp[20]             : ReturnValue default value
+  //  -- esp[24]             : ReturnValue
+  //  -- esp[28]             : last argument
   //  -- ...
-  //  -- esp[(argc + 4) * 4] : first argument
-  //  -- esp[(argc + 5) * 4] : receiver
+  //  -- esp[(argc + 6) * 4] : first argument
+  //  -- esp[(argc + 7) * 4] : receiver
   // -----------------------------------
   // Get the function and setup the context.
   Handle<JSFunction> function = optimization.constant_function();
@@ -492,33 +494,57 @@ static void GenerateFastApiCall(MacroAssembler* masm,
   }
   __ mov(Operand(esp, 4 * kPointerSize),
          Immediate(reinterpret_cast<int>(masm->isolate())));
+  __ mov(Operand(esp, 5 * kPointerSize),
+         masm->isolate()->factory()->undefined_value());
+  __ mov(Operand(esp, 6 * kPointerSize),
+         masm->isolate()->factory()->undefined_value());
 
   // Prepare arguments.
-  __ lea(eax, Operand(esp, 4 * kPointerSize));
+  STATIC_ASSERT(kFastApiCallArguments == 6);
+  __ lea(eax, Operand(esp, kFastApiCallArguments * kPointerSize));
 
-  const int kApiArgc = 1;  // API function gets reference to the v8::Arguments.
+
+  // API function gets reference to the v8::Arguments. If CPU profiler
+  // is enabled wrapper function will be called and we need to pass
+  // address of the callback as additional parameter, always allocate
+  // space for it.
+  const int kApiArgc = 1 + 1;
 
   // Allocate the v8::Arguments structure in the arguments' space since
   // it's not controlled by GC.
   const int kApiStackSpace = 4;
 
-  __ PrepareCallApiFunction(kApiArgc + kApiStackSpace);
-
-  __ mov(ApiParameterOperand(1), eax);  // v8::Arguments::implicit_args_.
-  __ add(eax, Immediate(argc * kPointerSize));
-  __ mov(ApiParameterOperand(2), eax);  // v8::Arguments::values_.
-  __ Set(ApiParameterOperand(3), Immediate(argc));  // v8::Arguments::length_.
-  // v8::Arguments::is_construct_call_.
-  __ Set(ApiParameterOperand(4), Immediate(0));
-
-  // v8::InvocationCallback's argument.
-  __ lea(eax, ApiParameterOperand(1));
-  __ mov(ApiParameterOperand(0), eax);
-
   // Function address is a foreign pointer outside V8's heap.
   Address function_address = v8::ToCData<Address>(api_call_info->callback());
+  bool returns_handle =
+    !CallbackTable::ReturnsVoid(masm->isolate(),
+                                reinterpret_cast<void*>(function_address));
+  __ PrepareCallApiFunction(kApiArgc + kApiStackSpace, returns_handle);
+
+  // v8::Arguments::implicit_args_.
+  __ mov(ApiParameterOperand(2, returns_handle), eax);
+  __ add(eax, Immediate(argc * kPointerSize));
+  // v8::Arguments::values_.
+  __ mov(ApiParameterOperand(3, returns_handle), eax);
+  // v8::Arguments::length_.
+  __ Set(ApiParameterOperand(4, returns_handle), Immediate(argc));
+  // v8::Arguments::is_construct_call_.
+  __ Set(ApiParameterOperand(5, returns_handle), Immediate(0));
+
+  // v8::InvocationCallback's argument.
+  __ lea(eax, ApiParameterOperand(2, returns_handle));
+  __ mov(ApiParameterOperand(0, returns_handle), eax);
+
+  Address thunk_address = returns_handle
+      ? FUNCTION_ADDR(&InvokeInvocationCallback)
+      : FUNCTION_ADDR(&InvokeFunctionCallback);
+
   __ CallApiFunctionAndReturn(function_address,
-                              argc + kFastApiCallArguments + 1);
+                              thunk_address,
+                              ApiParameterOperand(1, returns_handle),
+                              argc + kFastApiCallArguments + 1,
+                              returns_handle,
+                              kFastApiCallArguments + 1);
 }
 
 
@@ -738,16 +764,16 @@ static void GenerateCheckPropertyCell(MacroAssembler* masm,
                                       Handle<Name> name,
                                       Register scratch,
                                       Label* miss) {
-  Handle<JSGlobalPropertyCell> cell =
+  Handle<PropertyCell> cell =
       GlobalObject::EnsurePropertyCell(global, name);
   ASSERT(cell->value()->IsTheHole());
   Handle<Oddball> the_hole = masm->isolate()->factory()->the_hole_value();
   if (Serializer::enabled()) {
     __ mov(scratch, Immediate(cell));
-    __ cmp(FieldOperand(scratch, JSGlobalPropertyCell::kValueOffset),
+    __ cmp(FieldOperand(scratch, PropertyCell::kValueOffset),
            Immediate(the_hole));
   } else {
-    __ cmp(Operand::Cell(cell), Immediate(the_hole));
+    __ cmp(Operand::ForCell(cell), Immediate(the_hole));
   }
   __ j(not_equal, miss);
 }
@@ -771,7 +797,7 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
                                            Label* slow) {
   // Check that the map of the object hasn't changed.
   __ CheckMap(receiver_reg, Handle<Map>(object->map()),
-              miss_label, DO_SMI_CHECK, REQUIRE_EXACT_MAP);
+              miss_label, DO_SMI_CHECK);
 
   // Perform global security token check if needed.
   if (object->IsJSGlobalProxy()) {
@@ -824,8 +850,14 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
 
   Register storage_reg = name_reg;
 
-  if (FLAG_track_fields && representation.IsSmi()) {
-    __ JumpIfNotSmi(value_reg, miss_restore_name);
+  if (details.type() == CONSTANT_FUNCTION) {
+    Handle<HeapObject> constant(
+        HeapObject::cast(descriptors->GetValue(descriptor)));
+    __ LoadHeapObject(scratch1, constant);
+    __ cmp(value_reg, scratch1);
+    __ j(not_equal, miss_restore_name);
+  } else if (FLAG_track_fields && representation.IsSmi()) {
+      __ JumpIfNotSmi(value_reg, miss_restore_name);
   } else if (FLAG_track_heap_object_fields && representation.IsHeapObject()) {
     __ JumpIfSmi(value_reg, miss_restore_name);
   } else if (FLAG_track_double_fields && representation.IsDouble()) {
@@ -847,7 +879,7 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
 
     __ bind(&heap_number);
     __ CheckMap(value_reg, masm->isolate()->factory()->heap_number_map(),
-                miss_restore_name, DONT_DO_SMI_CHECK, REQUIRE_EXACT_MAP);
+                miss_restore_name, DONT_DO_SMI_CHECK);
     if (CpuFeatures::IsSupported(SSE2)) {
       CpuFeatureScope use_sse2(masm, SSE2);
       __ movdbl(xmm0, FieldOperand(value_reg, HeapNumber::kValueOffset));
@@ -869,7 +901,8 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
   ASSERT(object->IsJSGlobalProxy() || !object->IsAccessCheckNeeded());
 
   // Perform map transition for the receiver if necessary.
-  if (object->map()->unused_property_fields() == 0) {
+  if (details.type() == FIELD &&
+      object->map()->unused_property_fields() == 0) {
     // The properties must be extended before we can store the value.
     // We jump to a runtime call that extends the properties array.
     __ pop(scratch1);  // Return address.
@@ -898,6 +931,8 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
                       OMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
 
+  if (details.type() == CONSTANT_FUNCTION) return;
+
   int index = transition->instance_descriptors()->GetFieldIndex(
       transition->LastAdded());
 
@@ -906,6 +941,8 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
   // object and the number of in-object properties is not going to change.
   index -= object->map()->inobject_properties();
 
+  SmiCheck smi_check = representation.IsTagged()
+      ? INLINE_SMI_CHECK : OMIT_SMI_CHECK;
   // TODO(verwaest): Share this code as a code stub.
   if (index < 0) {
     // Set the property straight into the object.
@@ -928,7 +965,9 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
                           offset,
                           name_reg,
                           scratch1,
-                          kDontSaveFPRegs);
+                          kDontSaveFPRegs,
+                          EMIT_REMEMBERED_SET,
+                          smi_check);
     }
   } else {
     // Write to the properties array.
@@ -953,7 +992,9 @@ void StubCompiler::GenerateStoreTransition(MacroAssembler* masm,
                           offset,
                           name_reg,
                           receiver_reg,
-                          kDontSaveFPRegs);
+                          kDontSaveFPRegs,
+                          EMIT_REMEMBERED_SET,
+                          smi_check);
     }
   }
 
@@ -976,7 +1017,7 @@ void StubCompiler::GenerateStoreField(MacroAssembler* masm,
                                       Label* miss_label) {
   // Check that the map of the object hasn't changed.
   __ CheckMap(receiver_reg, Handle<Map>(object->map()),
-              miss_label, DO_SMI_CHECK, ALLOW_ELEMENT_TRANSITION_MAPS);
+              miss_label, DO_SMI_CHECK);
 
   // Perform global security token check if needed.
   if (object->IsJSGlobalProxy()) {
@@ -1027,7 +1068,7 @@ void StubCompiler::GenerateStoreField(MacroAssembler* masm,
     __ jmp(&do_store);
     __ bind(&heap_number);
     __ CheckMap(value_reg, masm->isolate()->factory()->heap_number_map(),
-                miss_label, DONT_DO_SMI_CHECK, REQUIRE_EXACT_MAP);
+                miss_label, DONT_DO_SMI_CHECK);
     if (CpuFeatures::IsSupported(SSE2)) {
       CpuFeatureScope use_sse2(masm, SSE2);
       __ movdbl(xmm0, FieldOperand(value_reg, HeapNumber::kValueOffset));
@@ -1049,6 +1090,8 @@ void StubCompiler::GenerateStoreField(MacroAssembler* masm,
 
   ASSERT(!FLAG_track_double_fields || !representation.IsDouble());
   // TODO(verwaest): Share this code as a code stub.
+  SmiCheck smi_check = representation.IsTagged()
+      ? INLINE_SMI_CHECK : OMIT_SMI_CHECK;
   if (index < 0) {
     // Set the property straight into the object.
     int offset = object->map()->instance_size() + (index * kPointerSize);
@@ -1062,7 +1105,9 @@ void StubCompiler::GenerateStoreField(MacroAssembler* masm,
                           offset,
                           name_reg,
                           scratch1,
-                          kDontSaveFPRegs);
+                          kDontSaveFPRegs,
+                          EMIT_REMEMBERED_SET,
+                          smi_check);
     }
   } else {
     // Write to the properties array.
@@ -1079,7 +1124,9 @@ void StubCompiler::GenerateStoreField(MacroAssembler* masm,
                           offset,
                           name_reg,
                           receiver_reg,
-                          kDontSaveFPRegs);
+                          kDontSaveFPRegs,
+                          EMIT_REMEMBERED_SET,
+                          smi_check);
     }
   }
 
@@ -1175,8 +1222,7 @@ Register StubCompiler::CheckPrototypes(Handle<JSObject> object,
       bool in_new_space = heap()->InNewSpace(*prototype);
       Handle<Map> current_map(current->map());
       if (!current.is_identical_to(first) || check == CHECK_ALL_MAPS) {
-        __ CheckMap(reg, current_map, miss, DONT_DO_SMI_CHECK,
-                    ALLOW_ELEMENT_TRANSITION_MAPS);
+        __ CheckMap(reg, current_map, miss, DONT_DO_SMI_CHECK);
       }
 
       // Check access rights to the global object.  This has to happen after
@@ -1217,8 +1263,7 @@ Register StubCompiler::CheckPrototypes(Handle<JSObject> object,
 
   if (!holder.is_identical_to(first) || check == CHECK_ALL_MAPS) {
     // Check the holder map.
-    __ CheckMap(reg, Handle<Map>(holder->map()),
-                miss, DONT_DO_SMI_CHECK, ALLOW_ELEMENT_TRANSITION_MAPS);
+    __ CheckMap(reg, Handle<Map>(holder->map()), miss, DONT_DO_SMI_CHECK);
   }
 
   // Perform security check for access to the global object.
@@ -1364,6 +1409,9 @@ void BaseLoadStubCompiler::GenerateLoadCallback(
   } else {
     __ push(Immediate(Handle<Object>(callback->data(), isolate())));
   }
+  __ push(Immediate(isolate()->factory()->undefined_value()));  // ReturnValue
+  // ReturnValue default value
+  __ push(Immediate(isolate()->factory()->undefined_value()));
   __ push(Immediate(reinterpret_cast<int>(isolate())));
 
   // Save a pointer to where we pushed the arguments pointer.  This will be
@@ -1375,22 +1423,37 @@ void BaseLoadStubCompiler::GenerateLoadCallback(
 
   __ push(scratch3());  // Restore return address.
 
-  // 4 elements array for v8::Arguments::values_, handler for name and pointer
+  // array for v8::Arguments::values_, handler for name and pointer
   // to the values (it considered as smi in GC).
-  const int kStackSpace = 6;
-  const int kApiArgc = 2;
+  const int kStackSpace = PropertyCallbackArguments::kArgsLength + 2;
+  // Allocate space for opional callback address parameter in case
+  // CPU profiler is active.
+  const int kApiArgc = 2 + 1;
 
-  __ PrepareCallApiFunction(kApiArgc);
-  __ mov(ApiParameterOperand(0), ebx);  // name.
+  Address getter_address = v8::ToCData<Address>(callback->getter());
+  bool returns_handle =
+    !CallbackTable::ReturnsVoid(isolate(),
+                                reinterpret_cast<void*>(getter_address));
+  __ PrepareCallApiFunction(kApiArgc, returns_handle);
+  __ mov(ApiParameterOperand(0, returns_handle), ebx);  // name.
   __ add(ebx, Immediate(kPointerSize));
-  __ mov(ApiParameterOperand(1), ebx);  // arguments pointer.
+  __ mov(ApiParameterOperand(1, returns_handle), ebx);  // arguments pointer.
 
   // Emitting a stub call may try to allocate (if the code is not
   // already generated).  Do not allow the assembler to perform a
   // garbage collection but instead return the allocation failure
   // object.
-  Address getter_address = v8::ToCData<Address>(callback->getter());
-  __ CallApiFunctionAndReturn(getter_address, kStackSpace);
+
+  Address thunk_address = returns_handle
+      ? FUNCTION_ADDR(&InvokeAccessorGetter)
+      : FUNCTION_ADDR(&InvokeAccessorGetterCallback);
+
+  __ CallApiFunctionAndReturn(getter_address,
+                              thunk_address,
+                              ApiParameterOperand(2, returns_handle),
+                              kStackSpace,
+                              returns_handle,
+                              6);
 }
 
 
@@ -1530,15 +1593,15 @@ void CallStubCompiler::GenerateGlobalReceiverCheck(Handle<JSObject> object,
 
 
 void CallStubCompiler::GenerateLoadFunctionFromCell(
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Label* miss) {
   // Get the value from the cell.
   if (Serializer::enabled()) {
     __ mov(edi, Immediate(cell));
-    __ mov(edi, FieldOperand(edi, JSGlobalPropertyCell::kValueOffset));
+    __ mov(edi, FieldOperand(edi, Cell::kValueOffset));
   } else {
-    __ mov(edi, Operand::Cell(cell));
+    __ mov(edi, Operand::ForCell(cell));
   }
 
   // Check that the cell contains the same function.
@@ -1632,7 +1695,7 @@ Handle<Code> CallStubCompiler::CompileCallField(Handle<JSObject> object,
 Handle<Code> CallStubCompiler::CompileArrayPushCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -1890,7 +1953,7 @@ Handle<Code> CallStubCompiler::CompileArrayPushCall(
 Handle<Code> CallStubCompiler::CompileArrayPopCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -1972,7 +2035,7 @@ Handle<Code> CallStubCompiler::CompileArrayPopCall(
 Handle<Code> CallStubCompiler::CompileStringCharCodeAtCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -2056,7 +2119,7 @@ Handle<Code> CallStubCompiler::CompileStringCharCodeAtCall(
 Handle<Code> CallStubCompiler::CompileStringCharAtCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -2142,7 +2205,7 @@ Handle<Code> CallStubCompiler::CompileStringCharAtCall(
 Handle<Code> CallStubCompiler::CompileStringFromCharCodeCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -2218,7 +2281,7 @@ Handle<Code> CallStubCompiler::CompileStringFromCharCodeCall(
 Handle<Code> CallStubCompiler::CompileMathFloorCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -2349,7 +2412,7 @@ Handle<Code> CallStubCompiler::CompileMathFloorCall(
 Handle<Code> CallStubCompiler::CompileMathAbsCall(
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   // ----------- S t a t e -------------
@@ -2456,7 +2519,7 @@ Handle<Code> CallStubCompiler::CompileFastApiCall(
     const CallOptimization& optimization,
     Handle<Object> object,
     Handle<JSObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<Cell> cell,
     Handle<JSFunction> function,
     Handle<String> name) {
   ASSERT(optimization.is_simple_api_call());
@@ -2493,7 +2556,7 @@ Handle<Code> CallStubCompiler::CompileFastApiCall(
                   name, depth, &miss);
 
   // Move the return address on top of the stack.
-  __ mov(eax, Operand(esp, 4 * kPointerSize));
+  __ mov(eax, Operand(esp, kFastApiCallArguments * kPointerSize));
   __ mov(Operand(esp, 0 * kPointerSize), eax);
 
   // esp[2 * kPointerSize] is uninitialized, esp[3 * kPointerSize] contains
@@ -2638,7 +2701,7 @@ Handle<Code> CallStubCompiler::CompileCallConstant(
 
   if (HasCustomCallGenerator(function)) {
     Handle<Code> code = CompileCustomCall(object, holder,
-                                          Handle<JSGlobalPropertyCell>::null(),
+                                          Handle<Cell>::null(),
                                           function, Handle<String>::cast(name));
     // A null handle means bail out to the regular compiler code below.
     if (!code.is_null()) return code;
@@ -2717,7 +2780,7 @@ Handle<Code> CallStubCompiler::CompileCallInterceptor(Handle<JSObject> object,
 Handle<Code> CallStubCompiler::CompileCallGlobal(
     Handle<JSObject> object,
     Handle<GlobalObject> holder,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<PropertyCell> cell,
     Handle<JSFunction> function,
     Handle<Name> name) {
   // ----------- S t a t e -------------
@@ -2866,8 +2929,7 @@ Handle<Code> StoreStubCompiler::CompileStoreInterceptor(
   Label miss;
 
   // Check that the map of the object hasn't changed.
-  __ CheckMap(receiver(), Handle<Map>(object->map()),
-              &miss, DO_SMI_CHECK, ALLOW_ELEMENT_TRANSITION_MAPS);
+  __ CheckMap(receiver(), Handle<Map>(object->map()), &miss, DO_SMI_CHECK);
 
   // Perform global security token check if needed.
   if (object->IsJSGlobalProxy()) {
@@ -2901,7 +2963,7 @@ Handle<Code> StoreStubCompiler::CompileStoreInterceptor(
 
 Handle<Code> StoreStubCompiler::CompileStoreGlobal(
     Handle<GlobalObject> object,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<PropertyCell> cell,
     Handle<Name> name) {
   Label miss;
 
@@ -2913,7 +2975,7 @@ Handle<Code> StoreStubCompiler::CompileStoreGlobal(
   // Compute the cell operand to use.
   __ mov(scratch1(), Immediate(cell));
   Operand cell_operand =
-      FieldOperand(scratch1(), JSGlobalPropertyCell::kValueOffset);
+      FieldOperand(scratch1(), PropertyCell::kValueOffset);
 
   // Check that the value in the cell is not the hole. If it is, this
   // cell could have been deleted and reintroducing the global needs
@@ -3074,7 +3136,7 @@ void LoadStubCompiler::GenerateLoadViaGetter(MacroAssembler* masm,
 Handle<Code> LoadStubCompiler::CompileLoadGlobal(
     Handle<JSObject> object,
     Handle<GlobalObject> global,
-    Handle<JSGlobalPropertyCell> cell,
+    Handle<PropertyCell> cell,
     Handle<Name> name,
     bool is_dont_delete) {
   Label success, miss;
@@ -3085,9 +3147,9 @@ Handle<Code> LoadStubCompiler::CompileLoadGlobal(
   // Get the value from the cell.
   if (Serializer::enabled()) {
     __ mov(eax, Immediate(cell));
-    __ mov(eax, FieldOperand(eax, JSGlobalPropertyCell::kValueOffset));
+    __ mov(eax, FieldOperand(eax, PropertyCell::kValueOffset));
   } else {
-    __ mov(eax, Operand::Cell(cell));
+    __ mov(eax, Operand::ForCell(cell));
   }
 
   // Check for deleted property if property can actually be deleted.
@@ -3146,145 +3208,6 @@ Handle<Code> BaseLoadStubCompiler::CompilePolymorphicIC(
   InlineCacheState state =
       number_of_handled_maps > 1 ? POLYMORPHIC : MONOMORPHIC;
   return GetICCode(kind(), type, name, state);
-}
-
-
-// Specialized stub for constructing objects from functions which only have only
-// simple assignments of the form this.x = ...; in their body.
-Handle<Code> ConstructStubCompiler::CompileConstructStub(
-    Handle<JSFunction> function) {
-  // ----------- S t a t e -------------
-  //  -- eax : argc
-  //  -- edi : constructor
-  //  -- esp[0] : return address
-  //  -- esp[4] : last argument
-  // -----------------------------------
-  Label generic_stub_call;
-#ifdef ENABLE_DEBUGGER_SUPPORT
-  // Check to see whether there are any break points in the function code. If
-  // there are jump to the generic constructor stub which calls the actual
-  // code for the function thereby hitting the break points.
-  __ mov(ebx, FieldOperand(edi, JSFunction::kSharedFunctionInfoOffset));
-  __ mov(ebx, FieldOperand(ebx, SharedFunctionInfo::kDebugInfoOffset));
-  __ cmp(ebx, factory()->undefined_value());
-  __ j(not_equal, &generic_stub_call);
-#endif
-
-  // Load the initial map and verify that it is in fact a map.
-  // edi: constructor
-  __ mov(ebx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
-  // Will both indicate a NULL and a Smi.
-  __ JumpIfSmi(ebx, &generic_stub_call);
-  __ CmpObjectType(ebx, MAP_TYPE, ecx);
-  __ j(not_equal, &generic_stub_call);
-
-#ifdef DEBUG
-  // Cannot construct functions this way.
-  // ebx: initial map
-  __ CmpInstanceType(ebx, JS_FUNCTION_TYPE);
-  __ Check(not_equal, "Function constructed by construct stub.");
-#endif
-
-  // Now allocate the JSObject on the heap by moving the new space allocation
-  // top forward.
-  // ebx: initial map
-  ASSERT(function->has_initial_map());
-  int instance_size = function->initial_map()->instance_size();
-#ifdef DEBUG
-  __ movzx_b(ecx, FieldOperand(ebx, Map::kInstanceSizeOffset));
-  __ shl(ecx, kPointerSizeLog2);
-  __ cmp(ecx, Immediate(instance_size));
-  __ Check(equal, "Instance size of initial map changed.");
-#endif
-  __ Allocate(instance_size, edx, ecx, no_reg, &generic_stub_call,
-              NO_ALLOCATION_FLAGS);
-
-  // Allocated the JSObject, now initialize the fields and add the heap tag.
-  // ebx: initial map
-  // edx: JSObject (untagged)
-  __ mov(Operand(edx, JSObject::kMapOffset), ebx);
-  __ mov(ebx, factory()->empty_fixed_array());
-  __ mov(Operand(edx, JSObject::kPropertiesOffset), ebx);
-  __ mov(Operand(edx, JSObject::kElementsOffset), ebx);
-
-  // Push the allocated object to the stack. This is the object that will be
-  // returned (after it is tagged).
-  __ push(edx);
-
-  // eax: argc
-  // edx: JSObject (untagged)
-  // Load the address of the first in-object property into edx.
-  __ lea(edx, Operand(edx, JSObject::kHeaderSize));
-  // Calculate the location of the first argument. The stack contains the
-  // allocated object and the return address on top of the argc arguments.
-  __ lea(ecx, Operand(esp, eax, times_4, 1 * kPointerSize));
-
-  // Use edi for holding undefined which is used in several places below.
-  __ mov(edi, factory()->undefined_value());
-
-  // eax: argc
-  // ecx: first argument
-  // edx: first in-object property of the JSObject
-  // edi: undefined
-  // Fill the initialized properties with a constant value or a passed argument
-  // depending on the this.x = ...; assignment in the function.
-  Handle<SharedFunctionInfo> shared(function->shared());
-  for (int i = 0; i < shared->this_property_assignments_count(); i++) {
-    if (shared->IsThisPropertyAssignmentArgument(i)) {
-      // Check if the argument assigned to the property is actually passed.
-      // If argument is not passed the property is set to undefined,
-      // otherwise find it on the stack.
-      int arg_number = shared->GetThisPropertyAssignmentArgument(i);
-      __ mov(ebx, edi);
-      __ cmp(eax, arg_number);
-      if (CpuFeatures::IsSupported(CMOV)) {
-        CpuFeatureScope use_cmov(masm(), CMOV);
-        __ cmov(above, ebx, Operand(ecx, arg_number * -kPointerSize));
-      } else {
-        Label not_passed;
-        __ j(below_equal, &not_passed);
-        __ mov(ebx, Operand(ecx, arg_number * -kPointerSize));
-        __ bind(&not_passed);
-      }
-      // Store value in the property.
-      __ mov(Operand(edx, i * kPointerSize), ebx);
-    } else {
-      // Set the property to the constant value.
-      Handle<Object> constant(shared->GetThisPropertyAssignmentConstant(i),
-                              isolate());
-      __ mov(Operand(edx, i * kPointerSize), Immediate(constant));
-    }
-  }
-
-  // Fill the unused in-object property fields with undefined.
-  for (int i = shared->this_property_assignments_count();
-       i < function->initial_map()->inobject_properties();
-       i++) {
-    __ mov(Operand(edx, i * kPointerSize), edi);
-  }
-
-  // Move argc to ebx and retrieve and tag the JSObject to return.
-  __ mov(ebx, eax);
-  __ pop(eax);
-  __ or_(eax, Immediate(kHeapObjectTag));
-
-  // Remove caller arguments and receiver from the stack and return.
-  __ pop(ecx);
-  __ lea(esp, Operand(esp, ebx, times_pointer_size, 1 * kPointerSize));
-  __ push(ecx);
-  Counters* counters = isolate()->counters();
-  __ IncrementCounter(counters->constructed_objects(), 1);
-  __ IncrementCounter(counters->constructed_objects_stub(), 1);
-  __ ret(0);
-
-  // Jump to the generic stub in case the specialized code cannot handle the
-  // construction.
-  __ bind(&generic_stub_call);
-  Handle<Code> code = isolate()->builtins()->JSConstructStubGeneric();
-  __ jmp(code, RelocInfo::CODE_TARGET);
-
-  // Return the generated code.
-  return GetCode();
 }
 
 

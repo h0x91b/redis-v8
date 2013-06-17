@@ -31,6 +31,7 @@
 
 #include "heap-profiler.h"
 #include "debug.h"
+#include "types.h"
 
 namespace v8 {
 namespace internal {
@@ -637,7 +638,7 @@ Handle<HeapObject> HeapSnapshotsCollection::FindHeapObjectById(
   // First perform a full GC in order to avoid dead objects.
   HEAP->CollectAllGarbage(Heap::kMakeHeapIterableMask,
                           "HeapSnapshotsCollection::FindHeapObjectById");
-  AssertNoAllocation no_allocation;
+  DisallowHeapAllocation no_allocation;
   HeapObject* object = NULL;
   HeapIterator iterator(heap(), HeapIterator::kFilterUnreachable);
   // Make sure that object with the given id is still reachable.
@@ -888,7 +889,8 @@ const char* V8HeapExplorer::GetSystemEntryName(HeapObject* object) {
 #undef MAKE_STRING_MAP_CASE
         default: return "system / Map";
       }
-    case JS_GLOBAL_PROPERTY_CELL_TYPE: return "system / JSGlobalPropertyCell";
+    case CELL_TYPE: return "system / Cell";
+    case PROPERTY_CELL_TYPE: return "system / PropertyCell";
     case FOREIGN_TYPE: return "system / Foreign";
     case ODDBALL_TYPE: return "system / Oddball";
 #define MAKE_STRUCT_CASE(NAME, Name, name) \
@@ -976,9 +978,12 @@ void V8HeapExplorer::ExtractReferences(HeapObject* obj) {
     ExtractCodeCacheReferences(entry, CodeCache::cast(obj));
   } else if (obj->IsCode()) {
     ExtractCodeReferences(entry, Code::cast(obj));
-  } else if (obj->IsJSGlobalPropertyCell()) {
-    ExtractJSGlobalPropertyCellReferences(
-        entry, JSGlobalPropertyCell::cast(obj));
+  } else if (obj->IsCell()) {
+    ExtractCellReferences(entry, Cell::cast(obj));
+    extract_indexed_refs = false;
+  } else if (obj->IsPropertyCell()) {
+    ExtractPropertyCellReferences(
+        entry, PropertyCell::cast(obj));
     extract_indexed_refs = false;
   }
   if (extract_indexed_refs) {
@@ -1210,10 +1215,6 @@ void V8HeapExplorer::ExtractSharedFunctionInfoReferences(
   SetInternalReference(obj, entry,
                        "inferred_name", shared->inferred_name(),
                        SharedFunctionInfo::kInferredNameOffset);
-  SetInternalReference(obj, entry,
-                       "this_property_assignments",
-                       shared->this_property_assignments(),
-                       SharedFunctionInfo::kThisPropertyAssignmentsOffset);
   SetWeakReference(obj, entry,
                    1, shared->initial_map(),
                    SharedFunctionInfo::kInitialMapOffset);
@@ -1277,9 +1278,15 @@ void V8HeapExplorer::ExtractCodeReferences(int entry, Code* code) {
 }
 
 
-void V8HeapExplorer::ExtractJSGlobalPropertyCellReferences(
-    int entry, JSGlobalPropertyCell* cell) {
+void V8HeapExplorer::ExtractCellReferences(int entry, Cell* cell) {
   SetInternalReference(cell, entry, "value", cell->value());
+}
+
+
+void V8HeapExplorer::ExtractPropertyCellReferences(int entry,
+                                                   PropertyCell* cell) {
+  SetInternalReference(cell, entry, "value", cell->value());
+  SetInternalReference(cell, entry, "type", cell->type());
 }
 
 
@@ -1379,8 +1386,8 @@ void V8HeapExplorer::ExtractPropertyReferences(JSObject* js_obj, int entry) {
       if (dictionary->IsKey(k)) {
         Object* target = dictionary->ValueAt(i);
         // We assume that global objects can only have slow properties.
-        Object* value = target->IsJSGlobalPropertyCell()
-            ? JSGlobalPropertyCell::cast(target)->value()
+        Object* value = target->IsPropertyCell()
+            ? PropertyCell::cast(target)->value()
             : target;
         if (k != heap_->hidden_string()) {
           SetPropertyReference(js_obj, entry, String::cast(k), value);
@@ -1566,6 +1573,7 @@ bool V8HeapExplorer::IsEssentialObject(Object* object) {
       && object != heap_->empty_fixed_array()
       && object != heap_->empty_descriptor_array()
       && object != heap_->fixed_array_map()
+      && object != heap_->cell_map()
       && object != heap_->global_property_cell_map()
       && object != heap_->shared_function_info_map()
       && object != heap_->free_space_map()
@@ -1827,7 +1835,7 @@ void V8HeapExplorer::TagGlobalObjects() {
     }
   }
 
-  AssertNoAllocation no_allocation;
+  DisallowHeapAllocation no_allocation;
   for (int i = 0, l = enumerator.count(); i < l; ++i) {
     objects_tags_.SetTag(*enumerator.at(i), urls[i]);
   }
@@ -2214,12 +2222,14 @@ bool HeapSnapshotGenerator::GenerateSnapshot() {
   CHECK(!debug_heap->old_pointer_space()->was_swept_conservatively());
   CHECK(!debug_heap->code_space()->was_swept_conservatively());
   CHECK(!debug_heap->cell_space()->was_swept_conservatively());
+  CHECK(!debug_heap->property_cell_space()->
+        was_swept_conservatively());
   CHECK(!debug_heap->map_space()->was_swept_conservatively());
 #endif
 
   // The following code uses heap iterators, so we want the heap to be
   // stable. It should follow TagGlobalObjects as that can allocate.
-  AssertNoAllocation no_alloc;
+  DisallowHeapAllocation no_alloc;
 
 #ifdef VERIFY_HEAP
   debug_heap->Verify();

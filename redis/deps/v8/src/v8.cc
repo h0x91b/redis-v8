@@ -56,6 +56,7 @@ bool V8::has_been_disposed_ = false;
 bool V8::has_fatal_error_ = false;
 bool V8::use_crankshaft_ = true;
 List<CallCompletedCallback>* V8::call_completed_callbacks_ = NULL;
+v8::ArrayBuffer::Allocator* V8::array_buffer_allocator_ = NULL;
 
 static LazyMutex entropy_mutex = LAZY_MUTEX_INITIALIZER;
 
@@ -281,6 +282,7 @@ void V8::InitializeOncePerProcessImpl() {
   LOperand::SetUpCaches();
   SetUpJSCallerSavedCodeData();
   ExternalReference::SetUp();
+  Bootstrapper::InitializeOncePerProcess();
 }
 
 void V8::InitializeOncePerProcess() {
