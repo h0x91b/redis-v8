@@ -1124,6 +1124,98 @@ redis.benchmark = {
 }
 
 //helpers
+function Model(type, obj){
+	if(typeof type != 'string' || type.length < 1) 
+		throw "Model type must be set";
+	var prefix = 'MODEL:'+type+':';
+	function boundArray(arr){
+		
+		arr.where = function(key,callback){
+			if(this.length == 0){
+				var arr = redis.zrange(prefix+'ZSET',0,-1);
+				if(arr.length == 0) return this;
+				return boundArray(arr).where(key,callback);
+			}
+			
+			if(!key || !callback){
+				return this;
+			}
+			
+			return boundArray(
+				this.filter(function(elm){
+					return callback(
+						redis.hget(prefix+'HSET:'+elm,key)
+					);
+				})
+			);
+		}
+		
+		arr.head = function(count){
+			return boundArray(redis.zrevrange(prefix+'ZSET', 0, count-1));
+		}
+		
+		arr.tail = function(count){
+			return boundArray(redis.zrange(prefix+'ZSET', 0, count-1));
+		}
+		
+		arr.getAll = function(){
+			return boundArray(
+				this.map(function(elm){
+					if(typeof elm == 'object') return elm;
+					return redis.hgetall(prefix+'HSET:'+elm);
+				})
+			);
+		}
+		
+		arr.limit = function(start, count){
+			if(!count) {
+				return boundArray(this.splice(0,start));
+			}
+			return boundArray(this.splice(start, count));
+		}
+		
+		arr.orderBy = function(key, type){
+			type = type || 'ASC';
+			if(type=='ASC'){
+				this.sort(function(a, b){
+					if(a[key] == b[key]) return 0;
+					return a[key] > b[key] ? 1 : -1;
+				});
+				return this;
+			}
+			this.sort(function(a, b){
+				if(a[key] == b[key]) return 0;
+				return a[key] > b[key] ? -1 : 1;
+			});
+			return this;
+		}
+		
+		arr.each = function(callback){
+			Array.prototype.forEach.call(this,callback);
+			return this;
+		}
+		
+		arr.get = function(id){
+			return redis.hgetall(prefix+'HSET:'+id);
+		}
+		
+		return arr;
+	}
+	if(typeof obj == 'string')
+		obj = JSON.parse(obj);
+	if(typeof obj == 'object'){
+		//save
+		if(!('id' in obj)){
+			obj.id = redis.incr(prefix+'INCR');
+			obj.time = +new Date;
+			redis.zadd(prefix+'ZSET',obj.time, obj.id);
+		}
+		redis.hmset(prefix+'HSET:'+obj.id,obj);
+		return obj;
+	}
+	return boundArray([]);
+}
+
 function date (format, timestamp) {
 	// http://kevin.vanzonneveld.net
 	// +	 original by: Carlos R. L. Rodrigues (http://www.jsfromhell.com)
