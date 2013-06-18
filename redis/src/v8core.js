@@ -1143,6 +1143,8 @@ function Model(type, obj){
 			
 			return boundArray(
 				this.filter(function(elm){
+					if(typeof elm == 'object')
+						elm = elm.id;
 					return callback(
 						redis.hget(prefix+'HSET:'+elm,key)
 					);
@@ -1197,6 +1199,24 @@ function Model(type, obj){
 		
 		arr.get = function(id){
 			return redis.hgetall(prefix+'HSET:'+id);
+		}
+		
+		arr.del = function(id){
+			if(id) {
+				redis.zrem(prefix+'ZSET',id);
+				redis.del(prefix+'HSET:'+id);
+				return this;
+			}
+			if(this.length<1) return false;
+			Array.prototype.forEach.call(this,function(id){
+				if(typeof id == 'string'){
+					boundArray([id]).del(id);
+				}
+				if(typeof id == 'object'){
+					boundArray([id]).del(id);
+				}
+			});
+			return boundArray([]);
 		}
 		
 		return arr;

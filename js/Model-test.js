@@ -43,3 +43,12 @@ function doModelTest(){
 			})
 	);
 }
+
+function testModelDel(){
+	Model('test',{something: 'dsfsd'});
+	Model('test',{something: 'dsfsd'});
+	Model('test',{something: 'dsfsd'});
+	Model('test').where('id', function(id){
+		return id>1;
+	}).del();
+}
