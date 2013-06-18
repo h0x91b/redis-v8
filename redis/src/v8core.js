@@ -1219,6 +1219,16 @@ function Model(type, obj){
 			return boundArray([]);
 		}
 		
+		arr.attr = function(key, value){
+			if(this.length<1){
+				return this;
+			}
+			for(var i=0;i<this.length;i++){
+				this[i][key] = value;
+			}
+			return this;
+		}
+		
 		return arr;
 	}
 	if(typeof obj == 'string')
