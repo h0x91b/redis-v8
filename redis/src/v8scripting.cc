@@ -702,7 +702,8 @@ void *single_thread_function_for_slow_run_js(void *param)
 			scriptStart = 0;
 		}
 		
-		if(timeoutScriptStart != 0 && dt > js_timeout*1000){
+		unsigned int dtt = GetTickCount() - timeoutScriptStart;
+		if(timeoutScriptStart != 0 && dtt > js_timeout*1000){
 			printf("some of timeout/interval runned for %i sec, kill it\n",js_timeout);
 			redisLogRawPtr(REDIS_NOTICE,(char *)"some of timeouts/intervals works to long, kill last one.");
 			v8::V8::TerminateExecution();
