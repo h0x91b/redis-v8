@@ -1263,6 +1263,51 @@ function Model(type, obj){
 	return boundArray([]);
 }
 
+REST = {
+	cache_function_list: null, 
+	interval_functions_skip_list: {
+		'.jscall_wrapper_function': 1,
+		'redis.__run': 1,
+		'redis._run': 1,
+		'redis.__get': 1,
+		'redis._get': 1,
+		'redis.__set': 1,
+		'redis._set': 1,
+		'redis.__incrby': 1,
+		'redis.__log': 1,
+		'redis._runtimeouts': 1,
+		'redis.inline_return': 1,
+	},
+	find_funcs_on_obj: function(ret, obj, prefix){
+		var keys = Object.keys(obj);
+		if(keys.length==0) return ret;
+		for(var i=0; i<keys.length; i++){
+			if(keys[i] == 'window') continue;
+			if(prefix+'.'+keys[i] in this.interval_functions_skip_list) continue;
+			if(typeof obj[keys[i]] == 'function'){
+				if(prefix.length>0)
+					ret.push(prefix+'.'+keys[i]);
+				else
+					ret.push(keys[i]);
+			}
+			else if(typeof obj[keys[i]] == 'object')
+			{
+				if(prefix.length>0)
+					this.find_funcs_on_obj(ret, obj[keys[i]], prefix+'.'+keys[i]);
+				else
+					this.find_funcs_on_obj(ret, obj[keys[i]], keys[i]);
+			}
+		}
+		return ret;
+	},
+	function_list: function(){
+		var ret = [];
+		this.find_funcs_on_obj(ret,window,'');
+		ret.sort();
+		return ret;
+	}
+}
+
 function date (format, timestamp) {
 	// http://kevin.vanzonneveld.net
 	// +	 original by: Carlos R. L. Rodrigues (http://www.jsfromhell.com)

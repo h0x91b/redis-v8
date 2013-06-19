@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-type" content="text/html; charset=utf-8">
+		<title>Redis-V8 REST console</title>
+		<style>
+#command_list {
+	width: 250px;
+	float: left;
+	border-right: 1px solid #999;
+	margin-right: 7px;
+}
+#last_response {
+	height: 250px;
+	overflow: auto;
+	margin: 5px;
+	border: 1px solid #999;
+}
+#command_list a {
+	text-decoration: none;
+}
+		</style>
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7/jquery.min.js"></script>
+		<script>
+			$(function(){
+				getCommandList();
+				$("#command_list a").live('click',function(){
+					console.log($(this).html());
+				})
+			})
+			
+			function getCommandList(){
+				var ul = $('#command_list ul')
+				var url = $('input[name="host"]').val();
+				$("#last_response span").html(url);
+				ul.empty();
+				$.post(url,{},function(json){
+					$('#last_response pre').html(JSON.stringify(json,null,'\t'));
+					
+					$(json).each(function(){
+						ul.append('<li><a href="#">'+this+'</a></li>');
+					})
+				},'json').fail(function(xhr,status,error){
+					$("#last_response pre").html('Status code: '+xhr.status+'\n'+error);
+				});
+			}
+		</script>
+	</head>
+	<body>
+		<div id="wrapper">
+			<label for="host">Host</label><input type="text" name="host" value="http://127.0.0.1:3000/" id="host">
+			
+			<div id="command_list">
+				Available commands:
+				<ul></ul>
+			</div>
+			<div id="last_response">Response (<span></span>):<pre></pre></div>
+		</div>
+	</body>
+</html>

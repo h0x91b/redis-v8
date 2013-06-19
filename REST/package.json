@@ -1,0 +1,19 @@
+{
+  "name": "redis-v8-REST",
+  "version": "0.0.1",
+  "description": "REST service for redis-v8",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": "",
+  "keywords": [
+    "redis-v8",
+    "REST"
+  ],
+  "dependencies": {
+    "express": "3.x"
+  },
+  "author": "h0x91B",
+  "license": "BSD"
+}
