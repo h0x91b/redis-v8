@@ -52,3 +52,12 @@ function testModelDel(){
 		return id>1;
 	}).del();
 }
+
+function testModelModifyAndSave(){
+	Model('test2',{something: 'dsfsd'});
+	var test = Model('test2',{something: 'dsfsd2'});
+	Model('test2',{something: 'dsfsd3'});
+	Model('test2').where().getAll().attr('something','something').save();
+	Model('test2',test.id).attr('something','FDFDSFSDFSDF').save();
+	console.log('get by id',Model('test2',test.id));
+}

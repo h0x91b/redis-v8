@@ -1229,10 +1229,27 @@ function Model(type, obj){
 			return this;
 		}
 		
+		arr.save = function(){
+			if(this.length<1){
+				return this;
+			}
+			for(var i=0;i<this.length;i++){
+				Model(type, this[i]);
+			}
+			return this;
+		}
+		
 		return arr;
 	}
-	if(typeof obj == 'string')
+	
+	if(typeof obj == 'string'){
 		obj = JSON.parse(obj);
+	}
+	
+	if(typeof obj == 'number'){
+		return boundArray([redis.hgetall(prefix+'HSET:'+obj)]);
+	}
+	
 	if(typeof obj == 'object'){
 		//save
 		if(!('id' in obj)){
