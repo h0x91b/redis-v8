@@ -1264,7 +1264,6 @@ function Model(type, obj){
 }
 
 REST = {
-	cache_function_list: null, 
 	interval_functions_skip_list: {
 		'.jscall_wrapper_function': 1,
 		'redis.__run': 1,
@@ -1277,25 +1276,30 @@ REST = {
 		'redis.__log': 1,
 		'redis._runtimeouts': 1,
 		'redis.inline_return': 1,
+		'redis._timeouts': 1,
+		'REST.interval_functions_skip_list': 1,
+		'REST.find_funcs_on_obj': 1,
 	},
 	find_funcs_on_obj: function(ret, obj, prefix){
-		var keys = Object.keys(obj);
-		if(keys.length==0) return ret;
-		for(var i=0; i<keys.length; i++){
-			if(keys[i] == 'window') continue;
-			if(prefix+'.'+keys[i] in this.interval_functions_skip_list) continue;
-			if(typeof obj[keys[i]] == 'function'){
+		for(var key in obj){
+			if(key == 'window') continue;
+			if(prefix+'.'+key in this.interval_functions_skip_list) continue;
+			if(typeof obj[key] == 'function'){
 				if(prefix.length>0)
-					ret.push(prefix+'.'+keys[i]);
+					ret.push(prefix+'.'+key+'()');
 				else
-					ret.push(keys[i]);
+					ret.push(key+'()');
 			}
-			else if(typeof obj[keys[i]] == 'object')
+			else if(typeof obj[key] == 'object')
 			{
-				if(prefix.length>0)
-					this.find_funcs_on_obj(ret, obj[keys[i]], prefix+'.'+keys[i]);
-				else
-					this.find_funcs_on_obj(ret, obj[keys[i]], keys[i]);
+				if(prefix.length>0){
+					ret.push('var '+prefix+'.'+key);
+					this.find_funcs_on_obj(ret, obj[key], prefix+'.'+key);
+				}
+				else{
+					ret.push('var '+key);
+					this.find_funcs_on_obj(ret, obj[key], key);
+				}
 			}
 		}
 		return ret;

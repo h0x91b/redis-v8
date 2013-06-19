@@ -5,7 +5,7 @@
 		<title>Redis-V8 REST console</title>
 		<style>
 #command_list {
-	width: 250px;
+	width: 350px;
 	float: left;
 	border-right: 1px solid #999;
 	margin-right: 7px;
@@ -38,7 +38,10 @@
 					$('#last_response pre').html(JSON.stringify(json,null,'\t'));
 					
 					$(json).each(function(){
-						ul.append('<li><a href="#">'+this+'</a></li>');
+						if(this.indexOf('()')!=-1)
+							ul.append('<li><a href="#">'+this+'</a></li>');
+						else
+							ul.append('<li>'+this+'</li>');
 					})
 				},'json').fail(function(xhr,status,error){
 					$("#last_response pre").html('Status code: '+xhr.status+'\n'+error);
@@ -51,7 +54,7 @@
 			<label for="host">Host</label><input type="text" name="host" value="http://127.0.0.1:3000/" id="host">
 			
 			<div id="command_list">
-				Available commands:
+				Globals:
 				<ul></ul>
 			</div>
 			<div id="last_response">Response (<span></span>):<pre></pre></div>
