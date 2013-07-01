@@ -41,24 +41,6 @@ namespace internal {
 LITHIUM_CONCRETE_INSTRUCTION_LIST(DEFINE_COMPILE)
 #undef DEFINE_COMPILE
 
-LOsrEntry::LOsrEntry() {
-  for (int i = 0; i < Register::NumAllocatableRegisters(); ++i) {
-    register_spills_[i] = NULL;
-  }
-  for (int i = 0; i < DoubleRegister::NumAllocatableRegisters(); ++i) {
-    double_register_spills_[i] = NULL;
-  }
-}
-
-
-void LOsrEntry::MarkSpilledRegister(int allocation_index,
-                                    LOperand* spill_operand) {
-  ASSERT(spill_operand->IsStackSlot());
-  ASSERT(register_spills_[allocation_index] == NULL);
-  register_spills_[allocation_index] = spill_operand;
-}
-
-
 #ifdef DEBUG
 void LInstruction::VerifyCall() {
   // Call instructions can use only fixed registers as temporaries and
@@ -79,14 +61,6 @@ void LInstruction::VerifyCall() {
   }
 }
 #endif
-
-
-void LOsrEntry::MarkSpilledDoubleRegister(int allocation_index,
-                                          LOperand* spill_operand) {
-  ASSERT(spill_operand->IsDoubleStackSlot());
-  ASSERT(double_register_spills_[allocation_index] == NULL);
-  double_register_spills_[allocation_index] = spill_operand;
-}
 
 
 void LInstruction::PrintTo(StringStream* stream) {
@@ -455,7 +429,7 @@ LOperand* LPlatformChunk::GetNextSpillSlot(bool is_double)  {
 LPlatformChunk* LChunkBuilder::Build() {
   ASSERT(is_unused());
   chunk_ = new(zone()) LPlatformChunk(info(), graph());
-  HPhase phase("L_Building chunk", chunk_);
+  LPhase phase("L_Building chunk", chunk_);
   status_ = BUILDING;
   const ZoneList<HBasicBlock*>* blocks = graph()->blocks();
   for (int i = 0; i < blocks->length(); i++) {
@@ -1003,10 +977,13 @@ LInstruction* LChunkBuilder::DoBranch(HBranch* instr) {
 
   LBranch* result = new(zone()) LBranch(UseRegister(value));
   // Tagged values that are not known smis or booleans require a
-  // deoptimization environment.
+  // deoptimization environment. If the instruction is generic no
+  // environment is needed since all cases are handled.
   Representation rep = value->representation();
   HType type = value->type();
-  if (rep.IsTagged() && !type.IsSmi() && !type.IsBoolean()) {
+  ToBooleanStub::Types expected = instr->expected_input_types();
+  if (rep.IsTagged() && !type.IsSmi() && !type.IsBoolean() &&
+      !expected.IsGeneric()) {
     return AssignEnvironment(result);
   }
   return result;
@@ -1369,9 +1346,56 @@ LInstruction* LChunkBuilder::DoDiv(HDiv* instr) {
 }
 
 
-LInstruction* LChunkBuilder::DoMathFloorOfDiv(HMathFloorOfDiv* instr) {
-  UNIMPLEMENTED();
+bool LChunkBuilder::HasMagicNumberForDivisor(int32_t divisor) {
+  uint32_t divisor_abs = abs(divisor);
+  // Dividing by 0, 1, and powers of 2 is easy.
+  // Note that IsPowerOf2(0) returns true;
+  ASSERT(IsPowerOf2(0) == true);
+  if (IsPowerOf2(divisor_abs)) return true;
+
+  // We have magic numbers for a few specific divisors.
+  // Details and proofs can be found in:
+  // - Hacker's Delight, Henry S. Warren, Jr.
+  // - The PowerPC Compiler Writer's Guide
+  // and probably many others.
+  //
+  // We handle
+  //   <divisor with magic numbers> * <power of 2>
+  // but not
+  //   <divisor with magic numbers> * <other divisor with magic numbers>
+  int32_t power_of_2_factor =
+    CompilerIntrinsics::CountTrailingZeros(divisor_abs);
+  DivMagicNumbers magic_numbers =
+    DivMagicNumberFor(divisor_abs >> power_of_2_factor);
+  if (magic_numbers.M != InvalidDivMagicNumber.M) return true;
+
+  return false;
+}
+
+
+HValue* LChunkBuilder::SimplifiedDivisorForMathFloorOfDiv(HValue* divisor) {
+  // Only optimize when we have magic numbers for the divisor.
+  // The standard integer division routine is usually slower than transitionning
+  // to FPU.
+  if (divisor->IsConstant() &&
+      HConstant::cast(divisor)->HasInteger32Value()) {
+    HConstant* constant_val = HConstant::cast(divisor);
+    return constant_val->CopyToRepresentation(Representation::Integer32(),
+                                                divisor->block()->zone());
+  }
   return NULL;
+}
+
+
+LInstruction* LChunkBuilder::DoMathFloorOfDiv(HMathFloorOfDiv* instr) {
+    HValue* right = instr->right();
+    LOperand* dividend = UseRegister(instr->left());
+    LOperand* divisor = UseRegisterOrConstant(right);
+    LOperand* remainder = TempRegister();
+    ASSERT(right->IsConstant() &&
+           HConstant::cast(right)->HasInteger32Value());
+    return AssignEnvironment(DefineAsRegister(
+          new(zone()) LMathFloorOfDiv(dividend, divisor, remainder)));
 }
 
 
@@ -1390,6 +1414,10 @@ LInstruction* LChunkBuilder::DoMod(HMod* instr) {
               instr->CheckFlag(HValue::kBailoutOnMinusZero))
           ? AssignEnvironment(result)
           : result;
+    } else if (instr->fixed_right_arg().has_value) {
+      LModI* mod = new(zone()) LModI(UseRegisterAtStart(left),
+                                     UseRegisterAtStart(right));
+      return AssignEnvironment(DefineAsRegister(mod));
     } else {
       LModI* mod = new(zone()) LModI(UseRegister(left),
                                      UseRegister(right),
@@ -1892,7 +1920,7 @@ LInstruction* LChunkBuilder::DoChange(HChange* instr) {
 }
 
 
-LInstruction* LChunkBuilder::DoCheckNonSmi(HCheckNonSmi* instr) {
+LInstruction* LChunkBuilder::DoCheckHeapObject(HCheckHeapObject* instr) {
   LOperand* value = UseRegisterAtStart(instr->value());
   return AssignEnvironment(new(zone()) LCheckNonSmi(value));
 }
@@ -2288,6 +2316,14 @@ LInstruction* LChunkBuilder::DoStringCharFromCode(HStringCharFromCode* instr) {
 LInstruction* LChunkBuilder::DoStringLength(HStringLength* instr) {
   LOperand* string = UseRegisterAtStart(instr->value());
   return DefineAsRegister(new(zone()) LStringLength(string));
+}
+
+
+LInstruction* LChunkBuilder::DoAllocateObject(HAllocateObject* instr) {
+  info()->MarkAsDeferredCalling();
+  LAllocateObject* result =
+      new(zone()) LAllocateObject(TempRegister(), TempRegister());
+  return AssignPointerMap(DefineAsRegister(result));
 }
 
 

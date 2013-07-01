@@ -1,3 +1,40 @@
+2013-06-28: Version 3.20.0
+
+        Migrated several tests from blink to V8 repository.
+
+        Allowed users of the V8 API to distinguish between unset and undefined
+        HiddenValues (issue 2746).
+
+        Deprecated old style callbacks in the V8 API.
+
+        Turned on parallel recompilation.
+
+        Performance and stability improvements on all platforms.
+
+
+2013-06-18: Version 3.19.18
+
+	Fixed read-only attribute of Function.length in strict mode.
+	(issue 2705)
+
+	Fixed Runtime_SetProperty to properly handle OOM failures
+	(Chromium issue 249873)
+
+	Emit deprecated check for constant function transitions.
+	(Chromium issue 250609)
+	
+	Made MathFloorOfDiv optimization trigger more often
+	(Issue 2205)
+
+	Make more GCs in idle notification handler.
+	(Chromium issue 241815)
+
+	Increased default type info threshold.
+	(Issue 2730)
+
+        Performance and stability improvements on all platforms.
+
+
 2013-06-14: Version 3.19.16
 
         Performance and stability improvements on all platforms.
