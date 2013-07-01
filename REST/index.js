@@ -31,10 +31,9 @@ app.all('/', function(req, res){
 });
 
 app.all('/call/:func',function(req,res){
-	console.log('call "'+req.params.func+'" ',req.query);
 	var call = [req.params.func];
-	for(var k in req.query){
-		call.push(req.query[k]);
+	for(var k in req.body){
+		call.push(req.body[k]);
 	}
 	client.jscall(call,function(err,replies){
 		if(err){

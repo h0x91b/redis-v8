@@ -1264,7 +1264,7 @@ function Model(type, obj){
 }
 
 REST = {
-	interval_functions_skip_list: {
+	internal_functions_skip_list: {
 		'.jscall_wrapper_function': 1,
 		'redis.__run': 1,
 		'redis._run': 1,
@@ -1277,18 +1277,26 @@ REST = {
 		'redis._runtimeouts': 1,
 		'redis.inline_return': 1,
 		'redis._timeouts': 1,
-		'REST.interval_functions_skip_list': 1,
+		'REST.internal_functions_skip_list': 1,
 		'REST.find_funcs_on_obj': 1,
 	},
+    getParamNames: function(func) {
+		var funStr = func.toString();
+		var ret = funStr.slice(
+			funStr.indexOf('(')+1, funStr.indexOf(')')
+		).match(/([^\s,]+)/g);
+		ret= ret||[];
+		return ret;
+    },
 	find_funcs_on_obj: function(ret, obj, prefix){
 		for(var key in obj){
 			if(key == 'window') continue;
-			if(prefix+'.'+key in this.interval_functions_skip_list) continue;
+			if(prefix+'.'+key in this.internal_functions_skip_list) continue;
 			if(typeof obj[key] == 'function'){
 				if(prefix.length>0)
-					ret.push(prefix+'.'+key+'()');
+					ret.push(prefix+'.'+key+'('+this.getParamNames(obj[key]).join(', ')+')');
 				else
-					ret.push(key+'()');
+					ret.push(key+'('+this.getParamNames(obj[key]).join(', ')+')');
 			}
 			else if(typeof obj[key] == 'object')
 			{

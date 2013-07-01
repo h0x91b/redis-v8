@@ -19,22 +19,97 @@
 #command_list a {
 	text-decoration: none;
 }
+#host {
+	width: 128px;
+}
+input[type="text"] {
+	width: 500px;
+}
+.example {
+    display: none;
+}
+.remove {
+	border-radius: 100%;
+	background: red;
+	color: #fff;
+	text-decoration: none;
+	padding: 0px 5px;
+	display: none;
+}
+.argument:last-child .remove {
+	display: inline;
+}
 		</style>
 		<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7/jquery.min.js"></script>
 		<script>
 			$(function(){
 				getCommandList();
 				$("#command_list a").live('click',function(){
-					console.log($(this).html());
+					var args = $(this).html();
+					$("#js_function").val(args.split('(')[0]);
+					args = args.split('(')[1].split(')')[0].split(', ');
+					if(args.length==1 && args[0]== '') args = [];
+					console.log('args',args)
+					$(".argument:not(.example)").remove();
+					for(var i=0;i<args.length+1;i++){
+						var clone = $('.argument.example').clone();
+						clone.removeClass('example');
+						clone.find('.argname').html('"'+args[i]+'"');
+						if(i>=args.length) clone.find('.argname').html('#'+(i+1));
+						$("#arguments").append(clone);
+					}
+				});
+                
+				$(".arguments").live('change keyup blur',function(){
+					var total = $('.argument:not(.example)').length-1;
+					var index = $('.argument:not(.example)').index($(this).parent()[0]);
+					if($(this).val().length<1) {
+						return;
+					}
+					if(total!=index) return;
+					
+					var clone = $('.argument.example').clone();
+					clone.removeClass('example');
+					clone.find('.argname').html('#'+(total+2));
+					$("#arguments").append(clone);
+				});
+				
+				$(".remove").live('click',function(){
+					$(this).parent().remove();
 				})
+				
+				$("button").click(makeRequest);
 			})
-			
+            
 			function getCommandList(){
 				var ul = $('#command_list ul')
 				var url = $('input[name="host"]').val();
 				$("#last_response span").html(url);
 				ul.empty();
 				$.post(url,{},function(json){
+					$('#last_response pre').html(JSON.stringify(json,null,'\t'));
+					
+					$(json).each(function(){
+						if(this.indexOf('(')!=-1)
+							ul.append('<li><a href="#">'+this+'</a></li>');
+						else
+							ul.append('<li>'+this+'</li>');
+					})
+				},'json').fail(function(xhr,status,error){
+					$("#last_response pre").html('Status code: '+xhr.status+'\n'+error);
+				});
+			}
+			
+			function makeRequest(){
+				var func = $('input[name="js_function"]').val();
+				var url = $('input[name="host"]').val()+'call/'+encodeURIComponent(func);
+				$("#last_response span").html(url);
+				var post = {};
+				var arg = 0;
+				$('.argument:not(.example) .arguments').each(function(){
+					post[arg++] = $(this).val();
+				})
+				$.post(url,post,function(json){
 					$('#last_response pre').html(JSON.stringify(json,null,'\t'));
 					
 					$(json).each(function(){
@@ -51,13 +126,27 @@
 	</head>
 	<body>
 		<div id="wrapper">
-			<label for="host">Host</label><input type="text" name="host" value="http://127.0.0.1:3000/" id="host">
-			
 			<div id="command_list">
 				Globals:
 				<ul></ul>
 			</div>
-			<div id="last_response">Response (<span></span>):<pre></pre></div>
+			
+			<label for="host">Host</label><input type="text" name="host" value="http://127.0.0.1:3000/" id="host">
+			<div>
+				<span>JS Function: </span><input type="text" name="js_function" value="console.log" id="js_function">
+			</div>
+			<div id="arguments">
+				<div class="argument example">
+					<span>Argument <span class="argname"></span>: </span>
+					<input type="text" value="" class="arguments">
+					<a href="#" class="remove">x</a>
+				</div>
+			</div>
+			<div>
+				<button>Make request</button>
+			</div>
+			
+			<div id="last_response">Response from "<span></span>" :<pre></pre></div>
 		</div>
 	</body>
 </html>
