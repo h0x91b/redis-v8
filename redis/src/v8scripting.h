@@ -584,7 +584,7 @@ struct redisClient {
     size_t querybuf_peak;   /* Recent (100ms or more) peak of querybuf size */
     int argc;
     robj **argv;
-    redisCommand *cmd, *lastcmd;
+    struct redisCommand *cmd, *lastcmd;
     int reqtype;
     int multibulklen;       /* number of multi bulk arguments left to read */
     long bulklen;           /* length of bulk argument in multi bulk request */
@@ -602,6 +602,8 @@ struct redisClient {
     long repldboff;         /* replication DB file offset */
     off_t repldbsize;       /* replication DB file size */
     long long reploff;      /* replication offset if this is our master */
+    long long repl_ack_off; /* replication ack offset, if this is a slave */
+    long long repl_ack_time;/* replication ack time, if this is a slave */
     char replrunid[REDIS_RUN_ID_SIZE+1]; /* master run id if this is a master */
     int slave_listening_port; /* As configured with: SLAVECONF listening-port */
     multiState mstate;      /* MULTI/EXEC state */
@@ -616,6 +618,7 @@ struct redisClient {
     int bufpos;
     char buf[REDIS_REPLY_CHUNK_BYTES];
 };
+
 
 struct saveparam {
     time_t seconds;
@@ -832,6 +835,7 @@ struct clusterMsg {
 
 struct redisServer {
     /* General */
+    char *configfile;           /* Absolute config file path, or NULL */
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
     dict *commands;             /* Command table */
@@ -867,7 +871,7 @@ struct redisServer {
     off_t loading_loaded_bytes;
     time_t loading_start_time;
     /* Fast pointers to often looked up command */
-    redisCommand *delCommand, *multiCommand, *lpushCommand, *lpopCommand,
+    struct redisCommand *delCommand, *multiCommand, *lpushCommand, *lpopCommand,
                         *rpopCommand;
     /* Fields used only for stats */
     time_t stat_starttime;          /* Server start time */
@@ -897,6 +901,7 @@ struct redisServer {
     int verbosity;                  /* Loglevel in redis.conf */
     int maxidletime;                /* Client timeout in seconds */
     int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
+    int active_expire_enabled;      /* Can be disabled for testing purposes. */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
     int dbnum;                      /* Total number of configured DBs */
     int daemonize;                  /* True if running as a daemon */
@@ -922,16 +927,18 @@ struct redisServer {
     time_t aof_rewrite_time_start;  /* Current AOF rewrite start time. */
     int aof_lastbgrewrite_status;   /* REDIS_OK or REDIS_ERR */
     unsigned long aof_delayed_fsync;  /* delayed AOF fsync() counter */
+    int aof_rewrite_incremental_fsync;/* fsync incrementally while rewriting? */
     /* RDB persistence */
     long long dirty;                /* Changes to DB from the last save */
     long long dirty_before_bgsave;  /* Used to restore dirty on failed BGSAVE */
     pid_t rdb_child_pid;            /* PID of RDB saving child */
-    saveparam *saveparams;   /* Save points array for RDB */
+    struct saveparam *saveparams;   /* Save points array for RDB */
     int saveparamslen;              /* Number of saving points */
     char *rdb_filename;             /* Name of RDB file */
     int rdb_compression;            /* Use compression in RDB? */
     int rdb_checksum;               /* Use RDB checksum? */
     time_t lastsave;                /* Unix time of last successful save */
+    time_t lastbgsave_try;          /* Unix time of last attempted bgsave */
     time_t rdb_save_time_last;      /* Time used by last RDB save run. */
     time_t rdb_save_time_start;     /* Current RDB save start time. */
     int lastbgsave_status;          /* REDIS_OK or REDIS_ERR */
@@ -957,6 +964,9 @@ struct redisServer {
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
                                        Only valid if server.slaves len is 0. */
+    int repl_min_slaves_to_write;   /* Min number of slaves to write. */
+    int repl_min_slaves_max_lag;    /* Max lag of <count> slaves to write. */
+    int repl_good_slaves_count;     /* Number of slaves with lag <= max_lag. */
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
     char *masterhost;               /* Hostname of master */
@@ -980,6 +990,10 @@ struct redisServer {
     int slave_priority;             /* Reported in INFO and used by Sentinel. */
     char repl_master_runid[REDIS_RUN_ID_SIZE+1];  /* Master run id for PSYNC. */
     long long repl_master_initial_offset;         /* Master PSYNC offset. */
+    /* Replication script cache. */
+    dict *repl_scriptcache_dict;        /* SHA1 all slaves are aware of. */
+    list *repl_scriptcache_fifo;        /* First in, first out LRU eviction. */
+    int repl_scriptcache_size;          /* Max number of elements. */
     /* Limits */
     unsigned int maxclients;        /* Max number of simultaneous clients */
     unsigned long long maxmemory;   /* Max number of memory bytes to use */
@@ -1010,6 +1024,7 @@ struct redisServer {
                                    xor of REDIS_NOTIFY... flags. */
     /* Cluster */
     int cluster_enabled;      /* Is cluster enabled? */
+    int cluster_node_timeout; /* Cluster node timeout. */
     char *cluster_configfile; /* Cluster auto-generated config file name. */
     clusterState *cluster;  /* State of the cluster */
     /* Scripting */
@@ -1033,6 +1048,7 @@ struct redisServer {
     int bug_report_start; /* True if bug report header was already logged. */
     int watchdog_period;  /* Software watchdog period in ms. 0 = off */
 };
+
 
 struct pubsubPattern {
     redisClient *client;

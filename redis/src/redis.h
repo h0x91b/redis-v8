@@ -132,6 +132,10 @@
 #define REDIS_MBULK_BIG_ARG     (1024*32)
 #define REDIS_LONGSTR_SIZE      21          /* Bytes needed for long -> str */
 #define REDIS_AOF_AUTOSYNC_BYTES (1024*1024*32) /* fdatasync every 32MB */
+/* When configuring the Redis eventloop, we setup it so that the total number
+ * of file descriptors we can handle are server.maxclients + FDSET_INCR
+ * that is our safety margin. */
+#define REDIS_EVENTLOOP_FDSET_INCR 128
 
 /* Hash table parameters */
 #define REDIS_HT_MINFILL        10      /* Minimal hash table fill 10% */
@@ -141,7 +145,7 @@
 #define REDIS_CMD_WRITE 1                   /* "w" flag */
 #define REDIS_CMD_READONLY 2                /* "r" flag */
 #define REDIS_CMD_DENYOOM 4                 /* "m" flag */
-#define REDIS_CMD_FORCE_REPLICATION 8       /* "f" flag */
+#define REDIS_CMD_NOT_USED_1 8              /* no longer used flag */
 #define REDIS_CMD_ADMIN 16                  /* "a" flag */
 #define REDIS_CMD_PUBSUB 32                 /* "p" flag */
 #define REDIS_CMD_NOSCRIPT  64              /* "s" flag */
@@ -219,6 +223,11 @@
 #define REDIS_UNIX_SOCKET (1<<11) /* Client connected via Unix domain socket */
 #define REDIS_DIRTY_EXEC (1<<12)  /* EXEC will fail for errors while queueing */
 
+#define REDIS_MASTER_FORCE_REPLY (1<<13)  /* Queue replies even if is master */
+#define REDIS_FORCE_AOF (1<<14)   /* Force AOF propagation of current cmd. */
+#define REDIS_FORCE_REPL (1<<15)  /* Force replication of current cmd. */
+#define REDIS_PRE_PSYNC_SLAVE (1<<16) /* Slave don't understand PSYNC. */
+
 /* Client request types */
 #define REDIS_REQ_INLINE 1
 #define REDIS_REQ_MULTIBULK 2
@@ -266,6 +275,7 @@
 #define REDIS_NOTICE 2
 #define REDIS_WARNING 3
 #define REDIS_LOG_RAW (1<<10) /* Modifier to log without timestamp */
+#define REDIS_DEFAULT_VERBOSITY REDIS_NOTICE
 
 /* Anti-warning macro... */
 #define REDIS_NOTUSED(V) ((void) V)
@@ -277,6 +287,7 @@
 #define AOF_FSYNC_NO 0
 #define AOF_FSYNC_ALWAYS 1
 #define AOF_FSYNC_EVERYSEC 2
+#define REDIS_DEFAULT_AOF_FSYNC AOF_FSYNC_EVERYSEC
 
 /* Zip structure related defaults */
 #define REDIS_HASH_MAX_ZIPLIST_ENTRIES 512
@@ -299,6 +310,7 @@
 #define REDIS_MAXMEMORY_ALLKEYS_LRU 3
 #define REDIS_MAXMEMORY_ALLKEYS_RANDOM 4
 #define REDIS_MAXMEMORY_NO_EVICTION 5
+#define REDIS_DEFAULT_MAXMEMORY_POLICY REDIS_MAXMEMORY_VOLATILE_LRU
 
 /* Scripting */
 #define REDIS_LUA_TIME_LIMIT 5000 /* milliseconds */
@@ -452,6 +464,8 @@ typedef struct redisClient {
     long repldboff;         /* replication DB file offset */
     off_t repldbsize;       /* replication DB file size */
     long long reploff;      /* replication offset if this is our master */
+    long long repl_ack_off; /* replication ack offset, if this is a slave */
+    long long repl_ack_time;/* replication ack time, if this is a slave */
     char replrunid[REDIS_RUN_ID_SIZE+1]; /* master run id if this is a master */
     int slave_listening_port; /* As configured with: SLAVECONF listening-port */
     multiState mstate;      /* MULTI/EXEC state */
@@ -466,6 +480,7 @@ typedef struct redisClient {
     int bufpos;
     char buf[REDIS_REPLY_CHUNK_BYTES];
 } redisClient;
+
 
 struct saveparam {
     time_t seconds;
@@ -697,6 +712,7 @@ typedef struct {
 
 struct redisServer {
     /* General */
+    char *configfile;           /* Absolute config file path, or NULL */
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
     dict *commands;             /* Command table */
@@ -825,6 +841,9 @@ struct redisServer {
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
                                        Only valid if server.slaves len is 0. */
+    int repl_min_slaves_to_write;   /* Min number of slaves to write. */
+    int repl_min_slaves_max_lag;    /* Max lag of <count> slaves to write. */
+    int repl_good_slaves_count;     /* Number of slaves with lag <= max_lag. */
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
     char *masterhost;               /* Hostname of master */
@@ -848,6 +867,10 @@ struct redisServer {
     int slave_priority;             /* Reported in INFO and used by Sentinel. */
     char repl_master_runid[REDIS_RUN_ID_SIZE+1];  /* Master run id for PSYNC. */
     long long repl_master_initial_offset;         /* Master PSYNC offset. */
+    /* Replication script cache. */
+    dict *repl_scriptcache_dict;        /* SHA1 all slaves are aware of. */
+    list *repl_scriptcache_fifo;        /* First in, first out LRU eviction. */
+    int repl_scriptcache_size;          /* Max number of elements. */
     /* Limits */
     unsigned int maxclients;        /* Max number of simultaneous clients */
     unsigned long long maxmemory;   /* Max number of memory bytes to use */
@@ -902,6 +925,7 @@ struct redisServer {
     int bug_report_start; /* True if bug report header was already logged. */
     int watchdog_period;  /* Software watchdog period in ms. 0 = off */
 };
+
 
 typedef struct pubsubPattern {
     redisClient *client;
@@ -998,6 +1022,7 @@ extern dictType dbDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
+extern dictType replScriptCacheDictType;
 
 /*-----------------------------------------------------------------------------
  * Functions prototypes
@@ -1009,7 +1034,7 @@ long long mstime(void);
 void getRandomHexChars(char *p, unsigned int len);
 uint64_t crc64(uint64_t crc, const unsigned char *s, uint64_t l);
 void exitFromChild(int retcode);
-size_t popcount(void *s, long count);
+size_t redisPopcount(void *s, long count);
 void redisSetProcTitle(char *title);
 
 /* networking.c -- Networking and Client related operations */
@@ -1147,6 +1172,11 @@ void replicationCacheMaster(redisClient *c);
 void resizeReplicationBacklog(long long newsize);
 void replicationSetMaster(char *ip, int port);
 void replicationUnsetMaster(void);
+void refreshGoodSlavesCount(void);
+void replicationScriptCacheInit(void);
+void replicationScriptCacheFlush(void);
+void replicationScriptCacheAdd(sds sha1);
+int replicationScriptCacheExists(sds sha1);
 
 /* Generic persistence functions */
 void startLoading(FILE *fp);
@@ -1200,6 +1230,7 @@ struct redisCommand *lookupCommandOrOriginal(sds name);
 void call(redisClient *c, int flags);
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc, int flags);
 void alsoPropagate(struct redisCommand *cmd, int dbid, robj **argv, int argc, int target);
+void forceCommandPropagation(redisClient *c, int flags);
 int prepareForShutdown();
 #ifdef __GNUC__
 void redisLog(int level, const char *fmt, ...)
@@ -1215,6 +1246,7 @@ int htNeedsResize(dict *dict);
 void oom(const char *msg);
 void populateCommandTable(void);
 void resetCommandTableStats(void);
+void adjustOpenFilesLimit(void);
 
 /* Set data type */
 robj *setTypeCreate(robj *value);
@@ -1447,6 +1479,7 @@ void unsubscribeCommand(redisClient *c);
 void psubscribeCommand(redisClient *c);
 void punsubscribeCommand(redisClient *c);
 void publishCommand(redisClient *c);
+void pubsubCommand(redisClient *c);
 void watchCommand(redisClient *c);
 void unwatchCommand(redisClient *c);
 void clusterCommand(redisClient *c);
