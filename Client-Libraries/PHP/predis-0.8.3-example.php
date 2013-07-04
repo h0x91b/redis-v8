@@ -3,8 +3,15 @@
 require 'predis-0.8.3/Autoloader.php';
 Predis\Autoloader::register();
 
+$redis_profile = Predis\Profile\ServerProfile::get('2.6');
+
 //connect (by default 127.0.0.1:6379)
-$redis = new Predis\Client();
+$redis = new Predis\Client(array(
+		'host'     => '127.0.0.1',
+		'port'     => 6379,
+		'profile'  => $redis_profile
+	)
+);
 
 //js command will execute JS script in redis
 //return will be JSON encoded, predis will reencode in normal JS array
