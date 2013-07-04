@@ -374,7 +374,7 @@ const char* ToCString(const v8::String::Utf8Value& value) {
 	return *value ? *value : "<string conversion failed>";
 }
 
-v8::Handle<v8::Value> redis_log(const v8::Arguments& args) {
+void redis_log(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	if(args.Length()>=2){
 		Local<Integer> i = Local<Integer>::Cast(args[0]);
 		int log_level = (int)(i->Int32Value());
@@ -382,7 +382,6 @@ v8::Handle<v8::Value> redis_log(const v8::Arguments& args) {
 		const char* cstr = ToCString(str);
 		redisLogRawPtr(log_level, (char*)cstr);
 	}
-	return v8::Undefined();
 }
 
 void initV8(){
