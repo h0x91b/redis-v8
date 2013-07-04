@@ -380,7 +380,7 @@ v8::Handle<v8::Value> redis_log(const v8::Arguments& args) {
 		int log_level = (int)(i->Int32Value());
 		v8::String::Utf8Value str(args[1]);
 		const char* cstr = ToCString(str);
-		redisLogRawPtr(log_level,(char *)cstr);
+		redisLogRawPtr(log_level, (char*)cstr);
 	}
 	return v8::Undefined();
 }
@@ -630,7 +630,7 @@ void load_user_scripts_from_folder(char *folder){
 		}
 		closedir(dp);
 	} else {
-		redisLogRawPtr(REDIS_NOTICE,"js-dir from config - not found");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"js-dir from config - not found");
 	}
 }
 
@@ -687,8 +687,8 @@ void *single_thread_function_for_slow_run_js(void *param)
 			if(!slow_report){
 				slow_report = true;
 				printf("run_js running more than %ims, log function\n",js_slow);
-				redisLogRawPtr(REDIS_NOTICE,(char*)"JS slow function:");
-				redisLogRawPtr(REDIS_NOTICE,(char*)last_js_run);
+				redisLogRawPtr(REDIS_NOTICE, (char*)"JS slow function:");
+				redisLogRawPtr(REDIS_NOTICE, (char*)last_js_run);
 			}
 		}
 		else
@@ -696,8 +696,8 @@ void *single_thread_function_for_slow_run_js(void *param)
 		
 		if(scriptStart != 0 && last_js_run!=NULL && dt > js_timeout*1000){
 			printf("run_js running more than %i sec, kill it\n",js_timeout);
-			redisLogRawPtr(REDIS_NOTICE,(char *)"JS to slow function, kill it:");
-			redisLogRawPtr(REDIS_NOTICE,(char *)last_js_run);
+			redisLogRawPtr(REDIS_NOTICE, (char*)"JS to slow function, kill it:");
+			redisLogRawPtr(REDIS_NOTICE, (char*)last_js_run);
 			v8::V8::TerminateExecution();
 			scriptStart = 0;
 		}
@@ -705,7 +705,7 @@ void *single_thread_function_for_slow_run_js(void *param)
 		unsigned int dtt = GetTickCount() - timeoutScriptStart;
 		if(timeoutScriptStart != 0 && dtt > js_timeout*1000){
 			printf("some of timeout/interval runned for %i sec, kill it\n",js_timeout);
-			redisLogRawPtr(REDIS_NOTICE,(char *)"some of timeouts/intervals works to long, kill last one.");
+			redisLogRawPtr(REDIS_NOTICE, (char*)"some of timeouts/intervals works to long, kill last one.");
 			v8::V8::TerminateExecution();
 			run_js("clearInterval(redis._last_interval_id)");
 			timeoutScriptStart = 0;
@@ -778,16 +778,16 @@ extern "C"
 		v8::V8::Dispose();
 		pthread_cancel(thread_id_for_single_thread_check);
 		initV8();
-		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"V8 core loaded");
 		load_user_scripts_from_folder(js_dir);
-		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"V8 user script loaded");
 		addReplyPtr(c,createObjectPtr(REDIS_STRING,sdsnewPtr("+V8 Reload complete\r\n")));
 		pthread_create(&thread_id_for_setTimeoutExec, NULL, setTimeoutExec, (void*)NULL);
 	}
 	
 	void v8setup()
 	{
-		redisLogRawPtr(REDIS_NOTICE,"Making redisClient\n");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"Making redisClient\n");
 		client = redisCreateClientPtr(-1);
 		client->flags |= REDIS_LUA_CLIENT;
 		
@@ -798,9 +798,9 @@ extern "C"
 			strcpy(js_dir,"./js/");
 		}
 
-		redisLogRawPtr(REDIS_NOTICE,"V8 core loaded");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"V8 core loaded");
 		load_user_scripts_from_folder(js_dir);
-		redisLogRawPtr(REDIS_NOTICE,"V8 user script loaded");
+		redisLogRawPtr(REDIS_NOTICE, (char*)"V8 user script loaded");
 		
 		pthread_create(&thread_id_for_setTimeoutExec, NULL, setTimeoutExec, (void*)NULL);
 	}
@@ -811,7 +811,7 @@ extern "C"
 	}
 	
 	void passPointerToCreateClient(redisClient* (*functionPtr)(int)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToCreateClient");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToCreateClient");
 		redisCreateClientPtr = functionPtr;
 	}
 	
@@ -821,132 +821,132 @@ extern "C"
 	}
 	
 	void passPointerTocall(void (*functionPtr)(redisClient*,int)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocall");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocall");
 		callPtr = functionPtr;
 	}
 	
 	void passPointerTocreateStringObject(robj* (*functionPtr)(char*,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObject");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocreateStringObject");
 		createStringObjectPtr = functionPtr;
 	}
 	
 	void passPointerTosdsempty(sds (*functionPtr)()){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsempty");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosdsempty");
 		sdsemptyPtr = functionPtr;
 	}
 	
 	void passPointerTosdscatlen(sds (*functionPtr)(sds, const void *,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdscatlen");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosdscatlen");
 		sdscatlenPtr = functionPtr;
 	}
 	
 	void passPointerTosdslen(size_t (*functionPtr)(const sds)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdslen");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosdslen");
 		sdslenPtr = functionPtr;
 	}
 	
 	void passPointerTolistDelNode(void (*functionPtr)(list*,listNode*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTolistDelNode");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTolistDelNode");
 		listDelNodePtr = functionPtr;
 	}
 	
 	void passPointerTodecrRefCount(void (*functionPtr)(robj*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTodecrRefCount");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTodecrRefCount");
 		decrRefCountPtr = functionPtr;
 	}
 	
 	void passPointerTosdsfree(void (*functionPtr)(sds)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsfree");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosdsfree");
 		sdsfreePtr = functionPtr;
 	}
 	
 	void passPointerTozmalloc(void* (*functionPtr)(size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTozmalloc");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTozmalloc");
 		zmallocPtr = functionPtr;
 	}
 	
 	void passPointerTozfree(void (*functionPtr)(void*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTozfree");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTozfree");
 		zfreePtr = functionPtr;
 	}
 	
 	void passPointerToredisLog(void (*functionPtr)(int,const char*,...)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToredisLog");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToredisLog");
 		redisLogPtr = functionPtr;
 	}
 	
 	void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReply");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToaddReply");
 		addReplyPtr = functionPtr;
 	}
 	
 	void passPointerTosdsnew(sds (*functionPtr)(const char*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosdsnew");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosdsnew");
 		sdsnewPtr = functionPtr;
 	}
 	
 	void passPointerTocreateObject(robj* (*functionPtr)(int,void*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateObject");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocreateObject");
 		createObjectPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyString");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToaddReplyString");
 		addReplyStringPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyBulkLen");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToaddReplyBulkLen");
 		addReplyBulkPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyError(void (*functionPtr)(redisClient*,char*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerToaddReplyError");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToaddReplyError");
 		addReplyErrorPtr = functionPtr;
 	}
 	
 	void passPointerTolookupKeyRead(robj *(*functionPtr)(redisDb*, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupKeyRead");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTolookupKeyRead");
 		lookupKeyReadPtr = functionPtr;
 	}
 	
 	void passPointerTosetKey(void (*functionPtr)(redisDb*, robj*, robj*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosetKey");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosetKey");
 		setKeyPtr = functionPtr;
 	}
 	
 	void passPointerTodbOverwrite(void (*functionPtr)(redisDb *, robj *, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTodbOverwrite");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTodbOverwrite");
 		dbOverwritePtr = functionPtr;
 	}
 	
 	void passPointerTodbAdd(void (*functionPtr)(redisDb *, robj *, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTodbAdd");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTodbAdd");
 		dbAddPtr = functionPtr;
 	}
 	
 	void passPointerTonotifyKeyspaceEvent(void (*functionPtr)(int, char *, robj *, int )){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTonotifyKeyspaceEvent");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTonotifyKeyspaceEvent");
 		notifyKeyspaceEventPtr = functionPtr;
 	}
 	
 	void passPointerTocheckType(int (*functionPtr)(redisClient *, robj *, int)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocheckType");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocheckType");
 		checkTypePtr = functionPtr;
 	}
 	
 	void passPointerTogetLongLongFromObjectOrReply(int (*functionPtr)(redisClient *, robj *, long long *, const char *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTogetLongLongFromObjectOrReply");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTogetLongLongFromObjectOrReply");
 		getLongLongFromObjectOrReplyPtr = functionPtr;
 	}
 	
 	void passPointerTocreateStringObjectFromLongLong(robj *(*functionPtr)(long long value)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTocreateStringObjectFromLongLong");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocreateStringObjectFromLongLong");
 		createStringObjectFromLongLongPtr = functionPtr;
 	}
 	
 	void passPointerTosignalModifiedKey(void (*functionPtr)(redisDb *, robj *)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTosignalModifiedKey");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTosignalModifiedKey");
 		signalModifiedKeyPtr = functionPtr;
 	}
 	
