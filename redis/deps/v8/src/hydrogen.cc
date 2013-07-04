@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "hydrogen.h"
-#include "hydrogen-gvn.h"
 
 #include <algorithm>
 
@@ -35,7 +34,12 @@
 #include "full-codegen.h"
 #include "hashmap.h"
 #include "hydrogen-environment-liveness.h"
+#include "hydrogen-escape-analysis.h"
 #include "hydrogen-infer-representation.h"
+#include "hydrogen-gvn.h"
+#include "hydrogen-osr.h"
+#include "hydrogen-range-analysis.h"
+#include "hydrogen-uint32-analysis.h"
 #include "lithium-allocator.h"
 #include "parser.h"
 #include "scopeinfo.h"
@@ -1130,7 +1134,7 @@ HValue* HGraphBuilder::BuildCheckForCapacityGrow(HValue* object,
   length_checker.IfCompare(length, key, Token::EQ);
   length_checker.Then();
 
-  HValue* current_capacity = Add<HFixedArrayBaseLength>(elements);
+  HValue* current_capacity = AddLoadFixedArrayLength(elements);
 
   IfBuilder capacity_checker(this);
 
@@ -1186,7 +1190,7 @@ HValue* HGraphBuilder::BuildCopyElementsOnWrite(HValue* object,
                            Handle<Map>(heap->fixed_cow_array_map()));
   cow_checker.Then();
 
-  HValue* capacity = Add<HFixedArrayBaseLength>(elements);
+  HValue* capacity = AddLoadFixedArrayLength(elements);
 
   HValue* new_elements = BuildGrowElementsCapacity(object, elements,
                                                    kind, length, capacity);
@@ -1241,10 +1245,10 @@ HInstruction* HGraphBuilder::BuildUncheckedMonomorphicElementAccess(
   if (is_js_array) {
     length = AddLoad(object, HObjectAccess::ForArrayLength(), mapcheck,
         Representation::Smi());
-    length->set_type(HType::Smi());
   } else {
-    length = Add<HFixedArrayBaseLength>(elements);
+    length = AddLoadFixedArrayLength(elements);
   }
+  length->set_type(HType::Smi());
   HValue* checked_key = NULL;
   if (IsExternalArrayElementsKind(elements_kind)) {
     if (store_mode == STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS) {
@@ -1411,6 +1415,14 @@ HInnerAllocatedObject* HGraphBuilder::BuildJSArrayHeader(HValue* array,
 HLoadNamedField* HGraphBuilder::AddLoadElements(HValue* object,
                                                 HValue* typecheck) {
   return AddLoad(object, HObjectAccess::ForElementsPointer(), typecheck);
+}
+
+
+HLoadNamedField* HGraphBuilder::AddLoadFixedArrayLength(HValue* object) {
+  HLoadNamedField* instr = AddLoad(object, HObjectAccess::ForFixedArrayLength(),
+                                   NULL, Representation::Smi());
+  instr->set_type(HType::Smi());
+  return instr;
 }
 
 
@@ -1905,7 +1917,8 @@ HOptimizedGraphBuilder::HOptimizedGraphBuilder(CompilationInfo* info)
       break_scope_(NULL),
       inlined_count_(0),
       globals_(10, info->zone()),
-      inline_bailout_(false) {
+      inline_bailout_(false),
+      osr_(new(info->zone()) HOsrBuilder(this)) {
   // This is not initialized in the initializer list because the
   // constructor for the initial state relies on function_state_ == NULL
   // to know it's the initial state.
@@ -1973,6 +1986,7 @@ HGraph::HGraph(CompilationInfo* info)
       values_(16, info->zone()),
       phi_list_(NULL),
       uint32_instructions_(NULL),
+      osr_(NULL),
       info_(info),
       zone_(info->zone()),
       is_recursive_(false),
@@ -2008,10 +2022,8 @@ void HGraph::FinalizeUniqueValueIds() {
   DisallowHeapAllocation no_gc;
   ASSERT(!isolate()->optimizing_compiler_thread()->IsOptimizerThread());
   for (int i = 0; i < blocks()->length(); ++i) {
-    for (HInstruction* instr = blocks()->at(i)->first();
-        instr != NULL;
-        instr = instr->next()) {
-      instr->FinalizeUniqueValueId();
+    for (HInstructionIterator it(blocks()->at(i)); !it.Done(); it.Advance()) {
+      it.Current()->FinalizeUniqueValueId();
     }
   }
 }
@@ -2023,24 +2035,22 @@ void HGraph::Canonicalize() {
   // We must be careful not to set the flag unnecessarily, because GVN
   // cannot identify two instructions when their flag value differs.
   for (int i = 0; i < blocks()->length(); ++i) {
-    HInstruction* instr = blocks()->at(i)->first();
-    while (instr != NULL) {
+    for (HInstructionIterator it(blocks()->at(i)); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       if (instr->IsArithmeticBinaryOperation() &&
           instr->representation().IsInteger32() &&
           instr->HasAtLeastOneUseWithFlagAndNoneWithout(
               HInstruction::kTruncatingToInt32)) {
         instr->SetFlag(HInstruction::kAllUsesTruncatingToInt32);
       }
-      instr = instr->next();
     }
   }
   // Perform actual Canonicalization pass.
   for (int i = 0; i < blocks()->length(); ++i) {
-    HInstruction* instr = blocks()->at(i)->first();
-    while (instr != NULL) {
+    for (HInstructionIterator it(blocks()->at(i)); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       HValue* value = instr->Canonicalize();
       if (value != instr) instr->DeleteAndReplaceWith(value);
-      instr = instr->next();
     }
   }
 }
@@ -2415,8 +2425,8 @@ void HGraph::NullifyUnreachableInstructions() {
       }
     }
     if (all_predecessors_deoptimizing) nullify = true;
-    for (HInstruction* instr = block->first(); instr != NULL;
-         instr = instr->next()) {
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       // Leave the basic structure of the graph intact.
       if (instr->IsBlockEntry()) continue;
       if (instr->IsControlInstruction()) continue;
@@ -2570,171 +2580,6 @@ void HGraph::InferTypes(ZoneList<HValue*>* worklist) {
 }
 
 
-class HRangeAnalysis BASE_EMBEDDED {
- public:
-  explicit HRangeAnalysis(HGraph* graph) :
-      graph_(graph), zone_(graph->zone()), changed_ranges_(16, zone_) { }
-
-  void Analyze();
-
- private:
-  void TraceRange(const char* msg, ...);
-  void Analyze(HBasicBlock* block);
-  void InferControlFlowRange(HCompareIDAndBranch* test, HBasicBlock* dest);
-  void UpdateControlFlowRange(Token::Value op, HValue* value, HValue* other);
-  void InferRange(HValue* value);
-  void RollBackTo(int index);
-  void AddRange(HValue* value, Range* range);
-
-  HGraph* graph_;
-  Zone* zone_;
-  ZoneList<HValue*> changed_ranges_;
-};
-
-
-void HRangeAnalysis::TraceRange(const char* msg, ...) {
-  if (FLAG_trace_range) {
-    va_list arguments;
-    va_start(arguments, msg);
-    OS::VPrint(msg, arguments);
-    va_end(arguments);
-  }
-}
-
-
-void HRangeAnalysis::Analyze() {
-  HPhase phase("H_Range analysis", graph_);
-  Analyze(graph_->entry_block());
-}
-
-
-void HRangeAnalysis::Analyze(HBasicBlock* block) {
-  TraceRange("Analyzing block B%d\n", block->block_id());
-
-  int last_changed_range = changed_ranges_.length() - 1;
-
-  // Infer range based on control flow.
-  if (block->predecessors()->length() == 1) {
-    HBasicBlock* pred = block->predecessors()->first();
-    if (pred->end()->IsCompareIDAndBranch()) {
-      InferControlFlowRange(HCompareIDAndBranch::cast(pred->end()), block);
-    }
-  }
-
-  // Process phi instructions.
-  for (int i = 0; i < block->phis()->length(); ++i) {
-    HPhi* phi = block->phis()->at(i);
-    InferRange(phi);
-  }
-
-  // Go through all instructions of the current block.
-  HInstruction* instr = block->first();
-  while (instr != block->end()) {
-    InferRange(instr);
-    instr = instr->next();
-  }
-
-  // Continue analysis in all dominated blocks.
-  for (int i = 0; i < block->dominated_blocks()->length(); ++i) {
-    Analyze(block->dominated_blocks()->at(i));
-  }
-
-  RollBackTo(last_changed_range);
-}
-
-
-void HRangeAnalysis::InferControlFlowRange(HCompareIDAndBranch* test,
-                                           HBasicBlock* dest) {
-  ASSERT((test->FirstSuccessor() == dest) == (test->SecondSuccessor() != dest));
-  if (test->representation().IsSmiOrInteger32()) {
-    Token::Value op = test->token();
-    if (test->SecondSuccessor() == dest) {
-      op = Token::NegateCompareOp(op);
-    }
-    Token::Value inverted_op = Token::ReverseCompareOp(op);
-    UpdateControlFlowRange(op, test->left(), test->right());
-    UpdateControlFlowRange(inverted_op, test->right(), test->left());
-  }
-}
-
-
-// We know that value [op] other. Use this information to update the range on
-// value.
-void HRangeAnalysis::UpdateControlFlowRange(Token::Value op,
-                                            HValue* value,
-                                            HValue* other) {
-  Range temp_range;
-  Range* range = other->range() != NULL ? other->range() : &temp_range;
-  Range* new_range = NULL;
-
-  TraceRange("Control flow range infer %d %s %d\n",
-             value->id(),
-             Token::Name(op),
-             other->id());
-
-  if (op == Token::EQ || op == Token::EQ_STRICT) {
-    // The same range has to apply for value.
-    new_range = range->Copy(zone_);
-  } else if (op == Token::LT || op == Token::LTE) {
-    new_range = range->CopyClearLower(zone_);
-    if (op == Token::LT) {
-      new_range->AddConstant(-1);
-    }
-  } else if (op == Token::GT || op == Token::GTE) {
-    new_range = range->CopyClearUpper(zone_);
-    if (op == Token::GT) {
-      new_range->AddConstant(1);
-    }
-  }
-
-  if (new_range != NULL && !new_range->IsMostGeneric()) {
-    AddRange(value, new_range);
-  }
-}
-
-
-void HRangeAnalysis::InferRange(HValue* value) {
-  ASSERT(!value->HasRange());
-  if (!value->representation().IsNone()) {
-    value->ComputeInitialRange(zone_);
-    Range* range = value->range();
-    TraceRange("Initial inferred range of %d (%s) set to [%d,%d]\n",
-               value->id(),
-               value->Mnemonic(),
-               range->lower(),
-               range->upper());
-  }
-}
-
-
-void HRangeAnalysis::RollBackTo(int index) {
-  for (int i = index + 1; i < changed_ranges_.length(); ++i) {
-    changed_ranges_[i]->RemoveLastAddedRange();
-  }
-  changed_ranges_.Rewind(index + 1);
-}
-
-
-void HRangeAnalysis::AddRange(HValue* value, Range* range) {
-  Range* original_range = value->range();
-  value->AddNewRange(range, zone_);
-  changed_ranges_.Add(value, zone_);
-  Range* new_range = value->range();
-  TraceRange("Updated range of %d set to [%d,%d]\n",
-             value->id(),
-             new_range->lower(),
-             new_range->upper());
-  if (original_range != NULL) {
-    TraceRange("Original range was [%d,%d]\n",
-               original_range->lower(),
-               original_range->upper());
-  }
-  TraceRange("New information was [%d,%d]\n",
-             range->lower(),
-             range->upper());
-}
-
-
 class HStackCheckEliminator BASE_EMBEDDED {
  public:
   explicit HStackCheckEliminator(HGraph* graph) : graph_(graph) { }
@@ -2758,13 +2603,11 @@ void HStackCheckEliminator::Process() {
       HBasicBlock* back_edge = block->loop_information()->GetLastBackEdge();
       HBasicBlock* dominator = back_edge;
       while (true) {
-        HInstruction* instr = dominator->first();
-        while (instr != NULL) {
-          if (instr->IsCall()) {
+        for (HInstructionIterator it(dominator); !it.Done(); it.Advance()) {
+          if (it.Current()->IsCall()) {
             block->loop_information()->stack_check()->Eliminate();
             break;
           }
-          instr = instr->next();
         }
 
         // Done when the loop header is processed.
@@ -2788,8 +2631,8 @@ void HGraph::MergeRemovableSimulates() {
     // Nasty heuristic: Never remove the first simulate in a block. This
     // just so happens to have a beneficial effect on register allocation.
     bool first = true;
-    for (HInstruction* current = block->first();
-         current != NULL; current = current->next()) {
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* current = it.Current();
       if (current->IsLeaveInlined()) {
         // Never fold simulates from inlined environments into simulates
         // in the outer environment.
@@ -2856,10 +2699,8 @@ void HGraph::InitializeInferredTypes(int from_inclusive, int to_inclusive) {
       phis->at(j)->UpdateInferredType();
     }
 
-    HInstruction* current = block->first();
-    while (current != NULL) {
-      current->UpdateInferredType();
-      current = current->next();
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      it.Current()->UpdateInferredType();
     }
 
     if (block->IsLoopHeader()) {
@@ -3087,235 +2928,12 @@ void HGraph::MarkDeoptimizeOnUndefined() {
 }
 
 
-// Discover instructions that can be marked with kUint32 flag allowing
-// them to produce full range uint32 values.
-class Uint32Analysis BASE_EMBEDDED {
- public:
-  explicit Uint32Analysis(Zone* zone) : zone_(zone), phis_(4, zone) { }
-
-  void Analyze(HInstruction* current);
-
-  void UnmarkUnsafePhis();
-
- private:
-  bool IsSafeUint32Use(HValue* val, HValue* use);
-  bool Uint32UsesAreSafe(HValue* uint32val);
-  bool CheckPhiOperands(HPhi* phi);
-  void UnmarkPhi(HPhi* phi, ZoneList<HPhi*>* worklist);
-
-  Zone* zone_;
-  ZoneList<HPhi*> phis_;
-};
-
-
-bool Uint32Analysis::IsSafeUint32Use(HValue* val, HValue* use) {
-  // Operations that operatate on bits are safe.
-  if (use->IsBitwise() ||
-      use->IsShl() ||
-      use->IsSar() ||
-      use->IsShr() ||
-      use->IsBitNot()) {
-    return true;
-  } else if (use->IsChange() || use->IsSimulate()) {
-    // Conversions and deoptimization have special support for unt32.
-    return true;
-  } else if (use->IsStoreKeyed()) {
-    HStoreKeyed* store = HStoreKeyed::cast(use);
-    if (store->is_external()) {
-      // Storing a value into an external integer array is a bit level
-      // operation.
-      if (store->value() == val) {
-        // Clamping or a conversion to double should have beed inserted.
-        ASSERT(store->elements_kind() != EXTERNAL_PIXEL_ELEMENTS);
-        ASSERT(store->elements_kind() != EXTERNAL_FLOAT_ELEMENTS);
-        ASSERT(store->elements_kind() != EXTERNAL_DOUBLE_ELEMENTS);
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-
-// Iterate over all uses and verify that they are uint32 safe: either don't
-// distinguish between int32 and uint32 due to their bitwise nature or
-// have special support for uint32 values.
-// Encountered phis are optimisitically treated as safe uint32 uses,
-// marked with kUint32 flag and collected in the phis_ list. A separate
-// path will be performed later by UnmarkUnsafePhis to clear kUint32 from
-// phis that are not actually uint32-safe (it requries fix point iteration).
-bool Uint32Analysis::Uint32UsesAreSafe(HValue* uint32val) {
-  bool collect_phi_uses = false;
-  for (HUseIterator it(uint32val->uses()); !it.Done(); it.Advance()) {
-    HValue* use = it.value();
-
-    if (use->IsPhi()) {
-      if (!use->CheckFlag(HInstruction::kUint32)) {
-        // There is a phi use of this value from a phis that is not yet
-        // collected in phis_ array. Separate pass is required.
-        collect_phi_uses = true;
-      }
-
-      // Optimistically treat phis as uint32 safe.
-      continue;
-    }
-
-    if (!IsSafeUint32Use(uint32val, use)) {
-      return false;
-    }
-  }
-
-  if (collect_phi_uses) {
-    for (HUseIterator it(uint32val->uses()); !it.Done(); it.Advance()) {
-      HValue* use = it.value();
-
-      // There is a phi use of this value from a phis that is not yet
-      // collected in phis_ array. Separate pass is required.
-      if (use->IsPhi() && !use->CheckFlag(HInstruction::kUint32)) {
-        use->SetFlag(HInstruction::kUint32);
-        phis_.Add(HPhi::cast(use), zone_);
-      }
-    }
-  }
-
-  return true;
-}
-
-
-// Analyze instruction and mark it with kUint32 if all its uses are uint32
-// safe.
-void Uint32Analysis::Analyze(HInstruction* current) {
-  if (Uint32UsesAreSafe(current)) current->SetFlag(HInstruction::kUint32);
-}
-
-
-// Check if all operands to the given phi are marked with kUint32 flag.
-bool Uint32Analysis::CheckPhiOperands(HPhi* phi) {
-  if (!phi->CheckFlag(HInstruction::kUint32)) {
-    // This phi is not uint32 safe. No need to check operands.
-    return false;
-  }
-
-  for (int j = 0; j < phi->OperandCount(); j++) {
-    HValue* operand = phi->OperandAt(j);
-    if (!operand->CheckFlag(HInstruction::kUint32)) {
-      // Lazyly mark constants that fit into uint32 range with kUint32 flag.
-      if (operand->IsInteger32Constant() &&
-          operand->GetInteger32Constant() >= 0) {
-        operand->SetFlag(HInstruction::kUint32);
-        continue;
-      }
-
-      // This phi is not safe, some operands are not uint32 values.
-      return false;
-    }
-  }
-
-  return true;
-}
-
-
-// Remove kUint32 flag from the phi itself and its operands. If any operand
-// was a phi marked with kUint32 place it into a worklist for
-// transitive clearing of kUint32 flag.
-void Uint32Analysis::UnmarkPhi(HPhi* phi, ZoneList<HPhi*>* worklist) {
-  phi->ClearFlag(HInstruction::kUint32);
-  for (int j = 0; j < phi->OperandCount(); j++) {
-    HValue* operand = phi->OperandAt(j);
-    if (operand->CheckFlag(HInstruction::kUint32)) {
-      operand->ClearFlag(HInstruction::kUint32);
-      if (operand->IsPhi()) {
-        worklist->Add(HPhi::cast(operand), zone_);
-      }
-    }
-  }
-}
-
-
-void Uint32Analysis::UnmarkUnsafePhis() {
-  // No phis were collected. Nothing to do.
-  if (phis_.length() == 0) return;
-
-  // Worklist used to transitively clear kUint32 from phis that
-  // are used as arguments to other phis.
-  ZoneList<HPhi*> worklist(phis_.length(), zone_);
-
-  // Phi can be used as a uint32 value if and only if
-  // all its operands are uint32 values and all its
-  // uses are uint32 safe.
-
-  // Iterate over collected phis and unmark those that
-  // are unsafe. When unmarking phi unmark its operands
-  // and add it to the worklist if it is a phi as well.
-  // Phis that are still marked as safe are shifted down
-  // so that all safe phis form a prefix of the phis_ array.
-  int phi_count = 0;
-  for (int i = 0; i < phis_.length(); i++) {
-    HPhi* phi = phis_[i];
-
-    if (CheckPhiOperands(phi) && Uint32UsesAreSafe(phi)) {
-      phis_[phi_count++] = phi;
-    } else {
-      UnmarkPhi(phi, &worklist);
-    }
-  }
-
-  // Now phis array contains only those phis that have safe
-  // non-phi uses. Start transitively clearing kUint32 flag
-  // from phi operands of discovered non-safe phies until
-  // only safe phies are left.
-  while (!worklist.is_empty())  {
-    while (!worklist.is_empty()) {
-      HPhi* phi = worklist.RemoveLast();
-      UnmarkPhi(phi, &worklist);
-    }
-
-    // Check if any operands to safe phies were unmarked
-    // turning a safe phi into unsafe. The same value
-    // can flow into several phis.
-    int new_phi_count = 0;
-    for (int i = 0; i < phi_count; i++) {
-      HPhi* phi = phis_[i];
-
-      if (CheckPhiOperands(phi)) {
-        phis_[new_phi_count++] = phi;
-      } else {
-        UnmarkPhi(phi, &worklist);
-      }
-    }
-    phi_count = new_phi_count;
-  }
-}
-
-
-void HGraph::ComputeSafeUint32Operations() {
-  HPhase phase("H_Compute safe UInt32 operations", this);
-  if (uint32_instructions_ == NULL) return;
-
-  Uint32Analysis analysis(zone());
-  for (int i = 0; i < uint32_instructions_->length(); ++i) {
-    HInstruction* current = uint32_instructions_->at(i);
-    if (current->IsLinked() && current->representation().IsInteger32()) {
-      analysis.Analyze(current);
-    }
-  }
-
-  // Some phis might have been optimistically marked with kUint32 flag.
-  // Remove this flag from those phis that are unsafe and propagate
-  // this information transitively potentially clearing kUint32 flag
-  // from some non-phi operations that are used as operands to unsafe phis.
-  analysis.UnmarkUnsafePhis();
-}
-
-
 void HGraph::ComputeMinusZeroChecks() {
   HPhase phase("H_Compute minus zero checks", this);
   BitVector visited(GetMaximumValueID(), zone());
   for (int i = 0; i < blocks_.length(); ++i) {
-    for (HInstruction* current = blocks_[i]->first();
-         current != NULL;
-         current = current->next()) {
+    for (HInstructionIterator it(blocks_[i]); !it.Done(); it.Advance()) {
+      HInstruction* current = it.Current();
       if (current->IsChange()) {
         HChange* change = HChange::cast(current);
         // Propagate flags for negative zero checks upwards from conversions
@@ -3755,6 +3373,9 @@ bool HOptimizedGraphBuilder::BuildGraph() {
       !type_info->matches_inlined_type_change_checksum(composite_checksum));
   type_info->set_inlined_type_change_checksum(composite_checksum);
 
+  // Perform any necessary OSR-specific cleanups or changes to the graph.
+  osr_->FinishGraph();
+
   return true;
 }
 
@@ -3798,13 +3419,7 @@ bool HGraph::Optimize(SmartArrayPointer<char>* bailout_reason) {
   }
   CollectPhis();
 
-  if (has_osr_loop_entry()) {
-    const ZoneList<HPhi*>* phis = osr_loop_entry()->phis();
-    for (int j = 0; j < phis->length(); j++) {
-      HPhi* phi = phis->at(j);
-      osr_values()->at(phi->merged_index())->set_incoming_value(phi);
-    }
-  }
+  if (has_osr()) osr()->FinishOsrValues();
 
   Run<HInferRepresentationPhase>();
 
@@ -3821,16 +3436,16 @@ bool HGraph::Optimize(SmartArrayPointer<char>* bailout_reason) {
   // Must be performed before canonicalization to ensure that Canonicalize
   // will not remove semantically meaningful ToInt32 operations e.g. BIT_OR with
   // zero.
-  if (FLAG_opt_safe_uint32_operations) ComputeSafeUint32Operations();
+  if (FLAG_opt_safe_uint32_operations) Run<HUint32AnalysisPhase>();
 
   if (FLAG_use_canonicalizing) Canonicalize();
 
+  if (FLAG_use_escape_analysis) Run<HEscapeAnalysisPhase>();
+
   if (FLAG_use_gvn) Run<HGlobalValueNumberingPhase>();
 
-  if (FLAG_use_range) {
-    HRangeAnalysis rangeAnalysis(this);
-    rangeAnalysis.Analyze();
-  }
+  if (FLAG_use_range) Run<HRangeAnalysisPhase>();
+
   ComputeMinusZeroChecks();
 
   // Eliminate redundant stack checks on backwards branches.
@@ -3861,7 +3476,8 @@ void HGraph::SetupInformativeDefinitionsInBlock(HBasicBlock* block) {
     ASSERT(!phi->IsInformativeDefinition());
   }
 
-  for (HInstruction* i = block->first(); i != NULL; i = i->next()) {
+  for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+    HInstruction* i = it.Current();
     i->AddInformativeDefinitions();
     i->SetFlag(HValue::kIDefsProcessingDone);
     i->UpdateRedefinedUsesWhileSettingUpInformativeDefinitions();
@@ -3879,7 +3495,8 @@ void HGraph::SetupInformativeDefinitionsRecursively(HBasicBlock* block) {
     SetupInformativeDefinitionsRecursively(block->dominated_blocks()->at(i));
   }
 
-  for (HInstruction* i = block->first(); i != NULL; i = i->next()) {
+  for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+    HInstruction* i = it.Current();
     if (i->IsBoundsCheck()) {
       HBoundsCheck* check = HBoundsCheck::cast(i);
       check->ApplyIndexChange();
@@ -4182,7 +3799,8 @@ void HGraph::EliminateRedundantBoundsChecks(HBasicBlock* bb,
                                             BoundsCheckTable* table) {
   BoundsCheckBbData* bb_data_list = NULL;
 
-  for (HInstruction* i = bb->first(); i != NULL; i = i->next()) {
+  for (HInstructionIterator it(bb); !it.Done(); it.Advance()) {
+    HInstruction* i = it.Current();
     if (!i->IsBoundsCheck()) continue;
 
     HBoundsCheck* check = HBoundsCheck::cast(i);
@@ -4304,9 +3922,8 @@ static void DehoistArrayIndex(ArrayInstructionInterface* array_operation) {
 void HGraph::DehoistSimpleArrayIndexComputations() {
   HPhase phase("H_Dehoist index computations", this);
   for (int i = 0; i < blocks()->length(); ++i) {
-    for (HInstruction* instr = blocks()->at(i)->first();
-        instr != NULL;
-        instr = instr->next()) {
+    for (HInstructionIterator it(blocks()->at(i)); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       ArrayInstructionInterface* array_instruction = NULL;
       if (instr->IsLoadKeyed()) {
         HLoadKeyed* op = HLoadKeyed::cast(instr);
@@ -4336,9 +3953,8 @@ void HGraph::MarkLiveInstructions() {
   // Mark initial root instructions for dead code elimination.
   for (int i = 0; i < blocks()->length(); ++i) {
     HBasicBlock* block = blocks()->at(i);
-    for (HInstruction* instr = block->first();
-         instr != NULL;
-         instr = instr->next()) {
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       if (instr->CannotBeEliminated()) MarkLive(NULL, instr, &worklist);
     }
     for (int j = 0; j < block->phis()->length(); j++) {
@@ -4384,9 +4000,8 @@ void HGraph::RemoveDeadInstructions() {
   // Remove any instruction not marked kIsLive.
   for (int i = 0; i < blocks()->length(); ++i) {
     HBasicBlock* block = blocks()->at(i);
-    for (HInstruction* instr = block->first();
-         instr != NULL;
-         instr = instr->next()) {
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
       if (!instr->CheckFlag(HValue::kIsLive)) {
         // Instruction has not been marked live; assume it is dead and remove.
         // TODO(titzer): we don't remove constants because some special ones
@@ -4431,9 +4046,8 @@ void HGraph::RestoreActualValues() {
     }
 #endif
 
-    for (HInstruction* instruction = block->first();
-        instruction != NULL;
-        instruction = instruction->next()) {
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* instruction = it.Current();
       if (instruction->ActualValue() != instruction) {
         ASSERT(instruction->IsInformativeDefinition());
         if (instruction->IsPurelyInformativeDefinition()) {
@@ -4911,59 +4525,6 @@ void HOptimizedGraphBuilder::VisitSwitchStatement(SwitchStatement* stmt) {
 }
 
 
-bool HOptimizedGraphBuilder::HasOsrEntryAt(IterationStatement* statement) {
-  return statement->OsrEntryId() == current_info()->osr_ast_id();
-}
-
-
-bool HOptimizedGraphBuilder::PreProcessOsrEntry(IterationStatement* statement) {
-  if (!HasOsrEntryAt(statement)) return false;
-
-  HBasicBlock* non_osr_entry = graph()->CreateBasicBlock();
-  HBasicBlock* osr_entry = graph()->CreateBasicBlock();
-  HValue* true_value = graph()->GetConstantTrue();
-  HBranch* test = new(zone()) HBranch(true_value, non_osr_entry, osr_entry);
-  current_block()->Finish(test);
-
-  HBasicBlock* loop_predecessor = graph()->CreateBasicBlock();
-  non_osr_entry->Goto(loop_predecessor);
-
-  set_current_block(osr_entry);
-  osr_entry->set_osr_entry();
-  BailoutId osr_entry_id = statement->OsrEntryId();
-  int first_expression_index = environment()->first_expression_index();
-  int length = environment()->length();
-  ZoneList<HUnknownOSRValue*>* osr_values =
-      new(zone()) ZoneList<HUnknownOSRValue*>(length, zone());
-
-  for (int i = 0; i < first_expression_index; ++i) {
-    HUnknownOSRValue* osr_value = Add<HUnknownOSRValue>();
-    environment()->Bind(i, osr_value);
-    osr_values->Add(osr_value, zone());
-  }
-
-  if (first_expression_index != length) {
-    environment()->Drop(length - first_expression_index);
-    for (int i = first_expression_index; i < length; ++i) {
-      HUnknownOSRValue* osr_value = Add<HUnknownOSRValue>();
-      environment()->Push(osr_value);
-      osr_values->Add(osr_value, zone());
-    }
-  }
-
-  graph()->set_osr_values(osr_values);
-
-  AddSimulate(osr_entry_id);
-  Add<HOsrEntry>(osr_entry_id);
-  HContext* context = Add<HContext>();
-  environment()->BindContext(context);
-  current_block()->Goto(loop_predecessor);
-  loop_predecessor->SetJoinId(statement->EntryId());
-  set_current_block(loop_predecessor);
-  return true;
-}
-
-
 void HOptimizedGraphBuilder::VisitLoopBody(IterationStatement* stmt,
                                            HBasicBlock* loop_entry,
                                            BreakAndContinueInfo* break_info) {
@@ -4983,11 +4544,7 @@ void HOptimizedGraphBuilder::VisitDoWhileStatement(DoWhileStatement* stmt) {
   ASSERT(current_block() != NULL);
   ASSERT(current_block()->HasPredecessor());
   ASSERT(current_block() != NULL);
-  bool osr_entry = PreProcessOsrEntry(stmt);
-  HBasicBlock* loop_entry = CreateLoopHeaderBlock();
-  current_block()->Goto(loop_entry);
-  set_current_block(loop_entry);
-  if (osr_entry) graph()->set_osr_loop_entry(loop_entry);
+  HBasicBlock* loop_entry = osr_->BuildPossibleOsrLoopEntry(stmt);
 
   BreakAndContinueInfo break_info(stmt);
   CHECK_BAILOUT(VisitLoopBody(stmt, loop_entry, &break_info));
@@ -5026,12 +4583,7 @@ void HOptimizedGraphBuilder::VisitWhileStatement(WhileStatement* stmt) {
   ASSERT(current_block() != NULL);
   ASSERT(current_block()->HasPredecessor());
   ASSERT(current_block() != NULL);
-  bool osr_entry = PreProcessOsrEntry(stmt);
-  HBasicBlock* loop_entry = CreateLoopHeaderBlock();
-  current_block()->Goto(loop_entry);
-  set_current_block(loop_entry);
-  if (osr_entry) graph()->set_osr_loop_entry(loop_entry);
-
+  HBasicBlock* loop_entry = osr_->BuildPossibleOsrLoopEntry(stmt);
 
   // If the condition is constant true, do not generate a branch.
   HBasicBlock* loop_successor = NULL;
@@ -5073,11 +4625,7 @@ void HOptimizedGraphBuilder::VisitForStatement(ForStatement* stmt) {
     CHECK_ALIVE(Visit(stmt->init()));
   }
   ASSERT(current_block() != NULL);
-  bool osr_entry = PreProcessOsrEntry(stmt);
-  HBasicBlock* loop_entry = CreateLoopHeaderBlock();
-  current_block()->Goto(loop_entry);
-  set_current_block(loop_entry);
-  if (osr_entry) graph()->set_osr_loop_entry(loop_entry);
+  HBasicBlock* loop_entry = osr_->BuildPossibleOsrLoopEntry(stmt);
 
   HBasicBlock* loop_successor = NULL;
   if (stmt->cond() != NULL) {
@@ -5161,11 +4709,7 @@ void HOptimizedGraphBuilder::VisitForInStatement(ForInStatement* stmt) {
   HForInCacheArray::cast(array)->set_index_cache(
       HForInCacheArray::cast(index_cache));
 
-  bool osr_entry = PreProcessOsrEntry(stmt);
-  HBasicBlock* loop_entry = CreateLoopHeaderBlock();
-  current_block()->Goto(loop_entry);
-  set_current_block(loop_entry);
-  if (osr_entry) graph()->set_osr_loop_entry(loop_entry);
+  HBasicBlock* loop_entry = osr_->BuildPossibleOsrLoopEntry(stmt);
 
   HValue* index = environment()->ExpressionStackAt(0);
   HValue* limit = environment()->ExpressionStackAt(1);
@@ -5774,7 +5318,9 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   Handle<Object> raw_boilerplate(literals->get(expr->literal_index()),
                                  isolate());
 
+  bool uninitialized = false;
   if (raw_boilerplate->IsUndefined()) {
+    uninitialized = true;
     raw_boilerplate = Runtime::CreateArrayLiteralBoilerplate(
         isolate(), literals, expr->constant_elements());
     if (raw_boilerplate.is_null()) {
@@ -5870,10 +5416,12 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
       case FAST_ELEMENTS:
       case FAST_HOLEY_ELEMENTS:
       case FAST_DOUBLE_ELEMENTS:
-      case FAST_HOLEY_DOUBLE_ELEMENTS:
-        Add<HStoreKeyed>(elements, key, value,
-                         boilerplate_elements_kind);
+      case FAST_HOLEY_DOUBLE_ELEMENTS: {
+        HStoreKeyed* instr = Add<HStoreKeyed>(elements, key, value,
+                                              boilerplate_elements_kind);
+        instr->SetUninitialized(uninitialized);
         break;
+      }
       default:
         UNREACHABLE();
         break;
@@ -7039,7 +6587,7 @@ HValue* HOptimizedGraphBuilder::HandlePolymorphicElementAccess(
                   LAST_ELEMENTS_KIND);
     if (elements_kind == FIRST_EXTERNAL_ARRAY_ELEMENTS_KIND
         && todo_external_array) {
-      HInstruction* length = Add<HFixedArrayBaseLength>(elements);
+      HInstruction* length = AddLoadFixedArrayLength(elements);
       checked_key = Add<HBoundsCheck>(key, length);
       external_elements = Add<HLoadExternalArrayPointer>(elements);
     }
@@ -7099,7 +6647,7 @@ HValue* HOptimizedGraphBuilder::HandlePolymorphicElementAccess(
         if_jsarray->GotoNoSimulate(join);
 
         set_current_block(if_fastobject);
-        length = AddInstruction(new(zone()) HFixedArrayBaseLength(elements));
+        length = AddLoadFixedArrayLength(elements);
         checked_key = Add<HBoundsCheck>(key, length);
         access = AddInstruction(BuildFastElementAccess(
             elements, checked_key, val, elements_kind_branch,
@@ -7632,7 +7180,7 @@ bool HOptimizedGraphBuilder::TryInline(CallKind call_kind,
     return false;
   }
 
-#if !defined(V8_TARGET_ARCH_IA32)
+#if !V8_TARGET_ARCH_IA32
   // Target must be able to use caller's context.
   CompilationInfo* outer_info = current_info();
   if (target->context() != outer_info->closure()->context() ||
@@ -7781,7 +7329,7 @@ bool HOptimizedGraphBuilder::TryInline(CallKind call_kind,
                                      undefined,
                                      function_state()->inlining_kind(),
                                      undefined_receiver);
-#ifdef V8_TARGET_ARCH_IA32
+#if V8_TARGET_ARCH_IA32
   // IA32 only, overwrite the caller's context in the deoptimization
   // environment with the correct one.
   //
@@ -9127,7 +8675,7 @@ HInstruction* HOptimizedGraphBuilder::BuildBinaryOperation(
   HValue* context = environment()->LookupContext();
   Handle<Type> left_type = expr->left()->lower_type();
   Handle<Type> right_type = expr->right()->lower_type();
-  Handle<Type> result_type = expr->lower_type();
+  Handle<Type> result_type = expr->result_type();
   Maybe<int> fixed_right_arg = expr->fixed_right_arg();
   Representation left_rep = ToRepresentation(left_type);
   Representation right_rep = ToRepresentation(right_type);
@@ -9474,12 +9022,6 @@ void HOptimizedGraphBuilder::VisitCompareOperation(CompareOperation* expr) {
   Representation combined_rep = ToRepresentation(combined_type);
   Representation left_rep = ToRepresentation(left_type);
   Representation right_rep = ToRepresentation(right_type);
-  // Check if this expression was ever executed according to type feedback.
-  // Note that for the special typeof/null/undefined cases we get unknown here.
-  if (combined_type->Is(Type::None())) {
-    AddSoftDeoptimize();
-    combined_type = left_type = right_type = handle(Type::Any(), isolate());
-  }
 
   CHECK_ALIVE(VisitForValue(expr->left()));
   CHECK_ALIVE(VisitForValue(expr->right()));
@@ -9546,11 +9088,23 @@ void HOptimizedGraphBuilder::VisitCompareOperation(CompareOperation* expr) {
       result->set_position(expr->position());
       return ast_context()->ReturnInstruction(result, expr->id());
     }
+
+    // Code below assumes that we don't fall through.
+    UNREACHABLE();
   } else if (op == Token::IN) {
     HIn* result = new(zone()) HIn(context, left, right);
     result->set_position(expr->position());
     return ast_context()->ReturnInstruction(result, expr->id());
-  } else if (combined_type->Is(Type::Receiver())) {
+  }
+
+  // Cases handled below depend on collected type feedback. They should
+  // soft deoptimize when there is no type feedback.
+  if (combined_type->Is(Type::None())) {
+    AddSoftDeoptimize();
+    combined_type = left_type = right_type = handle(Type::Any(), isolate());
+  }
+
+  if (combined_type->Is(Type::Receiver())) {
     switch (op) {
       case Token::EQ:
       case Token::EQ_STRICT: {
@@ -10635,6 +10189,13 @@ void HOptimizedGraphBuilder::GenerateGeneratorThrow(CallRuntime* call) {
 }
 
 
+void HOptimizedGraphBuilder::GenerateDebugBreakInOptimizedCode(
+    CallRuntime* call) {
+  AddInstruction(new(zone()) HDebugBreak());
+  return ast_context()->ReturnValue(graph()->GetConstant0());
+}
+
+
 #undef CHECK_BAILOUT
 #undef CHECK_ALIVE
 
@@ -11045,8 +10606,8 @@ void HTracer::Trace(const char* name, HGraph* graph, LChunk* chunk) {
 
     {
       Tag HIR_tag(this, "HIR");
-      HInstruction* instruction = current->first();
-      while (instruction != NULL) {
+      for (HInstructionIterator it(current); !it.Done(); it.Advance()) {
+        HInstruction* instruction = it.Current();
         int bci = 0;
         int uses = instruction->UseCount();
         PrintIndent();
@@ -11055,7 +10616,6 @@ void HTracer::Trace(const char* name, HGraph* graph, LChunk* chunk) {
         trace_.Add(" ");
         instruction->PrintTo(&trace_);
         trace_.Add(" <|@\n");
-        instruction = instruction->next();
       }
     }
 

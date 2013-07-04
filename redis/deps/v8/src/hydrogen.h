@@ -46,6 +46,7 @@ class FunctionState;
 class HEnvironment;
 class HGraph;
 class HLoopInformation;
+class HOsrBuilder;
 class HTracer;
 class LAllocator;
 class LChunk;
@@ -230,6 +231,19 @@ class HPredecessorIterator BASE_EMBEDDED {
 };
 
 
+class HInstructionIterator BASE_EMBEDDED {
+ public:
+  explicit HInstructionIterator(HBasicBlock* block) : instr_(block->first()) { }
+
+  bool Done() { return instr_ == NULL; }
+  HInstruction* Current() { return instr_; }
+  void Advance() { instr_ = instr_->next(); }
+
+ private:
+  HInstruction* instr_;
+};
+
+
 class HLoopInformation: public ZoneObject {
  public:
   HLoopInformation(HBasicBlock* loop_header, Zone* zone)
@@ -283,7 +297,6 @@ class HGraph: public ZoneObject {
   void InsertRepresentationChanges();
   void MarkDeoptimizeOnUndefined();
   void ComputeMinusZeroChecks();
-  void ComputeSafeUint32Operations();
   bool ProcessArgumentsObject();
   void EliminateRedundantPhis();
   void Canonicalize();
@@ -346,24 +359,16 @@ class HGraph: public ZoneObject {
   void Verify(bool do_full_verify) const;
 #endif
 
-  bool has_osr_loop_entry() {
-    return osr_loop_entry_.is_set();
+  bool has_osr() {
+    return osr_ != NULL;
   }
 
-  HBasicBlock* osr_loop_entry() {
-    return osr_loop_entry_.get();
+  void set_osr(HOsrBuilder* osr) {
+    osr_ = osr;
   }
 
-  void set_osr_loop_entry(HBasicBlock* entry) {
-    osr_loop_entry_.set(entry);
-  }
-
-  ZoneList<HUnknownOSRValue*>* osr_values() {
-    return osr_values_.get();
-  }
-
-  void set_osr_values(ZoneList<HUnknownOSRValue*>* values) {
-    osr_values_.set(values);
+  HOsrBuilder* osr() {
+    return osr_;
   }
 
   int update_type_change_checksum(int delta) {
@@ -416,7 +421,18 @@ class HGraph: public ZoneObject {
     return depends_on_empty_array_proto_elements_;
   }
 
+  bool has_uint32_instructions() {
+    ASSERT(uint32_instructions_ == NULL || !uint32_instructions_->is_empty());
+    return uint32_instructions_ != NULL;
+  }
+
+  ZoneList<HInstruction*>* uint32_instructions() {
+    ASSERT(uint32_instructions_ == NULL || !uint32_instructions_->is_empty());
+    return uint32_instructions_;
+  }
+
   void RecordUint32Instruction(HInstruction* instr) {
+    ASSERT(uint32_instructions_ == NULL || !uint32_instructions_->is_empty());
     if (uint32_instructions_ == NULL) {
       uint32_instructions_ = new(zone()) ZoneList<HInstruction*>(4, zone());
     }
@@ -472,8 +488,7 @@ class HGraph: public ZoneObject {
   SetOncePointer<HConstant> constant_invalid_context_;
   SetOncePointer<HArgumentsObject> arguments_object_;
 
-  SetOncePointer<HBasicBlock> osr_loop_entry_;
-  SetOncePointer<ZoneList<HUnknownOSRValue*> > osr_values_;
+  HOsrBuilder* osr_;
 
   CompilationInfo* info_;
   Zone* zone_;
@@ -1112,6 +1127,8 @@ class HGraphBuilder {
 
   HLoadNamedField* AddLoadElements(HValue *object, HValue *typecheck = NULL);
 
+  HLoadNamedField* AddLoadFixedArrayLength(HValue *object);
+
   class IfBuilder {
    public:
     explicit IfBuilder(HGraphBuilder* builder,
@@ -1413,7 +1430,6 @@ class HGraphBuilder {
   int no_side_effects_scope_count_;
 };
 
-
 class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
  public:
   // A class encapsulating (lazily-allocated) break and continue blocks for
@@ -1571,8 +1587,6 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
   void VisitArithmeticExpression(BinaryOperation* expr);
 
   bool PreProcessOsrEntry(IterationStatement* statement);
-  // True iff. we are compiling for OSR and the statement is the entry.
-  bool HasOsrEntryAt(IterationStatement* statement);
   void VisitLoopBody(IterationStatement* stmt,
                      HBasicBlock* loop_entry,
                      BreakAndContinueInfo* break_info);
@@ -1934,9 +1948,12 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
 
   bool inline_bailout_;
 
+  HOsrBuilder* osr_;
+
   friend class FunctionState;  // Pushes and pops the state stack.
   friend class AstContext;  // Pushes and pops the AST context stack.
   friend class KeyedLoadFastElementStub;
+  friend class HOsrBuilder;
 
   DISALLOW_COPY_AND_ASSIGN(HOptimizedGraphBuilder);
 };

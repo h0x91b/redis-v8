@@ -111,7 +111,6 @@ class LChunkBuilder;
   V(ElementsKind)                              \
   V(EnterInlined)                              \
   V(EnvironmentMarker)                         \
-  V(FixedArrayBaseLength)                      \
   V(ForceRepresentation)                       \
   V(FunctionLiteral)                           \
   V(GetCachedArrayIndex)                       \
@@ -1062,6 +1061,9 @@ class HValue: public ZoneObject {
   void RemoveLastAddedRange();
   void ComputeInitialRange(Zone* zone);
 
+  // Escape analysis helpers.
+  virtual bool HasEscapingOperandAt(int index) { return true; }
+
   // Representation helpers.
   virtual Representation observed_input_representation(int index) {
     return Representation::None();
@@ -1433,6 +1435,7 @@ class HDummyUse: public HTemplateInstruction<1> {
 
   HValue* value() { return OperandAt(0); }
 
+  virtual bool HasEscapingOperandAt(int index) { return false; }
   virtual Representation RequiredInputRepresentation(int index) {
     return Representation::None();
   }
@@ -1892,6 +1895,7 @@ class HSimulate: public HInstruction {
   virtual int OperandCount() { return values_.length(); }
   virtual HValue* OperandAt(int index) const { return values_[index]; }
 
+  virtual bool HasEscapingOperandAt(int index) { return false; }
   virtual Representation RequiredInputRepresentation(int index) {
     return Representation::None();
   }
@@ -2537,29 +2541,6 @@ class HCallRuntime: public HCall<1> {
 };
 
 
-class HFixedArrayBaseLength: public HUnaryOperation {
- public:
-  explicit HFixedArrayBaseLength(HValue* value) : HUnaryOperation(value) {
-    set_type(HType::Smi());
-    set_representation(Representation::Smi());
-    SetFlag(kUseGVN);
-    SetGVNFlag(kDependsOnArrayLengths);
-  }
-
-  virtual Representation RequiredInputRepresentation(int index) {
-    return Representation::Tagged();
-  }
-
-  DECLARE_CONCRETE_INSTRUCTION(FixedArrayBaseLength)
-
- protected:
-  virtual bool DataEquals(HValue* other) { return true; }
-
- private:
-  virtual bool IsDeletable() const { return true; }
-};
-
-
 class HMapEnumLength: public HUnaryOperation {
  public:
   explicit HMapEnumLength(HValue* value) : HUnaryOperation(value) {
@@ -2801,6 +2782,7 @@ class HCheckMaps: public HTemplateInstruction<2> {
     return check_map;
   }
 
+  virtual bool HasEscapingOperandAt(int index) { return false; }
   virtual Representation RequiredInputRepresentation(int index) {
     return Representation::Tagged();
   }
@@ -3228,6 +3210,7 @@ class HArgumentsObject: public HTemplateInstruction<0> {
   virtual int OperandCount() { return values_.length(); }
   virtual HValue* OperandAt(int index) const { return values_[index]; }
 
+  virtual bool HasEscapingOperandAt(int index) { return false; }
   virtual Representation RequiredInputRepresentation(int index) {
     return Representation::None();
   }
@@ -5431,6 +5414,7 @@ class HLoadNamedField: public HTemplateInstruction<2> {
   HObjectAccess access() const { return access_; }
   Representation field_representation() const { return representation_; }
 
+  virtual bool HasEscapingOperandAt(int index) { return false; }
   virtual Representation RequiredInputRepresentation(int index) {
     return Representation::Tagged();
   }
@@ -5763,6 +5747,7 @@ class HStoreNamedField: public HTemplateInstruction<2> {
 
   DECLARE_CONCRETE_INSTRUCTION(StoreNamedField)
 
+  virtual bool HasEscapingOperandAt(int index) { return index == 1; }
   virtual Representation RequiredInputRepresentation(int index) {
     if (FLAG_track_double_fields &&
         index == 1 && field_representation_.IsDouble()) {
@@ -5868,6 +5853,7 @@ class HStoreKeyed
       : elements_kind_(elements_kind),
       index_offset_(0),
       is_dehoisted_(false),
+      is_uninitialized_(false),
       new_space_dominator_(NULL) {
     SetOperandAt(0, obj);
     SetOperandAt(1, key);
@@ -5895,6 +5881,7 @@ class HStoreKeyed
     }
   }
 
+  virtual bool HasEscapingOperandAt(int index) { return index != 0; }
   virtual Representation RequiredInputRepresentation(int index) {
     // kind_fast:       tagged[int32] = tagged
     // kind_double:     tagged[int32] = double
@@ -5927,6 +5914,9 @@ class HStoreKeyed
 
   virtual Representation observed_input_representation(int index) {
     if (index < 2) return RequiredInputRepresentation(index);
+    if (IsUninitialized()) {
+      return Representation::None();
+    }
     if (IsFastSmiElementsKind(elements_kind())) {
       return Representation::Smi();
     }
@@ -5953,6 +5943,10 @@ class HStoreKeyed
   void SetKey(HValue* key) { SetOperandAt(1, key); }
   bool IsDehoisted() { return is_dehoisted_; }
   void SetDehoisted(bool is_dehoisted) { is_dehoisted_ = is_dehoisted; }
+  bool IsUninitialized() { return is_uninitialized_; }
+  void SetUninitialized(bool is_uninitialized) {
+    is_uninitialized_ = is_uninitialized;
+  }
 
   bool IsConstantHoleStore() {
     return value()->IsConstant() && HConstant::cast(value())->IsTheHole();
@@ -5983,7 +5977,8 @@ class HStoreKeyed
  private:
   ElementsKind elements_kind_;
   uint32_t index_offset_;
-  bool is_dehoisted_;
+  bool is_dehoisted_ : 1;
+  bool is_uninitialized_ : 1;
   HValue* new_space_dominator_;
 };
 

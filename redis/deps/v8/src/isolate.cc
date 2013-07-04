@@ -29,10 +29,12 @@
 
 #include "v8.h"
 
+#include "allocation-inl.h"
 #include "ast.h"
 #include "bootstrapper.h"
 #include "codegen.h"
 #include "compilation-cache.h"
+#include "cpu-profiler.h"
 #include "debug.h"
 #include "deoptimizer.h"
 #include "heap-profiler.h"
@@ -45,6 +47,7 @@
 #include "platform.h"
 #include "regexp-stack.h"
 #include "runtime-profiler.h"
+#include "sampler.h"
 #include "scopeinfo.h"
 #include "serialize.h"
 #include "simulator.h"
@@ -107,6 +110,7 @@ void ThreadLocalTop::InitializeInternal() {
   // is complete.
   pending_exception_ = NULL;
   has_pending_message_ = false;
+  rethrowing_message_ = false;
   pending_message_obj_ = NULL;
   pending_message_script_ = NULL;
   scheduled_exception_ = NULL;
@@ -116,7 +120,7 @@ void ThreadLocalTop::InitializeInternal() {
 void ThreadLocalTop::Initialize() {
   InitializeInternal();
 #ifdef USE_SIMULATOR
-#ifdef V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM
   simulator_ = Simulator::current(isolate_);
 #elif V8_TARGET_ARCH_MIPS
   simulator_ = Simulator::current(isolate_);
@@ -486,7 +490,8 @@ void Isolate::Iterate(ObjectVisitor* v, ThreadLocalTop* thread) {
        block != NULL;
        block = TRY_CATCH_FROM_ADDRESS(block->next_)) {
     v->VisitPointer(BitCast<Object**>(&(block->exception_)));
-    v->VisitPointer(BitCast<Object**>(&(block->message_)));
+    v->VisitPointer(BitCast<Object**>(&(block->message_obj_)));
+    v->VisitPointer(BitCast<Object**>(&(block->message_script_)));
   }
 
   // Iterate over pointers on native execution stack.
@@ -1162,6 +1167,22 @@ void Isolate::ScheduleThrow(Object* exception) {
 }
 
 
+void Isolate::RestorePendingMessageFromTryCatch(v8::TryCatch* handler) {
+  ASSERT(handler == try_catch_handler());
+  ASSERT(handler->HasCaught());
+  ASSERT(handler->rethrow_);
+  ASSERT(handler->capture_message_);
+  Object* message = reinterpret_cast<Object*>(handler->message_obj_);
+  Object* script = reinterpret_cast<Object*>(handler->message_script_);
+  ASSERT(message->IsJSMessageObject() || message->IsTheHole());
+  ASSERT(script->IsScript() || script->IsTheHole());
+  thread_local_top()->pending_message_obj_ = message;
+  thread_local_top()->pending_message_script_ = script;
+  thread_local_top()->pending_message_start_pos_ = handler->message_start_pos_;
+  thread_local_top()->pending_message_end_pos_ = handler->message_end_pos_;
+}
+
+
 Failure* Isolate::PromoteScheduledException() {
   MaybeObject* thrown = scheduled_exception();
   clear_scheduled_exception();
@@ -1280,8 +1301,11 @@ void Isolate::DoThrow(Object* exception, MessageLocation* location) {
       ShouldReportException(&can_be_caught_externally, catchable_by_javascript);
   bool report_exception = catchable_by_javascript && should_report_exception;
   bool try_catch_needs_message =
-      can_be_caught_externally && try_catch_handler()->capture_message_;
+      can_be_caught_externally && try_catch_handler()->capture_message_ &&
+      !thread_local_top()->rethrowing_message_;
   bool bootstrapping = bootstrapper()->IsActive();
+
+  thread_local_top()->rethrowing_message_ = false;
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // Notify debugger of exception.
@@ -1464,8 +1488,9 @@ void Isolate::ReportPendingMessages() {
         HandleScope scope(this);
         Handle<Object> message_obj(thread_local_top_.pending_message_obj_,
                                    this);
-        if (thread_local_top_.pending_message_script_ != NULL) {
-          Handle<Script> script(thread_local_top_.pending_message_script_);
+        if (!thread_local_top_.pending_message_script_->IsTheHole()) {
+          Handle<Script> script(
+              Script::cast(thread_local_top_.pending_message_script_));
           int start_pos = thread_local_top_.pending_message_start_pos_;
           int end_pos = thread_local_top_.pending_message_end_pos_;
           MessageLocation location(script, start_pos, end_pos);
@@ -1487,8 +1512,9 @@ MessageLocation Isolate::GetMessageLocation() {
       thread_local_top_.pending_exception_ != heap()->termination_exception() &&
       thread_local_top_.has_pending_message_ &&
       !thread_local_top_.pending_message_obj_->IsTheHole() &&
-      thread_local_top_.pending_message_script_ != NULL) {
-    Handle<Script> script(thread_local_top_.pending_message_script_);
+      !thread_local_top_.pending_message_obj_->IsTheHole()) {
+    Handle<Script> script(
+        Script::cast(thread_local_top_.pending_message_script_));
     int start_pos = thread_local_top_.pending_message_start_pos_;
     int end_pos = thread_local_top_.pending_message_end_pos_;
     return MessageLocation(script, start_pos, end_pos);
@@ -1625,7 +1651,7 @@ char* Isolate::RestoreThread(char* from) {
   // This might be just paranoia, but it seems to be needed in case a
   // thread_local_top_ is restored on a separate OS thread.
 #ifdef USE_SIMULATOR
-#ifdef V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM
   thread_local_top()->simulator_ = Simulator::current(this);
 #elif V8_TARGET_ARCH_MIPS
   thread_local_top()->simulator_ = Simulator::current(this);
@@ -1738,6 +1764,7 @@ Isolate::Isolate()
       descriptor_lookup_cache_(NULL),
       handle_scope_implementer_(NULL),
       unicode_cache_(NULL),
+      runtime_zone_(this),
       in_use_list_(0),
       free_list_(0),
       preallocated_storage_preallocated_(false),
@@ -1776,8 +1803,8 @@ Isolate::Isolate()
   thread_manager_ = new ThreadManager();
   thread_manager_->isolate_ = this;
 
-#if defined(V8_TARGET_ARCH_ARM) && !defined(__arm__) || \
-    defined(V8_TARGET_ARCH_MIPS) && !defined(__mips__)
+#if V8_TARGET_ARCH_ARM && !defined(__arm__) || \
+    V8_TARGET_ARCH_MIPS && !defined(__mips__)
   simulator_initialized_ = false;
   simulator_i_cache_ = NULL;
   simulator_redirection_ = NULL;
@@ -1936,6 +1963,18 @@ void Isolate::SetIsolateThreadLocals(Isolate* isolate,
 Isolate::~Isolate() {
   TRACE_ISOLATE(destructor);
 
+  // Has to be called while counters_ are still alive
+  runtime_zone_.DeleteKeptSegment();
+
+  // The entry stack must be empty when we get here,
+  // except for the default isolate, where it can
+  // still contain up to one entry stack item
+  ASSERT(entry_stack_ == NULL || this == default_isolate_);
+  ASSERT(entry_stack_ == NULL || entry_stack_->previous_item == NULL);
+
+  delete entry_stack_;
+  entry_stack_ = NULL;
+
   delete[] assembler_spare_buffer_;
   assembler_spare_buffer_ = NULL;
 
@@ -2002,6 +2041,9 @@ Isolate::~Isolate() {
   delete global_handles_;
   global_handles_ = NULL;
 
+  delete string_stream_debug_object_cache_;
+  string_stream_debug_object_cache_ = NULL;
+
   delete external_reference_table_;
   external_reference_table_ = NULL;
 
@@ -2039,15 +2081,24 @@ void Isolate::PropagatePendingExceptionToExternalTryCatch() {
     try_catch_handler()->has_terminated_ = true;
     try_catch_handler()->exception_ = heap()->null_value();
   } else {
+    v8::TryCatch* handler = try_catch_handler();
     // At this point all non-object (failure) exceptions have
     // been dealt with so this shouldn't fail.
     ASSERT(!pending_exception()->IsFailure());
-    try_catch_handler()->can_continue_ = true;
-    try_catch_handler()->has_terminated_ = false;
-    try_catch_handler()->exception_ = pending_exception();
-    if (!thread_local_top_.pending_message_obj_->IsTheHole()) {
-      try_catch_handler()->message_ = thread_local_top_.pending_message_obj_;
-    }
+    ASSERT(thread_local_top_.pending_message_obj_->IsJSMessageObject() ||
+           thread_local_top_.pending_message_obj_->IsTheHole());
+    ASSERT(thread_local_top_.pending_message_script_->IsScript() ||
+           thread_local_top_.pending_message_script_->IsTheHole());
+    handler->can_continue_ = true;
+    handler->has_terminated_ = false;
+    handler->exception_ = pending_exception();
+    // Propagate to the external try-catch only if we got an actual message.
+    if (thread_local_top_.pending_message_obj_->IsTheHole()) return;
+
+    handler->message_obj_ = thread_local_top_.pending_message_obj_;
+    handler->message_script_ = thread_local_top_.pending_message_script_;
+    handler->message_start_pos_ = thread_local_top_.pending_message_start_pos_;
+    handler->message_end_pos_ = thread_local_top_.pending_message_end_pos_;
   }
 }
 
@@ -2134,7 +2185,7 @@ bool Isolate::Init(Deserializer* des) {
 
   // Initialize other runtime facilities
 #if defined(USE_SIMULATOR)
-#if defined(V8_TARGET_ARCH_ARM) || defined(V8_TARGET_ARCH_MIPS)
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS
   Simulator::Initialize(this);
 #endif
 #endif

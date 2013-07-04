@@ -75,6 +75,9 @@ class V8EXPORT CpuProfileNode {
   /** Returns function name (empty string for anonymous functions.) */
   Handle<String> GetFunctionName() const;
 
+  /** Returns id of the script where function is located. */
+  int GetScriptId() const;
+
   /** Returns resource name for script from where the function originates. */
   Handle<String> GetScriptResourceName() const;
 
@@ -411,9 +414,6 @@ class V8EXPORT HeapProfiler {
 
   /** Returns a snapshot by index. */
   const HeapSnapshot* GetHeapSnapshot(int index);
-
-  /** Returns a profile by uid. */
-  V8_DEPRECATED(const HeapSnapshot* FindHeapSnapshot(unsigned uid));
 
   /**
    * Returns SnapshotObjectId for a heap object referenced by |value| if

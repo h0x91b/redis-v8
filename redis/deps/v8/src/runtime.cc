@@ -38,6 +38,7 @@
 #include "compilation-cache.h"
 #include "compiler.h"
 #include "cpu.h"
+#include "cpu-profiler.h"
 #include "dateparser-inl.h"
 #include "debug.h"
 #include "deoptimizer.h"
@@ -1450,31 +1451,29 @@ static inline Object* GetPrototypeSkipHiddenPrototypes(Isolate* isolate,
 
 
 RUNTIME_FUNCTION(MaybeObject*, Runtime_SetPrototype) {
-  SealHandleScope shs(isolate);
+  HandleScope scope(isolate);
   ASSERT(args.length() == 2);
-  CONVERT_ARG_CHECKED(JSObject, obj, 0);
-  CONVERT_ARG_CHECKED(Object, prototype, 1);
+  CONVERT_ARG_HANDLE_CHECKED(JSObject, obj, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, prototype, 1);
   if (FLAG_harmony_observation && obj->map()->is_observed()) {
-    HandleScope scope(isolate);
-    Handle<JSObject> receiver(obj);
-    Handle<Object> value(prototype, isolate);
     Handle<Object> old_value(
-        GetPrototypeSkipHiddenPrototypes(isolate, *receiver), isolate);
+        GetPrototypeSkipHiddenPrototypes(isolate, *obj), isolate);
 
-    MaybeObject* result = receiver->SetPrototype(*value, true);
-    Handle<Object> hresult;
-    if (!result->ToHandle(&hresult, isolate)) return result;
+    Handle<Object> result = JSObject::SetPrototype(obj, prototype, true);
+    if (result.is_null()) return Failure::Exception();
 
     Handle<Object> new_value(
-        GetPrototypeSkipHiddenPrototypes(isolate, *receiver), isolate);
+        GetPrototypeSkipHiddenPrototypes(isolate, *obj), isolate);
     if (!new_value->SameValue(*old_value)) {
-      JSObject::EnqueueChangeRecord(receiver, "prototype",
+      JSObject::EnqueueChangeRecord(obj, "prototype",
                                     isolate->factory()->proto_string(),
                                     old_value);
     }
-    return *hresult;
+    return *result;
   }
-  return obj->SetPrototype(prototype, true);
+  Handle<Object> result = JSObject::SetPrototype(obj, prototype, true);
+  if (result.is_null()) return Failure::Exception();
+  return *result;
 }
 
 
@@ -3600,8 +3599,8 @@ MUST_USE_RESULT static MaybeObject* StringReplaceGlobalAtomRegExpWithString(
   ASSERT(subject->IsFlat());
   ASSERT(replacement->IsFlat());
 
-  Zone zone(isolate);
-  ZoneList<int> indices(8, &zone);
+  ZoneScope zone_scope(isolate->runtime_zone());
+  ZoneList<int> indices(8, zone_scope.zone());
   ASSERT_EQ(JSRegExp::ATOM, pattern_regexp->TypeTag());
   String* pattern =
       String::cast(pattern_regexp->DataAt(JSRegExp::kAtomPatternIndex));
@@ -3610,7 +3609,7 @@ MUST_USE_RESULT static MaybeObject* StringReplaceGlobalAtomRegExpWithString(
   int replacement_len = replacement->length();
 
   FindStringIndicesDispatch(
-      isolate, *subject, pattern, &indices, 0xffffffff, &zone);
+      isolate, *subject, pattern, &indices, 0xffffffff, zone_scope.zone());
 
   int matches = indices.length();
   if (matches == 0) return *subject;
@@ -3686,8 +3685,8 @@ MUST_USE_RESULT static MaybeObject* StringReplaceGlobalRegExpWithString(
   int subject_length = subject->length();
 
   // CompiledReplacement uses zone allocation.
-  Zone zone(isolate);
-  CompiledReplacement compiled_replacement(&zone);
+  ZoneScope zone_scope(isolate->runtime_zone());
+  CompiledReplacement compiled_replacement(zone_scope.zone());
   bool simple_replace = compiled_replacement.Compile(replacement,
                                                      capture_count,
                                                      subject_length);
@@ -4220,14 +4219,14 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringMatch) {
 
   int capture_count = regexp->CaptureCount();
 
-  Zone zone(isolate);
-  ZoneList<int> offsets(8, &zone);
+  ZoneScope zone_scope(isolate->runtime_zone());
+  ZoneList<int> offsets(8, zone_scope.zone());
 
   while (true) {
     int32_t* match = global_cache.FetchNext();
     if (match == NULL) break;
-    offsets.Add(match[0], &zone);  // start
-    offsets.Add(match[1], &zone);  // end
+    offsets.Add(match[0], zone_scope.zone());  // start
+    offsets.Add(match[1], zone_scope.zone());  // end
   }
 
   if (global_cache.HasException()) return Failure::Exception();
@@ -6312,18 +6311,18 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringSplit) {
 
   static const int kMaxInitialListCapacity = 16;
 
-  Zone zone(isolate);
+  ZoneScope zone_scope(isolate->runtime_zone());
 
   // Find (up to limit) indices of separator and end-of-string in subject
   int initial_capacity = Min<uint32_t>(kMaxInitialListCapacity, limit);
-  ZoneList<int> indices(initial_capacity, &zone);
+  ZoneList<int> indices(initial_capacity, zone_scope.zone());
   if (!pattern->IsFlat()) FlattenString(pattern);
 
   FindStringIndicesDispatch(isolate, *subject, *pattern,
-                            &indices, limit, &zone);
+                            &indices, limit, zone_scope.zone());
 
   if (static_cast<uint32_t>(indices.length()) < limit) {
-    indices.Add(subject_length, &zone);
+    indices.Add(subject_length, zone_scope.zone());
   }
 
   // The list indices now contains the end of each part to create.
@@ -8314,8 +8313,13 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompleteOptimization) {
   ASSERT(args.length() == 1);
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
   if (FLAG_parallel_recompilation && V8::UseCrankshaft()) {
-    // While function is in optimization pipeline, it is marked with builtins.
-    while (function->code()->kind() == Code::BUILTIN) {
+    // While function is in optimization pipeline, it is marked accordingly.
+    // Note that if the debugger is activated during parallel recompilation,
+    // the function will be marked with the lazy-recompile builtin, which is
+    // not related to parallel recompilation.
+    while (function->IsMarkedForParallelRecompilation() ||
+           function->IsInRecompileQueue() ||
+           function->IsMarkedForInstallingRecompiledCode()) {
       isolate->optimizing_compiler_thread()->InstallOptimizedFunctions();
       OS::Sleep(50);
     }
@@ -12097,14 +12101,28 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetDisableBreak) {
 }
 
 
+static bool IsPositionAlignmentCodeCorrect(int alignment) {
+  return alignment == STATEMENT_ALIGNED || alignment == BREAK_POSITION_ALIGNED;
+}
+
+
 RUNTIME_FUNCTION(MaybeObject*, Runtime_GetBreakLocations) {
   HandleScope scope(isolate);
-  ASSERT(args.length() == 1);
+  ASSERT(args.length() == 2);
 
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, fun, 0);
+  CONVERT_NUMBER_CHECKED(int32_t, statement_aligned_code, Int32, args[1]);
+
+  if (!IsPositionAlignmentCodeCorrect(statement_aligned_code)) {
+    return isolate->ThrowIllegalOperation();
+  }
+  BreakPositionAlignment alignment =
+      static_cast<BreakPositionAlignment>(statement_aligned_code);
+
   Handle<SharedFunctionInfo> shared(fun->shared());
   // Find the number of break points
-  Handle<Object> break_locations = Debug::GetSourceBreakLocations(shared);
+  Handle<Object> break_locations =
+      Debug::GetSourceBreakLocations(shared, alignment);
   if (break_locations->IsUndefined()) return isolate->heap()->undefined_value();
   // Return array as JS array
   return *isolate->factory()->NewJSArrayWithElements(
@@ -12137,14 +12155,22 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetFunctionBreakPoint) {
 // GetScriptFromScriptData.
 // args[0]: script to set break point in
 // args[1]: number: break source position (within the script source)
-// args[2]: number: break point object
+// args[2]: number, breakpoint position alignment
+// args[3]: number: break point object
 RUNTIME_FUNCTION(MaybeObject*, Runtime_SetScriptBreakPoint) {
   HandleScope scope(isolate);
-  ASSERT(args.length() == 3);
+  ASSERT(args.length() == 4);
   CONVERT_ARG_HANDLE_CHECKED(JSValue, wrapper, 0);
   CONVERT_NUMBER_CHECKED(int32_t, source_position, Int32, args[1]);
   RUNTIME_ASSERT(source_position >= 0);
-  Handle<Object> break_point_object_arg = args.at<Object>(2);
+  CONVERT_NUMBER_CHECKED(int32_t, statement_aligned_code, Int32, args[2]);
+  Handle<Object> break_point_object_arg = args.at<Object>(3);
+
+  if (!IsPositionAlignmentCodeCorrect(statement_aligned_code)) {
+    return isolate->ThrowIllegalOperation();
+  }
+  BreakPositionAlignment alignment =
+      static_cast<BreakPositionAlignment>(statement_aligned_code);
 
   // Get the script from the script wrapper.
   RUNTIME_ASSERT(wrapper->value()->IsScript());
@@ -12152,7 +12178,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetScriptBreakPoint) {
 
   // Set break point.
   if (!isolate->debug()->SetBreakPointForScript(script, break_point_object_arg,
-                                                &source_position)) {
+                                                &source_position,
+                                                alignment)) {
     return  isolate->heap()->undefined_value();
   }
 

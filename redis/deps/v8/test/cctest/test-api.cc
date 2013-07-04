@@ -38,16 +38,17 @@
 
 #include "api.h"
 #include "arguments.h"
-#include "isolate.h"
-#include "compilation-cache.h"
-#include "execution.h"
-#include "objects.h"
-#include "snapshot.h"
-#include "platform.h"
-#include "utils.h"
 #include "cctest.h"
+#include "compilation-cache.h"
+#include "cpu-profiler.h"
+#include "execution.h"
+#include "isolate.h"
+#include "objects.h"
 #include "parser.h"
+#include "platform.h"
+#include "snapshot.h"
 #include "unicode-inl.h"
+#include "utils.h"
 
 static const bool kLogThreading = false;
 
@@ -3714,7 +3715,7 @@ TEST(OutOfMemory) {
   static const int K = 1024;
   v8::ResourceConstraints constraints;
   constraints.set_max_young_space_size(256 * K);
-  constraints.set_max_old_space_size(4 * K * K);
+  constraints.set_max_old_space_size(5 * K * K);
   v8::SetResourceConstraints(&constraints);
 
   // Execute a script that causes out of memory.
@@ -3755,7 +3756,7 @@ TEST(OutOfMemoryNested) {
   static const int K = 1024;
   v8::ResourceConstraints constraints;
   constraints.set_max_young_space_size(256 * K);
-  constraints.set_max_old_space_size(4 * K * K);
+  constraints.set_max_old_space_size(5 * K * K);
   v8::SetResourceConstraints(&constraints);
 
   v8::HandleScope scope(v8::Isolate::GetCurrent());
@@ -3784,7 +3785,7 @@ TEST(HugeConsStringOutOfMemory) {
   static const int K = 1024;
   v8::ResourceConstraints constraints;
   constraints.set_max_young_space_size(256 * K);
-  constraints.set_max_old_space_size(3 * K * K);
+  constraints.set_max_old_space_size(4 * K * K);
   v8::SetResourceConstraints(&constraints);
 
   // Execute a script that causes out of memory.
@@ -4499,6 +4500,47 @@ TEST(TryCatchNested) {
   TryCatchNestedHelper(5);
   CHECK(try_catch.HasCaught());
   CHECK_EQ(0, strcmp(*v8::String::Utf8Value(try_catch.Exception()), "back"));
+}
+
+
+void TryCatchMixedNestingCheck(v8::TryCatch* try_catch) {
+  CHECK(try_catch->HasCaught());
+  Handle<Message> message = try_catch->Message();
+  Handle<Value> resource = message->GetScriptResourceName();
+  CHECK_EQ(0, strcmp(*v8::String::Utf8Value(resource), "inner"));
+  CHECK_EQ(0, strcmp(*v8::String::Utf8Value(message->Get()),
+                     "Uncaught Error: a"));
+  CHECK_EQ(1, message->GetLineNumber());
+  CHECK_EQ(6, message->GetStartColumn());
+}
+
+
+void TryCatchMixedNestingHelper(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  ApiTestFuzzer::Fuzz();
+  v8::TryCatch try_catch;
+  CompileRunWithOrigin("throw new Error('a');\n", "inner", 0, 0);
+  CHECK(try_catch.HasCaught());
+  TryCatchMixedNestingCheck(&try_catch);
+  try_catch.ReThrow();
+}
+
+
+// This test ensures that an outer TryCatch in the following situation:
+//   C++/TryCatch -> JS -> C++/TryCatch -> JS w/ SyntaxError
+// does not clobber the Message object generated for the inner TryCatch.
+// This exercises the ability of TryCatch.ReThrow() to restore the
+// inner pending Message before throwing the exception again.
+TEST(TryCatchMixedNesting) {
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::V8::Initialize();
+  v8::TryCatch try_catch;
+  Local<ObjectTemplate> templ = ObjectTemplate::New();
+  templ->Set(v8_str("TryCatchMixedNestingHelper"),
+             v8::FunctionTemplate::New(TryCatchMixedNestingHelper));
+  LocalContext context(0, templ);
+  CompileRunWithOrigin("TryCatchMixedNestingHelper();\n", "outer", 1, 1);
+  TryCatchMixedNestingCheck(&try_catch);
 }
 
 

@@ -27,7 +27,7 @@
 
 #include "v8.h"
 
-#if defined(V8_TARGET_ARCH_IA32)
+#if V8_TARGET_ARCH_IA32
 
 #include "ia32/lithium-codegen-ia32.h"
 #include "ic.h"
@@ -1770,14 +1770,6 @@ void LCodeGen::DoConstantT(LConstantT* instr) {
   } else {
     __ Set(reg, Immediate(handle));
   }
-}
-
-
-void LCodeGen::DoFixedArrayBaseLength(
-    LFixedArrayBaseLength* instr) {
-  Register result = ToRegister(instr->result());
-  Register array = ToRegister(instr->value());
-  __ mov(result, FieldOperand(array, FixedArrayBase::kLengthOffset));
 }
 
 
