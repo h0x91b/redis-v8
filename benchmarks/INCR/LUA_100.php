@@ -5,12 +5,12 @@ Predis\Autoloader::register();
 
 $redis = new Predis\Client('unix:///tmp/redis.sock');
 
-$redis->set('bench_key','value');
+$redis->set('bench_key','1');
 
-$sha1 = $redis->script("LOAD","local a = {} for i=1, 10 do a[i] = redis.call('GET','bench_key') end return cjson.encode(a)");
+$sha1 = $redis->script("LOAD","local a = 0 for i=1, 100 do a = redis.call('INCR','bench_key') end return a");
 
 $start = microtime(TRUE);
-for($i=0;$i<100000/10;$i++){
+for($i=0;$i<100000/100;$i++){
 	$redis->evalsha($sha1,0);
 }
 echo "Speed: ".(round(100000/(microtime(TRUE)-$start)))." ops/sec\n";
