@@ -10,6 +10,7 @@ client.set('bench_key', '1', function(err,reply){
 	var done = 0;
 	for(var i=0;i<1000000/300;i++){
 		client.js(['var ret = 0; for(var i=0;i<300;i++) ret = redis.incr("bench_key"); return ret;'],function(err, reply){
+			reply = JSON.parse(reply);
 			done++;
 			if(done>=1000000/300){
 				var dt = new Date - start;

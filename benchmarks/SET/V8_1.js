@@ -9,6 +9,7 @@ var start = +new Date;
 var done = 0;
 for(var i=0;i<100000;i++){
 	client.js(['return redis.set("bench_key","value")'],function(err, reply){
+		reply = JSON.parse(reply);
 		done++;
 		if(done==100000){
 			var dt = new Date - start;
