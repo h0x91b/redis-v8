@@ -5,7 +5,7 @@ Predis\Autoloader::register();
 
 $redis = new Predis\Client('unix:///tmp/redis.sock');
 
-$sha1 = $redis->script("LOAD","local a = {} for i=1, 300 do a[i] = redis.call('SET','value') end");
+$sha1 = $redis->script("LOAD","local a = {} for i=1, 300 do a[i] = redis.call('SET','bench_key', 'value') end");
 
 $start = microtime(TRUE);
 for($i=0;$i<100000/300;$i++){
