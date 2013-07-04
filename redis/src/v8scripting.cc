@@ -413,7 +413,7 @@ void initV8(){
 	
 	Locker v8Locker(isolate);
 	
-	// Enter the created context for compiling and runing
+	// Enter the created context for compiling and running
 	v8::Context::Scope context_scope(v8_context);
 	
 	v8::Handle<v8::String> source = v8::String::New((const char*)v8core_js);
