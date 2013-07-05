@@ -68,9 +68,9 @@ else ifeq ($(uname_S),Darwin)
 	
 else
   FINAL_CFLAGS= $(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
-  FINAL_LDFLAGS= $(LDFLAGS) $(REDIS_LDFLAGS) -g -rdynamic -ggdb  -I../deps/v8/src
+  FINAL_LDFLAGS= $(LDFLAGS) $(REDIS_LDFLAGS) -g -ggdb  -I../deps/v8/src
   FINAL_LIBS= -lm -pthread
-  DEBUG= -g -rdynamic -ggdb
+  DEBUG= -g -ggdb
 endif
 
 # Include paths to dependencies
@@ -133,7 +133,7 @@ all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCH
 include Makefile.dep
 
 dep:
-	gcc -pedantic -Wall -Wno-write-strings -O2 -g -rdynamic -ggdb   -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
+	gcc -pedantic -Wall -Wno-write-strings -O2 -g -ggdb   -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -MM *.cc > Makefile.dep
 	$(REDIS_CC) -MM *.c >> Makefile.dep
 
 .PHONY: dep
