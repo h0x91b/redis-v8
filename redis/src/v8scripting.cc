@@ -212,11 +212,11 @@ v8::Handle<v8::Value> parse_response(){
 	return v8::Undefined();
 }
 
-v8::Handle<v8::Value> getLastError(const v8::Arguments& args) {
-	return v8::String::New(lastError);
+void getLastError(const v8::FunctionCallbackInfo<v8::Value>& args) {
+	args.GetReturnValue().Set(v8::String::New(lastError));
 }
 
-v8::Handle<v8::Value> raw_get(const v8::Arguments& args) {
+void raw_get(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	redisClient *c = client;
 	v8::String::Utf8Value strkey(args[0]);
 	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
@@ -224,15 +224,16 @@ v8::Handle<v8::Value> raw_get(const v8::Arguments& args) {
 	decrRefCountPtr(key);
 	if(reply == NULL || reply->type != REDIS_STRING){
 		//printf("reply is NULL or not string\n");
-		return v8::Null();
+		args.GetReturnValue().Set(v8::Null());
+		return;
 	}
 	//printf("reply is %s\n",reply->ptr);
 	v8::Local<v8::String> v8reply = v8::String::New((const char *)reply->ptr);
 	//printf("return to v8\n");
-	return v8reply;
+	args.GetReturnValue().Set(v8reply);
 }
 
-v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
+void raw_set(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	redisClient *c = client;
 	v8::String::Utf8Value strkey(args[0]);
 	v8::String::Utf8Value strval(args[1]);
@@ -242,10 +243,10 @@ v8::Handle<v8::Value> raw_set(const v8::Arguments& args) {
 	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"set",key,c->db->id);
 	decrRefCountPtr(key);
 	decrRefCountPtr(val);
-	return v8::Boolean::New(true);
+	args.GetReturnValue().Set(v8::Boolean::New(true));
 }
 
-v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
+void raw_incrby(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	redisClient *c = client;
 	long long value, oldvalue, incr;
 	robj *newvalue, *key, *reply;
@@ -260,14 +261,15 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 		strcpy(lastError,"-value is not integer");
 		printf("lastError set to '%s'\n",lastError);
 		decrRefCountPtr(key);
-		return v8::Boolean::New(false);
+		args.GetReturnValue().Set(v8::Boolean::New(false));
+		return;
 	}
     if (getLongLongFromObjectOrReplyPtr(c,reply,&value,NULL) != REDIS_OK) {
 		memset(lastError,0,4096);
 		strcpy(lastError,"-getLongLongFromObjectOrReply failed");
 		printf("lastError set to '%s'\n",lastError);
-		decrRefCountPtr(key);
-		return v8::Boolean::New(false);
+		args.GetReturnValue().Set(v8::Boolean::New(false));
+		return;
 	}
 	
 	oldvalue = value;
@@ -280,7 +282,8 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 		strcpy(lastError,"-increment or decrement would overflow");
 		printf("lastError set to '%s'\n",lastError);
 		decrRefCountPtr(key);
-		return v8::Boolean::New(false);
+		args.GetReturnValue().Set(v8::Boolean::New(false));
+		return;
 	}
 	value += incr;
 	newvalue = createStringObjectFromLongLongPtr(value);
@@ -301,14 +304,15 @@ v8::Handle<v8::Value> raw_incrby(const v8::Arguments& args) {
 		v8::Local<v8::String> v8reply = v8::String::New(buf);
 		decrRefCountPtr(key);
 		decrRefCountPtr(newvalue);
-		return v8reply;
+		args.GetReturnValue().Set(v8reply);
+		return;
 	}
 	v8::Local<v8::Number> v8reply = v8::Number::New(value);
 	decrRefCountPtr(key);
-	return v8reply;
+	args.GetReturnValue().Set(v8reply);
 }
 
-v8::Handle<v8::Value> run(const v8::Arguments& args) {
+void run(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	v8::Isolate* isolate = v8_context->GetIsolate();
 	Locker v8Locker(isolate);
 	int argc = args.Length();
@@ -333,7 +337,8 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 	cmd = lookupCommandByCStringPtr((sds)argv[0]->ptr);
 	if(!cmd){
 		printf("no cmd '%s'!!!\n",(char*)argv[0]->ptr);
-		return v8::Undefined();
+		args.GetReturnValue().Set(v8::Undefined());
+		return;
 	}
 	/* Run the command */
 	c->cmd = cmd;
@@ -362,7 +367,7 @@ v8::Handle<v8::Value> run(const v8::Arguments& args) {
 		decrRefCountPtr(c->argv[j]);
 	zfreePtr(c->argv);
 	
-	return ret_value;
+	args.GetReturnValue().Set(ret_value);
 }
 
 char *file_get_contents(char *filename)
