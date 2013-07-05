@@ -240,7 +240,7 @@ void raw_set(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	robj *key = createStringObjectPtr((char*)*strkey,strkey.length());
 	robj *val = createStringObjectPtr((char*)*strval,strval.length());
 	setKeyPtr(c->db,key,val);
-	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"set",key,c->db->id);
+	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,(char*)"set",key,c->db->id);
 	decrRefCountPtr(key);
 	decrRefCountPtr(val);
 	args.GetReturnValue().Set(v8::Boolean::New(true));
@@ -294,7 +294,7 @@ void raw_incrby(const v8::FunctionCallbackInfo<v8::Value>& args) {
 		dbAddPtr(c->db,key,newvalue);
 	}
 	signalModifiedKeyPtr(c->db,key);
-	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,"incrby",key,c->db->id);
+	notifyKeyspaceEventPtr(REDIS_NOTIFY_STRING,(char*)"incrby",key,c->db->id);
 
 	//printf("reply is %s\n",reply->ptr);
 	//v8 max integer is 2^53 (+9007199254740992) (-9007199254740992)
@@ -720,7 +720,7 @@ void *single_thread_function_for_slow_run_js(void *param)
 			printf("some of timeout/interval runned for %i sec, kill it\n",js_timeout);
 			redisLogRawPtr(REDIS_NOTICE, (char*)"some of timeouts/intervals works to long, kill last one.");
 			v8::V8::TerminateExecution();
-			run_js("clearInterval(redis._last_interval_id)");
+			run_js((char*)"clearInterval(redis._last_interval_id)");
 			timeoutScriptStart = 0;
 		}
 	}
@@ -767,7 +767,7 @@ extern "C"
 	
 	void v8_exec_call(redisClient *c){
 		if(c->argc<2){
-			addReplyErrorPtr(c,"-Wrong number of arguments, must be at least 2");
+			addReplyErrorPtr(c,(char*)"-Wrong number of arguments, must be at least 2");
 			return;
 		}
 		//printf("v8_exec_call args %i\n",c->argc);
@@ -829,7 +829,7 @@ extern "C"
 	}
 	
 	void passPointerTolookupCommandByCString(redisCommand* (*functionPtr)(char*)){
-		redisLogRawPtr(REDIS_DEBUG, "passPointerTolookupCommand");
+		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTolookupCommand");
 		lookupCommandByCStringPtr = functionPtr;
 	}
 	
