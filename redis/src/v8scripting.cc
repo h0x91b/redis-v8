@@ -102,6 +102,14 @@ unsigned int GetTickCount(void)
 	return tv.tv_sec*1000 + (tv.tv_usec/1000);
 }
 
+// v8::Handle<v8::Value> V8BinaryString(const uint8_t* data, size_t size) { 
+// 	uint16_t* out = new uint16_t[size]; 
+// 	for (size_t n = 0; n < size; n++) out[n] = data[n]; 
+// 	Local<String> s = v8::String::NewFromTwoByte(Isolate::GetCurrent(), out, v8::String::kNormalString, size); 
+// 	delete[] out; 
+// 	return s; 
+// } 
+
 v8::Handle<v8::Value> parse_string(char *replyPtr){
 	//printf("parse_line_ok replyPtr[0]='%c' string length:%i\n",replyPtr[0],atoi(replyPtr));
 	int strlength = atoi(replyPtr);
@@ -128,8 +136,9 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		//printf("line is '%s'\n",buff);
 		redisReply = replyPtr;
 		if(special_minus_one) return v8::Null();
-		v8::Local<v8::String> ret = v8::String::New(bufForString);
+		v8::Local<v8::String> ret = v8::String::New(bufForString,strlength);
 		return ret;
+		//return V8BinaryString((const unsigned char *)bufForString,strlength);
 	}
 	char *buff= (char*)zmallocPtr(strlength+1);
 	memcpy(buff,replyPtr,strlength);
