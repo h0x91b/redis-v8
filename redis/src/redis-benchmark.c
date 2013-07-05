@@ -618,6 +618,15 @@ int main(int argc, const char **argv) {
             free(cmd);
 			free(buf);
         }
+        
+		if (test_is_selected("v8_set_10")) {
+			char *buf = malloc(config.datasize+1);
+			memset(buf,0,config.datasize+1);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.set10 foo:rand:000000000000 %s",data);
+            benchmark("V8 SET JSCALL 10 inline (result * 10)",cmd,len);
+            free(cmd);
+			free(buf);
+        }
 
 		if (test_is_selected("v8_set_100")) {
 			char *buf = malloc(config.datasize+1);
@@ -636,6 +645,15 @@ int main(int argc, const char **argv) {
             free(cmd);
 			free(buf);
         }
+        
+		if (test_is_selected("v8_set_500")) {
+			char *buf = malloc(config.datasize+1);
+			memset(buf,0,config.datasize+1);
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.set500 foo:rand:000000000000 %s",data);
+            benchmark("V8 SET JSCALL 500 inline (result * 500)",cmd,len);
+            free(cmd);
+			free(buf);
+        }
 
         if (test_is_selected("get")) {
             len = redisFormatCommand(&cmd,"GET foo:rand:000000000000");
@@ -646,6 +664,12 @@ int main(int argc, const char **argv) {
 		if (test_is_selected("v8_get_1")) {
             len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get foo:rand:000000000000");
             benchmark("V8 GET JSCALL 1 inline (Worst case)",cmd,len);
+            free(cmd);
+        }
+        
+		if (test_is_selected("v8_get_10")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get10 foo:rand:000000000000");
+            benchmark("V8 GET JSCALL 10 inline (result * 10)",cmd,len);
             free(cmd);
         }
 
@@ -660,6 +684,12 @@ int main(int argc, const char **argv) {
             benchmark("V8 GET JSCALL 300 inline (result * 300)",cmd,len);
             free(cmd);
         }
+        
+		if (test_is_selected("v8_get_500")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.get500 foo:rand:000000000000");
+            benchmark("V8 GET JSCALL 500 inline (result * 500)",cmd,len);
+            free(cmd);
+        }
 
         if (test_is_selected("incr")) {
             len = redisFormatCommand(&cmd,"INCR counter:rand:000000000000");
@@ -672,6 +702,12 @@ int main(int argc, const char **argv) {
             benchmark("V8 INCR JSCALL 1 inline (Worst case)",cmd,len);
             free(cmd);
         }
+        
+		if (test_is_selected("v8_incr_10")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr10 foo:rand:000000000001");
+            benchmark("V8 INCR JSCALL 10 inline (result * 10)",cmd,len);
+            free(cmd);
+        }
 
 		if (test_is_selected("v8_incr_100")) {
             len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr100 foo:rand:000000000001");
@@ -682,6 +718,12 @@ int main(int argc, const char **argv) {
 		if (test_is_selected("v8_incr_300")) {
             len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr300 foo:rand:000000000001");
             benchmark("V8 INCR JSCALL 300 inline (result * 300)",cmd,len);
+            free(cmd);
+        }
+        
+		if (test_is_selected("v8_incr_500")) {
+            len = redisFormatCommand(&cmd,"JSCALL redis.benchmark.incr500 foo:rand:000000000001");
+            benchmark("V8 INCR JSCALL 500 inline (result * 500)",cmd,len);
             free(cmd);
         }
 

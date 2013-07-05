@@ -1067,6 +1067,14 @@ redis.benchmark = {
 	get: function(key){
 		return redis.__get(key);
 	},
+	get10: function(key){
+		var loop = 10;
+		var rez = Array(10);
+		while(--loop >= 0){
+			rez[loop] = redis.__get(key);
+		}
+		return rez;
+	},
 	get100: function(key){
 		var loop = 100;
 		var rez = Array(100);
@@ -1083,8 +1091,24 @@ redis.benchmark = {
 		}
 		return rez;
 	},
+	get500: function(key){
+		var loop = 500;
+		var rez = Array(500);
+		while(--loop >= 0){
+			rez[loop] = redis.__get(key);
+		}
+		return rez;
+	},
 	set: function(key,value){
 		return redis.__set(key,value);
+	},
+	set10: function(key,value){
+		var loop = 10;
+		var rez = Array(10);
+		while(--loop >= 0){
+			rez[loop] = redis.__set(key,value);
+		}
+		return rez;
 	},
 	set100: function(key,value){
 		var loop = 100;
@@ -1102,8 +1126,24 @@ redis.benchmark = {
 		}
 		return rez;
 	},
+	set500: function(key,value){
+		var loop = 500;
+		var rez = Array(500);
+		while(--loop >= 0){
+			rez[loop] = redis.__set(key,value);
+		}
+		return rez;
+	},
 	incr: function(key){
 		return redis.__incrby(key,1);
+	},
+	incr10: function(key){
+		var loop = 10;
+		var rez = Array(10);
+		while(--loop >= 0){
+			rez[loop] = redis.__incrby(key,1);
+		}
+		return rez;
 	},
 	incr100: function(key){
 		var loop = 100;
@@ -1116,6 +1156,14 @@ redis.benchmark = {
 	incr300: function(key){
 		var loop = 300;
 		var rez = Array(300);
+		while(--loop >= 0){
+			rez[loop] = redis.__incrby(key,1);
+		}
+		return rez;
+	},
+	incr500: function(key){
+		var loop = 500;
+		var rez = Array(500);
 		while(--loop >= 0){
 			rez[loop] = redis.__incrby(key,1);
 		}
