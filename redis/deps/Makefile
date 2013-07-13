@@ -47,7 +47,7 @@ v8: .make-prerequisites
 	export CC=clang
 	export CXX=clang++
 	export GYP_DEFINES="clang=1"
-	cd v8 && $(MAKE) dependencies && $(MAKE) native -j 4 
+	cd v8 && $(MAKE) dependencies && $(MAKE) native -j 4 debuggersupport=off
 
 .PHONY: v8
 
