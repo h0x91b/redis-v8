@@ -233,14 +233,21 @@ class HPredecessorIterator BASE_EMBEDDED {
 
 class HInstructionIterator BASE_EMBEDDED {
  public:
-  explicit HInstructionIterator(HBasicBlock* block) : instr_(block->first()) { }
+  explicit HInstructionIterator(HBasicBlock* block)
+      : instr_(block->first()) {
+    next_ = Done() ? NULL : instr_->next();
+  }
 
-  bool Done() { return instr_ == NULL; }
-  HInstruction* Current() { return instr_; }
-  void Advance() { instr_ = instr_->next(); }
+  inline bool Done() const { return instr_ == NULL; }
+  inline HInstruction* Current() { return instr_; }
+  inline void Advance() {
+    instr_ = next_;
+    next_ = Done() ? NULL : instr_->next();
+  }
 
  private:
   HInstruction* instr_;
+  HInstruction* next_;
 };
 
 
@@ -291,22 +298,14 @@ class HGraph: public ZoneObject {
   HEnvironment* start_environment() const { return start_environment_; }
 
   void FinalizeUniqueValueIds();
-  void InitializeInferredTypes();
   void InsertTypeConversions();
-  void MergeRemovableSimulates();
-  void InsertRepresentationChanges();
   void MarkDeoptimizeOnUndefined();
-  void ComputeMinusZeroChecks();
   bool ProcessArgumentsObject();
-  void EliminateRedundantPhis();
-  void Canonicalize();
   void OrderBlocks();
   void AssignDominators();
   void SetupInformativeDefinitions();
-  void EliminateRedundantBoundsChecks();
   void DehoistSimpleArrayIndexComputations();
   void RestoreActualValues();
-  void DeadCodeElimination(const char *phase_name);
   void PropagateDeoptimizingMark();
   void AnalyzeAndPruneEnvironmentLiveness();
 
@@ -332,6 +331,8 @@ class HGraph: public ZoneObject {
   HConstant* GetConstantHole();
   HConstant* GetConstantNull();
   HConstant* GetInvalidContext();
+
+  bool IsStandardConstant(HConstant* constant);
 
   HBasicBlock* CreateBasicBlock();
   HArgumentsObject* GetArgumentsObject() const {
@@ -449,25 +450,13 @@ class HGraph: public ZoneObject {
     phase.Run();
   }
 
-  void MarkLive(HValue* ref, HValue* instr, ZoneList<HValue*>* worklist);
-  void MarkLiveInstructions();
-  void RemoveDeadInstructions();
   void MarkAsDeoptimizingRecursively(HBasicBlock* block);
   void NullifyUnreachableInstructions();
   void InsertTypeConversions(HInstruction* instr);
-  void PropagateMinusZeroChecks(HValue* value, BitVector* visited);
   void RecursivelyMarkPhiDeoptimizeOnUndefined(HPhi* phi);
-  void InsertRepresentationChangeForUse(HValue* value,
-                                        HValue* use_value,
-                                        int use_index,
-                                        Representation to);
-  void InsertRepresentationChangesForValue(HValue* value);
-  void InferTypes(ZoneList<HValue*>* worklist);
-  void InitializeInferredTypes(int from_inclusive, int to_inclusive);
   void CheckForBackEdge(HBasicBlock* block, HBasicBlock* successor);
   void SetupInformativeDefinitionsInBlock(HBasicBlock* block);
   void SetupInformativeDefinitionsRecursively(HBasicBlock* block);
-  void EliminateRedundantBoundsChecks(HBasicBlock* bb, BoundsCheckTable* table);
 
   Isolate* isolate_;
   int next_block_id_;
@@ -1129,6 +1118,15 @@ class HGraphBuilder {
 
   HLoadNamedField* AddLoadFixedArrayLength(HValue *object);
 
+  HValue* AddLoadJSBuiltin(Builtins::JavaScript builtin, HValue* context);
+
+  enum SoftDeoptimizeMode {
+    MUST_EMIT_SOFT_DEOPT,
+    CAN_OMIT_SOFT_DEOPT
+  };
+
+  void AddSoftDeoptimize(SoftDeoptimizeMode mode = CAN_OMIT_SOFT_DEOPT);
+
   class IfBuilder {
    public:
     explicit IfBuilder(HGraphBuilder* builder,
@@ -1139,13 +1137,6 @@ class HGraphBuilder {
     ~IfBuilder() {
       if (!finished_) End();
     }
-
-    HInstruction* IfCompare(
-        HValue* left,
-        HValue* right,
-        Token::Value token);
-
-    HInstruction* IfCompareMap(HValue* left, Handle<Map> map);
 
     template<class Condition>
     HInstruction* If(HValue *p) {
@@ -1161,6 +1152,13 @@ class HGraphBuilder {
       return compare;
     }
 
+    template<class Condition, class P2, class P3>
+    HInstruction* If(HValue* p1, P2 p2, P3 p3) {
+      HControlInstruction* compare = new(zone()) Condition(p1, p2, p3);
+      AddCompare(compare);
+      return compare;
+    }
+
     template<class Condition, class P2>
     HInstruction* IfNot(HValue* p1, P2 p2) {
       HControlInstruction* compare = new(zone()) Condition(p1, p2);
@@ -1172,17 +1170,15 @@ class HGraphBuilder {
       return compare;
     }
 
-    HInstruction* OrIfCompare(
-        HValue* p1,
-        HValue* p2,
-        Token::Value token) {
-      Or();
-      return IfCompare(p1, p2, token);
-    }
-
-    HInstruction* OrIfCompareMap(HValue* left, Handle<Map> map) {
-      Or();
-      return IfCompareMap(left, map);
+    template<class Condition, class P2, class P3>
+    HInstruction* IfNot(HValue* p1, P2 p2, P3 p3) {
+      HControlInstruction* compare = new(zone()) Condition(p1, p2, p3);
+      AddCompare(compare);
+      HBasicBlock* block0 = compare->SuccessorAt(0);
+      HBasicBlock* block1 = compare->SuccessorAt(1);
+      compare->SetSuccessorAt(0, block1);
+      compare->SetSuccessorAt(1, block0);
+      return compare;
     }
 
     template<class Condition>
@@ -1197,17 +1193,10 @@ class HGraphBuilder {
       return If<Condition>(p1, p2);
     }
 
-    HInstruction* AndIfCompare(
-        HValue* p1,
-        HValue* p2,
-        Token::Value token) {
-      And();
-      return IfCompare(p1, p2, token);
-    }
-
-    HInstruction* AndIfCompareMap(HValue* left, Handle<Map> map) {
-      And();
-      return IfCompareMap(left, map);
+    template<class Condition, class P2, class P3>
+    HInstruction* OrIf(HValue* p1, P2 p2, P3 p3) {
+      Or();
+      return If<Condition>(p1, p2, p3);
     }
 
     template<class Condition>
@@ -1220,6 +1209,12 @@ class HGraphBuilder {
     HInstruction* AndIf(HValue* p1, P2 p2) {
       And();
       return If<Condition>(p1, p2);
+    }
+
+    template<class Condition, class P2, class P3>
+    HInstruction* AndIf(HValue* p1, P2 p2, P3 p3) {
+      And();
+      return If<Condition>(p1, p2, p3);
     }
 
     void Or();
@@ -1386,6 +1381,7 @@ class HGraphBuilder {
   HValue* BuildGrowElementsCapacity(HValue* object,
                                     HValue* elements,
                                     ElementsKind kind,
+                                    ElementsKind new_kind,
                                     HValue* length,
                                     HValue* new_capacity);
 
@@ -1405,9 +1401,13 @@ class HGraphBuilder {
 
   HValue* BuildCloneShallowArray(HContext* context,
                                  HValue* boilerplate,
+                                 HValue* allocation_site,
                                  AllocationSiteMode mode,
                                  ElementsKind kind,
                                  int length);
+
+  HInstruction* BuildUnaryMathOp(
+      HValue* value, Handle<Type> type, Token::Value token);
 
   void BuildCompareNil(
       HValue* value,
@@ -1494,8 +1494,6 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
   void set_break_scope(BreakAndContinueScope* head) { break_scope_ = head; }
 
   bool inline_bailout() { return inline_bailout_; }
-
-  void AddSoftDeoptimize();
 
   void Bailout(const char* reason);
 
@@ -1676,9 +1674,6 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
   // to push them as outgoing parameters.
   template <class Instruction> HInstruction* PreProcessCall(Instruction* call);
 
-  static Representation ToRepresentation(TypeInfo info);
-  static Representation ToRepresentation(Handle<Type> type);
-
   void SetUpScope(Scope* scope);
   virtual void VisitStatements(ZoneList<Statement*>* statements);
 
@@ -1753,18 +1748,24 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
                                         BailoutId assignment_id,
                                         HValue* object,
                                         HValue* value,
+                                        HValue* result,
                                         SmallMapList* types,
                                         Handle<String> name);
   bool TryStorePolymorphicAsMonomorphic(int position,
                                         BailoutId assignment_id,
                                         HValue* object,
                                         HValue* value,
+                                        HValue* result,
                                         SmallMapList* types,
                                         Handle<String> name);
   void HandlePolymorphicCallNamed(Call* expr,
                                   HValue* receiver,
                                   SmallMapList* types,
                                   Handle<String> name);
+  bool TryCallPolymorphicAsMonomorphic(Call* expr,
+                                       HValue* receiver,
+                                       SmallMapList* types,
+                                       Handle<String> name);
   void HandleLiteralCompareTypeof(CompareOperation* expr,
                                   HTypeof* typeof_expr,
                                   Handle<String> check);
@@ -1838,7 +1839,8 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
                        BailoutId assignment_id,
                        Property* prop,
                        HValue* object,
-                       HValue* value);
+                       HValue* store_value,
+                       HValue* result_value = NULL);
 
   HInstruction* BuildStoreNamedField(HValue* object,
                                      Handle<String> name,
@@ -1868,12 +1870,14 @@ class HOptimizedGraphBuilder: public HGraphBuilder, public AstVisitor {
   HInstruction* BuildFastLiteral(HValue* context,
                                  Handle<JSObject> boilerplate_object,
                                  Handle<JSObject> original_boilerplate_object,
+                                 Handle<Object> allocation_site,
                                  int data_size,
                                  int pointer_size,
                                  AllocationSiteMode mode);
 
   void BuildEmitDeepCopy(Handle<JSObject> boilerplat_object,
                          Handle<JSObject> object,
+                         Handle<Object> allocation_site,
                          HInstruction* target,
                          int* offset,
                          HInstruction* data_target,

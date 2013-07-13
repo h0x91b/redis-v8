@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "types.h"
+#include "string-stream.h"
 
 namespace v8 {
 namespace internal {
@@ -318,6 +319,7 @@ bool Type::InUnion(Handle<Unioned> unioned, int current_size) {
   return false;
 }
 
+
 // Get non-bitsets from this which are not subsumed by union, store at unioned,
 // starting at index. Returns updated index.
 int Type::ExtendUnion(Handle<Unioned> result, int current_size) {
@@ -475,5 +477,59 @@ Type* Type::Optional(Handle<Type> type) {
       ? from_bitset(type->as_bitset() | kUndefined)
       : Union(type, Undefined()->handle_via_isolate_of(*type));
 }
+
+
+Representation Representation::FromType(Handle<Type> type) {
+  if (type->Is(Type::None())) return Representation::None();
+  if (type->Is(Type::Signed32())) return Representation::Integer32();
+  if (type->Is(Type::Number())) return Representation::Double();
+  return Representation::Tagged();
+}
+
+
+#ifdef OBJECT_PRINT
+void Type::TypePrint() {
+  TypePrint(stdout);
+  PrintF(stdout, "\n");
+  Flush(stdout);
+}
+
+
+void Type::TypePrint(FILE* out) {
+  if (is_bitset()) {
+    int val = as_bitset();
+    const char* composed_name = GetComposedName(val);
+    if (composed_name != NULL) {
+      PrintF(out, "%s", composed_name);
+      return;
+    }
+    bool first_entry = true;
+    PrintF(out, "{");
+    for (unsigned i = 0; i < sizeof(val)*8; ++i) {
+      int mask = (1 << i);
+      if ((val & mask) != 0) {
+        if (!first_entry) PrintF(out, ",");
+        first_entry = false;
+        PrintF(out, "%s", GetPrimitiveName(mask));
+      }
+    }
+    PrintF(out, "}");
+  } else if (is_constant()) {
+    PrintF(out, "Constant(%p)", static_cast<void*>(*as_constant()));
+  } else if (is_class()) {
+    PrintF(out, "Class(%p)", static_cast<void*>(*as_class()));
+  } else if (is_union()) {
+    PrintF(out, "{");
+    Handle<Unioned> unioned = as_union();
+    for (int i = 0; i < unioned->length(); ++i) {
+      Handle<Type> type_i = union_get(unioned, i);
+      if (i > 0) PrintF(out, ",");
+      type_i->TypePrint(out);
+    }
+    PrintF(out, "}");
+  }
+}
+#endif
+
 
 } }  // namespace v8::internal

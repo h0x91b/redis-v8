@@ -1087,6 +1087,7 @@ static void ReadBufferWeakCallback(v8::Isolate* isolate,
   array_buffer->Dispose();
 }
 
+
 void Shell::ReadBuffer(const v8::FunctionCallbackInfo<v8::Value>& args) {
   ASSERT(sizeof(char) == sizeof(uint8_t));  // NOLINT
   String::Utf8Value filename(args[0]);
@@ -1581,6 +1582,7 @@ class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
 
 int Shell::Main(int argc, char* argv[]) {
   if (!SetOptions(argc, argv)) return 1;
+  v8::V8::InitializeICU();
 #ifndef V8_SHARED
   i::FLAG_harmony_array_buffer = true;
   i::FLAG_harmony_typed_arrays = true;

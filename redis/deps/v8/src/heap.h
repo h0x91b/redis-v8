@@ -187,7 +187,8 @@ namespace internal {
   V(Map, external_map, ExternalMap)                                            \
   V(Symbol, frozen_symbol, FrozenSymbol)                                       \
   V(SeededNumberDictionary, empty_slow_element_dictionary,                     \
-      EmptySlowElementDictionary)
+      EmptySlowElementDictionary)                                              \
+  V(Symbol, observed_symbol, ObservedSymbol)
 
 #define ROOT_LIST(V)                                  \
   STRONG_ROOT_LIST(V)                                 \
@@ -232,6 +233,7 @@ namespace internal {
   V(last_index_string, "lastIndex")                                      \
   V(object_string, "object")                                             \
   V(payload_string, "payload")                                           \
+  V(literals_string, "literals")                                         \
   V(prototype_string, "prototype")                                       \
   V(string_string, "string")                                             \
   V(String_string, "String")                                             \
@@ -261,6 +263,7 @@ namespace internal {
   V(map_field_string, "%map")                                            \
   V(elements_field_string, "%elements")                                  \
   V(length_field_string, "%length")                                      \
+  V(cell_value_string, "%cell_value")                                    \
   V(function_class_string, "Function")                                   \
   V(properties_field_symbol, "%properties")                              \
   V(payload_field_symbol, "%payload")                                    \
@@ -657,7 +660,7 @@ class Heap {
 
   MUST_USE_RESULT MaybeObject* AllocateJSObjectWithAllocationSite(
       JSFunction* constructor,
-      Handle<Object> allocation_site_info_payload);
+      Handle<AllocationSite> allocation_site);
 
   MUST_USE_RESULT MaybeObject* AllocateJSGeneratorObject(
       JSFunction* function);
@@ -676,7 +679,7 @@ class Heap {
 
   inline MUST_USE_RESULT MaybeObject* AllocateEmptyJSArrayWithAllocationSite(
       ElementsKind elements_kind,
-      Handle<Object> allocation_site_payload);
+      Handle<AllocationSite> allocation_site);
 
   // Allocate a JSArray with a specified length but elements that are left
   // uninitialized.
@@ -691,7 +694,7 @@ class Heap {
       ElementsKind elements_kind,
       int length,
       int capacity,
-      Handle<Object> allocation_site_payload,
+      Handle<AllocationSite> allocation_site,
       ArrayStorageAllocationMode mode = DONT_INITIALIZE_ARRAY_ELEMENTS);
 
   MUST_USE_RESULT MaybeObject* AllocateJSArrayStorage(
@@ -718,7 +721,8 @@ class Heap {
   // Returns failure if allocation failed.
   MUST_USE_RESULT MaybeObject* CopyJSObject(JSObject* source);
 
-  MUST_USE_RESULT MaybeObject* CopyJSObjectWithAllocationSite(JSObject* source);
+  MUST_USE_RESULT MaybeObject* CopyJSObjectWithAllocationSite(
+      JSObject* source, AllocationSite* site);
 
   // Allocates the function prototype.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -768,7 +772,7 @@ class Heap {
       Map* map, PretenureFlag pretenure = NOT_TENURED);
 
   MUST_USE_RESULT MaybeObject* AllocateJSObjectFromMapWithAllocationSite(
-      Map* map, Handle<Object> allocation_site_info_payload);
+      Map* map, Handle<AllocationSite> allocation_site);
 
   // Allocates a heap object based on the map.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -777,7 +781,7 @@ class Heap {
   MUST_USE_RESULT MaybeObject* Allocate(Map* map, AllocationSpace space);
 
   MUST_USE_RESULT MaybeObject* AllocateWithAllocationSite(Map* map,
-      AllocationSpace space, Handle<Object> allocation_site_info_payload);
+      AllocationSpace space, Handle<AllocationSite> allocation_site);
 
   // Allocates a JS Map in the heap.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -954,6 +958,9 @@ class Heap {
   // Allocate Box.
   MUST_USE_RESULT MaybeObject* AllocateBox(Object* value,
                                            PretenureFlag pretenure);
+
+  // Allocate a tenured AllocationSite. It's payload is null
+  MUST_USE_RESULT MaybeObject* AllocateAllocationSite();
 
   // Allocates a fixed array initialized with undefined values
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -1812,6 +1819,8 @@ class Heap {
   void QueueMemoryChunkForFree(MemoryChunk* chunk);
   void FreeQueuedChunks();
 
+  int gc_count() const { return gc_count_; }
+
   // Completely clear the Instanceof cache (to stop it keeping objects alive
   // around a GC).
   inline void CompletelyClearInstanceofCache();
@@ -2156,7 +2165,7 @@ class Heap {
 
   MUST_USE_RESULT MaybeObject* AllocateJSArrayWithAllocationSite(
       ElementsKind elements_kind,
-      Handle<Object> allocation_site_info_payload);
+      Handle<AllocationSite> allocation_site);
 
   // Allocate empty fixed array.
   MUST_USE_RESULT MaybeObject* AllocateEmptyFixedArray();

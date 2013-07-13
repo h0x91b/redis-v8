@@ -1,3 +1,36 @@
+2013-07-10: Version 3.20.4
+
+        Fixed garbage-collection issue that causes a crash on ARM
+        (Chromium issue 254570)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-08: Version 3.20.3
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-05: Version 3.20.2
+
+        Remove deprecated heap profiler methods from V8 public API
+
+        Mark i18n functions as native and set proper names
+        (issue 2745)
+
+        Correctly report stack trace when current function is FunctionApply
+        builtin (Chromium issue 252097)
+
+        Enable GDBJIT interface for standalone by default.
+
+        Fix debuggersupport=off build. (issue 2754)
+
+        Introduce -m64 flag for making x64 when the default gcc compiler is for
+        X32
+
+        Performance and stability improvements on all platforms.
+
+
 2013-07-02: Version 3.20.1
 
         Implemented WeakMap.prototype.clear function. (issue 2753)

@@ -210,9 +210,9 @@ ANDROID_ARCHES = android_ia32 android_arm android_mipsel
 NACL_ARCHES = nacl_ia32 nacl_x64
 
 # List of files that trigger Makefile regeneration:
-GYPFILES = build/all.gyp build/common.gypi build/standalone.gypi \
-           preparser/preparser.gyp samples/samples.gyp src/d8.gyp \
-           test/cctest/cctest.gyp tools/gyp/v8.gyp
+GYPFILES = build/all.gyp build/features.gypi build/standalone.gypi \
+	   build/toolchain.gypi preparser/preparser.gyp samples/samples.gyp \
+	   src/d8.gyp test/cctest/cctest.gyp tools/gyp/v8.gyp
 
 # If vtunejit=on, the v8vtune.gyp will be appended.
 ifeq ($(vtunejit), on)
@@ -401,4 +401,4 @@ dependencies:
 	    --revision 1656
 	svn checkout --force \
 	    https://src.chromium.org/chrome/trunk/deps/third_party/icu46 \
-	    third_party/icu --revision 205936
+	    third_party/icu --revision 210659

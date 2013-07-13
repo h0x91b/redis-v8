@@ -82,6 +82,17 @@ bool LInstruction::HasDoubleRegisterInput() {
 }
 
 
+bool LInstruction::IsDoubleInput(X87Register reg, LCodeGen* cgen) {
+  for (int i = 0; i < InputCount(); i++) {
+    LOperand* op = InputAt(i);
+    if (op != NULL && op->IsDoubleRegister()) {
+      if (cgen->ToX87Register(op).is(reg)) return true;
+    }
+  }
+  return false;
+}
+
+
 void LInstruction::PrintTo(StringStream* stream) {
   stream->Add("%s ", this->Mnemonic());
 
@@ -201,7 +212,7 @@ void LBranch::PrintDataTo(StringStream* stream) {
 }
 
 
-void LCmpIDAndBranch::PrintDataTo(StringStream* stream) {
+void LCompareNumericAndBranch::PrintDataTo(StringStream* stream) {
   stream->Add("if ");
   left()->PrintTo(stream);
   stream->Add(" %s ", Token::String(op()));
@@ -350,7 +361,6 @@ void LCallNewArray::PrintDataTo(StringStream* stream) {
   stream->Add(" ");
   constructor()->PrintTo(stream);
   stream->Add(" #%d / ", arity());
-  ASSERT(hydrogen()->property_cell()->value()->IsSmi());
   ElementsKind kind = hydrogen()->elements_kind();
   stream->Add(" (%s) ", ElementsKindToString(kind));
 }
@@ -495,12 +505,6 @@ LUnallocated* LChunkBuilder::ToUnallocated(XMMRegister reg) {
 }
 
 
-LUnallocated* LChunkBuilder::ToUnallocated(X87TopOfStackRegister reg) {
-  return new(zone()) LUnallocated(LUnallocated::FIXED_DOUBLE_REGISTER,
-      X87TopOfStackRegister::ToAllocationIndex(reg));
-}
-
-
 LOperand* LChunkBuilder::UseFixed(HValue* value, Register fixed_register) {
   return Use(value, ToUnallocated(fixed_register));
 }
@@ -508,11 +512,6 @@ LOperand* LChunkBuilder::UseFixed(HValue* value, Register fixed_register) {
 
 LOperand* LChunkBuilder::UseFixedDouble(HValue* value, XMMRegister reg) {
   return Use(value, ToUnallocated(reg));
-}
-
-
-LOperand* LChunkBuilder::UseX87TopOfStack(HValue* value) {
-  return Use(value, ToUnallocated(x87tos));
 }
 
 
@@ -640,13 +639,6 @@ LInstruction* LChunkBuilder::DefineFixedDouble(
     LTemplateInstruction<1, I, T>* instr,
     XMMRegister reg) {
   return Define(instr, ToUnallocated(reg));
-}
-
-
-template<int I, int T>
-LInstruction* LChunkBuilder::DefineX87TOS(
-    LTemplateInstruction<1, I, T>* instr) {
-  return Define(instr, ToUnallocated(x87tos));
 }
 
 
@@ -1695,8 +1687,8 @@ LInstruction* LChunkBuilder::DoCompareGeneric(HCompareGeneric* instr) {
 }
 
 
-LInstruction* LChunkBuilder::DoCompareIDAndBranch(
-    HCompareIDAndBranch* instr) {
+LInstruction* LChunkBuilder::DoCompareNumericAndBranch(
+    HCompareNumericAndBranch* instr) {
   Representation r = instr->representation();
   if (r.IsSmiOrInteger32()) {
     ASSERT(instr->left()->representation().IsSmiOrInteger32());
@@ -1704,7 +1696,7 @@ LInstruction* LChunkBuilder::DoCompareIDAndBranch(
         instr->right()->representation()));
     LOperand* left = UseRegisterOrConstantAtStart(instr->left());
     LOperand* right = UseOrConstantAtStart(instr->right());
-    return new(zone()) LCmpIDAndBranch(left, right);
+    return new(zone()) LCompareNumericAndBranch(left, right);
   } else {
     ASSERT(r.IsDouble());
     ASSERT(instr->left()->representation().IsDouble());
@@ -1718,7 +1710,7 @@ LInstruction* LChunkBuilder::DoCompareIDAndBranch(
       left = UseRegisterAtStart(instr->left());
       right = UseRegisterAtStart(instr->right());
     }
-    return new(zone()) LCmpIDAndBranch(left, right);
+    return new(zone()) LCompareNumericAndBranch(left, right);
   }
 }
 
@@ -1928,11 +1920,7 @@ LInstruction* LChunkBuilder::DoChange(HChange* instr) {
                        ? TempRegister()
                        : NULL;
       LNumberUntagD* res = new(zone()) LNumberUntagD(value, temp);
-      if (CpuFeatures::IsSafeForSnapshot(SSE2)) {
-        return AssignEnvironment(DefineAsRegister(res));
-      } else {
-        return AssignEnvironment(DefineX87TOS(res));
-      }
+      return AssignEnvironment(DefineAsRegister(res));
     } else if (to.IsSmi()) {
       HValue* val = instr->value();
       LOperand* value = UseRegister(val);
@@ -1967,9 +1955,7 @@ LInstruction* LChunkBuilder::DoChange(HChange* instr) {
   } else if (from.IsDouble()) {
     if (to.IsTagged()) {
       info()->MarkAsDeferredCalling();
-      LOperand* value = CpuFeatures::IsSupported(SSE2)
-          ? UseRegisterAtStart(instr->value())
-          : UseAtStart(instr->value());
+      LOperand* value = UseRegisterAtStart(instr->value());
       LOperand* temp = FLAG_inline_new ? TempRegister() : NULL;
 
       // Make sure that temp and result_temp are different registers.
@@ -2035,6 +2021,18 @@ LInstruction* LChunkBuilder::DoChange(HChange* instr) {
 LInstruction* LChunkBuilder::DoCheckHeapObject(HCheckHeapObject* instr) {
   LOperand* value = UseAtStart(instr->value());
   return AssignEnvironment(new(zone()) LCheckNonSmi(value));
+}
+
+
+LInstruction* LChunkBuilder::DoCheckSmi(HCheckSmi* instr) {
+  LOperand* value = UseRegisterAtStart(instr->value());
+  return AssignEnvironment(new(zone()) LCheckSmi(value));
+}
+
+
+LInstruction* LChunkBuilder::DoIsNumberAndBranch(HIsNumberAndBranch* instr) {
+  return new(zone())
+    LIsNumberAndBranch(UseRegisterOrConstantAtStart(instr->value()));
 }
 
 
@@ -2119,12 +2117,8 @@ LInstruction* LChunkBuilder::DoConstant(HConstant* instr) {
   } else if (r.IsDouble()) {
     double value = instr->DoubleValue();
     bool value_is_zero = BitCast<uint64_t, double>(value) == 0;
-    if (CpuFeatures::IsSafeForSnapshot(SSE2)) {
-      LOperand* temp = value_is_zero ? NULL : TempRegister();
-      return DefineAsRegister(new(zone()) LConstantD(temp));
-    } else {
-      return DefineX87TOS(new(zone()) LConstantD(NULL));
-    }
+    LOperand* temp = value_is_zero ? NULL : TempRegister();
+    return DefineAsRegister(new(zone()) LConstantD(temp));
   } else if (r.IsTagged()) {
     return DefineAsRegister(new(zone()) LConstantT);
   } else {
@@ -2316,11 +2310,7 @@ LInstruction* LChunkBuilder::DoStoreKeyed(HStoreKeyed* instr) {
     if (instr->value()->representation().IsDouble()) {
       LOperand* object = UseRegisterAtStart(instr->elements());
       LOperand* val = NULL;
-      if (CpuFeatures::IsSafeForSnapshot(SSE2)) {
-        val = UseRegisterAtStart(instr->value());
-      } else if (!instr->IsConstantHoleStore()) {
-        val = UseX87TopOfStack(instr->value());
-      }
+      val = UseRegisterAtStart(instr->value());
       LOperand* key = UseRegisterOrConstantAtStart(instr->key());
       return new(zone()) LStoreKeyed(object, key, val);
     } else {
@@ -2450,11 +2440,7 @@ LInstruction* LChunkBuilder::DoStoreNamedField(HStoreNamedField* instr) {
     val = UseTempRegister(instr->value());
   } else if (FLAG_track_double_fields &&
              instr->field_representation().IsDouble()) {
-    if (CpuFeatures::IsSafeForSnapshot(SSE2)) {
-      val = UseRegisterAtStart(instr->value());
-    } else {
-      val = UseX87TopOfStack(instr->value());
-    }
+    val = UseRegisterAtStart(instr->value());
   } else {
     val = UseRegister(instr->value());
   }
@@ -2556,15 +2542,6 @@ LInstruction* LChunkBuilder::DoFunctionLiteral(HFunctionLiteral* instr) {
   LOperand* context = UseFixed(instr->context(), esi);
   return MarkAsCall(
       DefineFixed(new(zone()) LFunctionLiteral(context), eax), instr);
-}
-
-
-LInstruction* LChunkBuilder::DoDeleteProperty(HDeleteProperty* instr) {
-  LOperand* context = UseFixed(instr->context(), esi);
-  LOperand* object = UseAtStart(instr->object());
-  LOperand* key = UseOrConstantAtStart(instr->key());
-  LDeleteProperty* result = new(zone()) LDeleteProperty(context, object, key);
-  return MarkAsCall(DefineFixed(result, eax), instr);
 }
 
 
@@ -2745,15 +2722,6 @@ LInstruction* LChunkBuilder::DoLeaveInlined(HLeaveInlined* instr) {
       DiscardInlined(false);
   current_block_->UpdateEnvironment(outer);
   return pop;
-}
-
-
-LInstruction* LChunkBuilder::DoIn(HIn* instr) {
-  LOperand* context = UseFixed(instr->context(), esi);
-  LOperand* key = UseOrConstantAtStart(instr->key());
-  LOperand* object = UseOrConstantAtStart(instr->object());
-  LIn* result = new(zone()) LIn(context, key, object);
-  return MarkAsCall(DefineFixed(result, eax), instr);
 }
 
 

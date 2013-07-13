@@ -1654,8 +1654,8 @@ void HCheckInstanceType::GetCheckMaskAndTag(uint8_t* mask, uint8_t* tag) {
 }
 
 
-void HCheckMaps::SetSideEffectDominator(GVNFlag side_effect,
-                                        HValue* dominator) {
+void HCheckMaps::HandleSideEffectDominator(GVNFlag side_effect,
+                                           HValue* dominator) {
   ASSERT(side_effect == kChangesMaps);
   // TODO(mstarzinger): For now we specialize on HStoreNamedField, but once
   // type information is rich enough we should generalize this to any HType
@@ -1701,6 +1701,7 @@ const char* HCheckInstanceType::GetCheckName() {
   return "";
 }
 
+
 void HCheckInstanceType::PrintDataTo(StringStream* stream) {
   stream->Add("%s ", GetCheckName());
   HUnaryOperation::PrintDataTo(stream);
@@ -1736,9 +1737,10 @@ Range* HValue::InferRange(Zone* zone) {
     result = new(zone) Range(Smi::kMinValue, Smi::kMaxValue);
     result->set_can_be_minus_zero(false);
   } else {
-    // Untagged integer32 cannot be -0, all other representations can.
     result = new(zone) Range();
-    result->set_can_be_minus_zero(!representation().IsInteger32());
+    result->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32));
+    // TODO(jkummerow): The range cannot be minus zero when the upper type
+    // bound is Integer32.
   }
   return result;
 }
@@ -1756,7 +1758,8 @@ Range* HChange::InferRange(Zone* zone) {
   Range* result = (input_range != NULL)
       ? input_range->Copy(zone)
       : HValue::InferRange(zone);
-  if (to().IsInteger32()) result->set_can_be_minus_zero(false);
+  result->set_can_be_minus_zero(!to().IsSmiOrInteger32() ||
+                                !CheckFlag(kAllUsesTruncatingToInt32));
   return result;
 }
 
@@ -1801,9 +1804,8 @@ Range* HAdd::InferRange(Zone* zone) {
         CheckFlag(kAllUsesTruncatingToInt32)) {
       ClearFlag(kCanOverflow);
     }
-    if (!CheckFlag(kAllUsesTruncatingToInt32)) {
-      res->set_can_be_minus_zero(a->CanBeMinusZero() && b->CanBeMinusZero());
-    }
+    res->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32) &&
+                               a->CanBeMinusZero() && b->CanBeMinusZero());
     return res;
   } else {
     return HValue::InferRange(zone);
@@ -1820,9 +1822,8 @@ Range* HSub::InferRange(Zone* zone) {
         CheckFlag(kAllUsesTruncatingToInt32)) {
       ClearFlag(kCanOverflow);
     }
-    if (!CheckFlag(kAllUsesTruncatingToInt32)) {
-      res->set_can_be_minus_zero(a->CanBeMinusZero() && b->CanBeZero());
-    }
+    res->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32) &&
+                               a->CanBeMinusZero() && b->CanBeZero());
     return res;
   } else {
     return HValue::InferRange(zone);
@@ -1841,11 +1842,9 @@ Range* HMul::InferRange(Zone* zone) {
       // precise and therefore not the same as converting to Double and back.
       ClearFlag(kCanOverflow);
     }
-    if (!CheckFlag(kAllUsesTruncatingToInt32)) {
-      bool m0 = (a->CanBeZero() && b->CanBeNegative()) ||
-          (a->CanBeNegative() && b->CanBeZero());
-      res->set_can_be_minus_zero(m0);
-    }
+    res->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32) &&
+                               ((a->CanBeZero() && b->CanBeNegative()) ||
+                                (a->CanBeNegative() && b->CanBeZero())));
     return res;
   } else {
     return HValue::InferRange(zone);
@@ -1858,16 +1857,9 @@ Range* HDiv::InferRange(Zone* zone) {
     Range* a = left()->range();
     Range* b = right()->range();
     Range* result = new(zone) Range();
-    if (!CheckFlag(kAllUsesTruncatingToInt32)) {
-      if (a->CanBeMinusZero()) {
-        result->set_can_be_minus_zero(true);
-      }
-
-      if (a->CanBeZero() && b->CanBeNegative()) {
-        result->set_can_be_minus_zero(true);
-      }
-    }
-
+    result->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32) &&
+                                  (a->CanBeMinusZero() ||
+                                   (a->CanBeZero() && b->CanBeNegative())));
     if (!a->Includes(kMinInt) || !b->Includes(-1)) {
       ClearFlag(HValue::kCanOverflow);
     }
@@ -1897,9 +1889,8 @@ Range* HMod::InferRange(Zone* zone) {
     Range* result = new(zone) Range(left_can_be_negative ? -positive_bound : 0,
                                     a->CanBePositive() ? positive_bound : 0);
 
-    if (left_can_be_negative && !CheckFlag(kAllUsesTruncatingToInt32)) {
-      result->set_can_be_minus_zero(true);
-    }
+    result->set_can_be_minus_zero(!CheckFlag(kAllUsesTruncatingToInt32) &&
+                                  left_can_be_negative);
 
     if (!a->Includes(kMinInt) || !b->Includes(-1)) {
       ClearFlag(HValue::kCanOverflow);
@@ -2174,6 +2165,7 @@ HConstant::HConstant(Handle<Object> handle, Representation r)
     has_double_value_(false),
     is_internalized_string_(false),
     is_not_in_new_space_(true),
+    is_cell_(false),
     boolean_value_(handle->BooleanValue()) {
   if (handle_->IsHeapObject()) {
     Heap* heap = Handle<HeapObject>::cast(handle)->GetHeap();
@@ -2190,6 +2182,9 @@ HConstant::HConstant(Handle<Object> handle, Representation r)
     type_from_value_ = HType::TypeFromValue(handle_);
     is_internalized_string_ = handle_->IsInternalizedString();
   }
+
+  is_cell_ = !handle_.is_null() &&
+      (handle_->IsCell() || handle_->IsPropertyCell());
   Initialize(r);
 }
 
@@ -2200,6 +2195,7 @@ HConstant::HConstant(Handle<Object> handle,
                      HType type,
                      bool is_internalize_string,
                      bool is_not_in_new_space,
+                     bool is_cell,
                      bool boolean_value)
     : handle_(handle),
       unique_id_(unique_id),
@@ -2208,6 +2204,7 @@ HConstant::HConstant(Handle<Object> handle,
       has_double_value_(false),
       is_internalized_string_(is_internalize_string),
       is_not_in_new_space_(is_not_in_new_space),
+      is_cell_(is_cell),
       boolean_value_(boolean_value),
       type_from_value_(type) {
   ASSERT(!handle.is_null());
@@ -2227,6 +2224,7 @@ HConstant::HConstant(int32_t integer_value,
       has_double_value_(true),
       is_internalized_string_(false),
       is_not_in_new_space_(is_not_in_new_space),
+      is_cell_(false),
       boolean_value_(integer_value != 0),
       int32_value_(integer_value),
       double_value_(FastI2D(integer_value)) {
@@ -2245,6 +2243,7 @@ HConstant::HConstant(double double_value,
       has_double_value_(true),
       is_internalized_string_(false),
       is_not_in_new_space_(is_not_in_new_space),
+      is_cell_(false),
       boolean_value_(double_value != 0 && !std::isnan(double_value)),
       int32_value_(DoubleToInt32(double_value)),
       double_value_(double_value) {
@@ -2267,9 +2266,17 @@ void HConstant::Initialize(Representation r) {
   }
   set_representation(r);
   SetFlag(kUseGVN);
-  if (representation().IsInteger32()) {
-    ClearGVNFlag(kDependsOnOsrEntries);
+}
+
+
+bool HConstant::EmitAtUses() {
+  ASSERT(IsLinked());
+  if (block()->graph()->has_osr()) {
+    return block()->graph()->IsStandardConstant(this);
   }
+  if (IsCell()) return false;
+  if (representation().IsDouble()) return false;
+  return true;
 }
 
 
@@ -2290,6 +2297,7 @@ HConstant* HConstant::CopyToRepresentation(Representation r, Zone* zone) const {
                              type_from_value_,
                              is_internalized_string_,
                              is_not_in_new_space_,
+                             is_cell_,
                              boolean_value_);
 }
 
@@ -2432,7 +2440,9 @@ Range* HBitwise::InferRange(Zone* zone) {
                     ? static_cast<int32_t>(-limit) : 0;
       return new(zone) Range(min, static_cast<int32_t>(limit - 1));
     }
-    return HValue::InferRange(zone);
+    Range* result = HValue::InferRange(zone);
+    result->set_can_be_minus_zero(false);
+    return result;
   }
   const int32_t kDefaultMask = static_cast<int32_t>(0xffffffff);
   int32_t left_mask = (left()->range() != NULL)
@@ -2444,9 +2454,11 @@ Range* HBitwise::InferRange(Zone* zone) {
   int32_t result_mask = (op() == Token::BIT_AND)
       ? left_mask & right_mask
       : left_mask | right_mask;
-  return (result_mask >= 0)
-      ? new(zone) Range(0, result_mask)
-      : HValue::InferRange(zone);
+  if (result_mask >= 0) return new(zone) Range(0, result_mask);
+
+  Range* result = HValue::InferRange(zone);
+  result->set_can_be_minus_zero(false);
+  return result;
 }
 
 
@@ -2458,7 +2470,6 @@ Range* HSar::InferRange(Zone* zone) {
           ? left()->range()->Copy(zone)
           : new(zone) Range();
       result->Sar(c->Integer32Value());
-      result->set_can_be_minus_zero(false);
       return result;
     }
   }
@@ -2483,7 +2494,6 @@ Range* HShr::InferRange(Zone* zone) {
             ? left()->range()->Copy(zone)
             : new(zone) Range();
         result->Sar(c->Integer32Value());
-        result->set_can_be_minus_zero(false);
         return result;
       }
     }
@@ -2500,7 +2510,6 @@ Range* HShl::InferRange(Zone* zone) {
           ? left()->range()->Copy(zone)
           : new(zone) Range();
       result->Shl(c->Integer32Value());
-      result->set_can_be_minus_zero(false);
       return result;
     }
   }
@@ -2540,7 +2549,7 @@ void HStringCompareAndBranch::PrintDataTo(StringStream* stream) {
 }
 
 
-void HCompareIDAndBranch::AddInformativeDefinitions() {
+void HCompareNumericAndBranch::AddInformativeDefinitions() {
   NumericRelation r = NumericRelation::FromToken(token());
   if (r.IsNone()) return;
 
@@ -2550,7 +2559,7 @@ void HCompareIDAndBranch::AddInformativeDefinitions() {
 }
 
 
-void HCompareIDAndBranch::PrintDataTo(StringStream* stream) {
+void HCompareNumericAndBranch::PrintDataTo(StringStream* stream) {
   stream->Add(Token::Name(token()));
   stream->Add(" ");
   left()->PrintNameTo(stream);
@@ -2573,7 +2582,7 @@ void HGoto::PrintDataTo(StringStream* stream) {
 }
 
 
-void HCompareIDAndBranch::InferRepresentation(
+void HCompareNumericAndBranch::InferRepresentation(
     HInferRepresentationPhase* h_infer) {
   Representation left_rep = left()->representation();
   Representation right_rep = right()->representation();
@@ -2595,9 +2604,9 @@ void HCompareIDAndBranch::InferRepresentation(
     // and !=) have special handling of undefined, e.g. undefined == undefined
     // is 'true'. Relational comparisons have a different semantic, first
     // calling ToPrimitive() on their arguments.  The standard Crankshaft
-    // tagged-to-double conversion to ensure the HCompareIDAndBranch's inputs
-    // are doubles caused 'undefined' to be converted to NaN. That's compatible
-    // out-of-the box with ordered relational comparisons (<, >, <=,
+    // tagged-to-double conversion to ensure the HCompareNumericAndBranch's
+    // inputs are doubles caused 'undefined' to be converted to NaN. That's
+    // compatible out-of-the box with ordered relational comparisons (<, >, <=,
     // >=). However, for equality comparisons (and for 'in' and 'instanceof'),
     // it is not consistent with the spec. For example, it would cause undefined
     // == undefined (should be true) to be evaluated as NaN == NaN
@@ -3078,6 +3087,11 @@ HType HCheckHeapObject::CalculateInferredType() {
 }
 
 
+HType HCheckSmi::CalculateInferredType() {
+  return HType::Smi();
+}
+
+
 HType HPhi::CalculateInferredType() {
   HType result = HType::Uninitialized();
   for (int i = 0; i < OperandCount(); ++i) {
@@ -3104,11 +3118,6 @@ HType HCompareGeneric::CalculateInferredType() {
 
 
 HType HInstanceOf::CalculateInferredType() {
-  return HType::Boolean();
-}
-
-
-HType HDeleteProperty::CalculateInferredType() {
   return HType::Boolean();
 }
 
@@ -3171,6 +3180,85 @@ HType HAllocateObject::CalculateInferredType() {
 
 HType HAllocate::CalculateInferredType() {
   return type_;
+}
+
+
+void HAllocate::HandleSideEffectDominator(GVNFlag side_effect,
+                                          HValue* dominator) {
+  ASSERT(side_effect == kChangesNewSpacePromotion);
+  // Try to fold allocations together with their dominating allocations.
+  if (!FLAG_use_allocation_folding || !dominator->IsAllocate()) {
+    return;
+  }
+  HAllocate* dominator_allocate_instr = HAllocate::cast(dominator);
+  HValue* dominator_size = dominator_allocate_instr->size();
+  HValue* current_size = size();
+  // We can just fold allocations that are guaranteed in new space.
+  // TODO(hpayer): Support double aligned allocations.
+  // TODO(hpayer): Add support for non-constant allocation in dominator.
+  if (!GuaranteedInNewSpace() || MustAllocateDoubleAligned() ||
+      !current_size->IsInteger32Constant() ||
+      !dominator_allocate_instr->GuaranteedInNewSpace() ||
+      dominator_allocate_instr->MustAllocateDoubleAligned() ||
+      !dominator_size->IsInteger32Constant()) {
+    return;
+  }
+
+  // First update the size of the dominator allocate instruction.
+  int32_t dominator_size_constant =
+      HConstant::cast(dominator_size)->GetInteger32Constant();
+  int32_t current_size_constant =
+      HConstant::cast(current_size)->GetInteger32Constant();
+  HBasicBlock* block = dominator->block();
+  Zone* zone = block->zone();
+  HInstruction* new_dominator_size = new(zone) HConstant(
+      dominator_size_constant + current_size_constant);
+  new_dominator_size->InsertBefore(dominator_allocate_instr);
+  dominator_allocate_instr->UpdateSize(new_dominator_size);
+
+#ifdef VERIFY_HEAP
+  HInstruction* free_space_instr =
+      new(zone) HInnerAllocatedObject(dominator_allocate_instr,
+                                      dominator_size_constant,
+                                      type());
+  free_space_instr->InsertAfter(dominator_allocate_instr);
+  HConstant* filler_map = new(zone) HConstant(
+      isolate()->factory()->free_space_map(),
+      UniqueValueId(isolate()->heap()->free_space_map()),
+      Representation::Tagged(),
+      HType::Tagged(),
+      false,
+      true,
+      false,
+      false);
+  filler_map->InsertAfter(free_space_instr);
+
+  HInstruction* store_map = new(zone) HStoreNamedField(
+      free_space_instr, HObjectAccess::ForMap(), filler_map);
+  store_map->SetFlag(HValue::kHasNoObservableSideEffects);
+  store_map->InsertAfter(filler_map);
+
+  HInstruction* free_space_size = new(zone) HConstant(current_size_constant);
+  free_space_size->InsertAfter(store_map);
+  HObjectAccess access =
+      HObjectAccess::ForJSObjectOffset(FreeSpace::kSizeOffset);
+  HInstruction* store_size = new(zone) HStoreNamedField(
+      free_space_instr, access, free_space_size);
+  store_size->SetFlag(HValue::kHasNoObservableSideEffects);
+  store_size->InsertAfter(free_space_size);
+#endif
+
+  // After that replace the dominated allocate instruction.
+  HInstruction* dominated_allocate_instr =
+      new(zone) HInnerAllocatedObject(dominator_allocate_instr,
+                                      dominator_size_constant,
+                                      type());
+  dominated_allocate_instr->InsertBefore(this);
+  DeleteAndReplaceWith(dominated_allocate_instr);
+  if (FLAG_trace_allocation_folding) {
+    PrintF("#%d (%s) folded into #%d (%s)\n",
+        id(), Mnemonic(), dominator->id(), dominator->Mnemonic());
+  }
 }
 
 
@@ -3629,13 +3717,6 @@ HInstruction* HShr::New(
 #undef H_CONSTANT_DOUBLE
 
 
-void HIn::PrintDataTo(StringStream* stream) {
-  key()->PrintNameTo(stream);
-  stream->Add(" ");
-  object()->PrintNameTo(stream);
-}
-
-
 void HBitwise::PrintDataTo(StringStream* stream) {
   stream->Add(Token::Name(op_));
   stream->Add(" ");
@@ -3821,6 +3902,13 @@ HObjectAccess HObjectAccess::ForField(Handle<Map> map,
     int offset = (index * kPointerSize) + FixedArray::kHeaderSize;
     return HObjectAccess(kBackingStore, offset, name);
   }
+}
+
+
+HObjectAccess HObjectAccess::ForCellPayload(Isolate* isolate) {
+  return HObjectAccess(
+      kInobject, Cell::kValueOffset,
+      Handle<String>(isolate->heap()->cell_value_string()));
 }
 
 

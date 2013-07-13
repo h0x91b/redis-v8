@@ -459,6 +459,7 @@ void HeapObjectsMap::StopHeapObjectsTracking() {
   time_intervals_.Clear();
 }
 
+
 void HeapObjectsMap::UpdateHeapObjectsMap() {
   HEAP->CollectAllGarbage(Heap::kMakeHeapIterableMask,
                           "HeapSnapshotsCollection::UpdateHeapObjectsMap");
@@ -572,7 +573,6 @@ size_t HeapObjectsMap::GetUsedMemorySize() const {
 
 HeapSnapshotsCollection::HeapSnapshotsCollection(Heap* heap)
     : is_tracking_objects_(false),
-      token_enumerator_(new TokenEnumerator()),
       ids_(heap) {
 }
 
@@ -583,7 +583,6 @@ static void DeleteHeapSnapshot(HeapSnapshot** snapshot_ptr) {
 
 
 HeapSnapshotsCollection::~HeapSnapshotsCollection() {
-  delete token_enumerator_;
   snapshots_.Iterate(DeleteHeapSnapshot);
 }
 
@@ -956,9 +955,10 @@ void V8HeapExplorer::ExtractReferences(HeapObject* obj) {
     ExtractCellReferences(entry, Cell::cast(obj));
     extract_indexed_refs = false;
   } else if (obj->IsPropertyCell()) {
-    ExtractPropertyCellReferences(
-        entry, PropertyCell::cast(obj));
+    ExtractPropertyCellReferences(entry, PropertyCell::cast(obj));
     extract_indexed_refs = false;
+  } else if (obj->IsAllocationSite()) {
+    ExtractAllocationSiteReferences(entry, AllocationSite::cast(obj));
   }
   if (extract_indexed_refs) {
     SetInternalReference(obj, entry, "map", obj->map(), HeapObject::kMapOffset);
@@ -1262,6 +1262,13 @@ void V8HeapExplorer::ExtractPropertyCellReferences(int entry,
                                                    PropertyCell* cell) {
   SetInternalReference(cell, entry, "value", cell->value());
   SetInternalReference(cell, entry, "type", cell->type());
+}
+
+
+void V8HeapExplorer::ExtractAllocationSiteReferences(int entry,
+                                                     AllocationSite* site) {
+  SetInternalReference(site, entry, "transition_info", site->transition_info(),
+                       AllocationSite::kTransitionInfoOffset);
 }
 
 
@@ -1963,6 +1970,7 @@ void NativeObjectsExplorer::FillRetainedObjects() {
   embedder_queried_ = true;
 }
 
+
 void NativeObjectsExplorer::FillImplicitReferences() {
   Isolate* isolate = Isolate::Current();
   List<ImplicitRefGroup*>* groups =
@@ -2587,6 +2595,7 @@ static void WriteUChar(OutputStreamWriter* w, unibrow::uchar u) {
   w->AddCharacter(hex_chars[(u >> 4) & 0xf]);
   w->AddCharacter(hex_chars[u & 0xf]);
 }
+
 
 void HeapSnapshotJSONSerializer::SerializeString(const unsigned char* s) {
   writer_->AddCharacter('\n');

@@ -123,6 +123,7 @@ void TraceGVN(const char* msg, ...) {
   va_end(arguments);
 }
 
+
 // Wrap TraceGVN in macros to avoid the expense of evaluating its arguments when
 // --trace-gvn is off.
 #define TRACE_GVN_1(msg, a1)                    \
@@ -338,6 +339,7 @@ HSideEffectMap& HSideEffectMap::operator= (const HSideEffectMap& other) {
   }
   return *this;
 }
+
 
 void HSideEffectMap::Kill(GVNFlagSet flags) {
   for (int i = 0; i < kNumberOfTrackedSideEffects; i++) {
@@ -617,7 +619,7 @@ HGlobalValueNumberingPhase::CollectSideEffectsOnPathsToDominatedBlock(
   GVNFlagSet side_effects;
   for (int i = 0; i < dominated->predecessors()->length(); ++i) {
     HBasicBlock* block = dominated->predecessors()->at(i);
-    if (dominator->block_id() < block->block_id() &&
+    if (dominator->block_id() <= block->block_id() &&
         block->block_id() < dominated->block_id() &&
         visited_on_paths_.Add(block->block_id())) {
       side_effects.Add(block_side_effects_[block->block_id()]);
@@ -748,6 +750,7 @@ class GvnBasicBlockState: public ZoneObject {
   int length_;
 };
 
+
 // This is a recursive traversal of the dominator tree but it has been turned
 // into a loop to avoid stack overflows.
 // The logical "stack frames" of the recursion are kept in a list of
@@ -773,9 +776,28 @@ void HGlobalValueNumberingPhase::AnalyzeGraph() {
     }
 
     // Go through all instructions of the current block.
-    HInstruction* instr = block->first();
-    while (instr != NULL) {
-      HInstruction* next = instr->next();
+    for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+      HInstruction* instr = it.Current();
+      if (instr->CheckFlag(HValue::kTrackSideEffectDominators)) {
+        for (int i = 0; i < kNumberOfTrackedSideEffects; i++) {
+          HValue* other = dominators->at(i);
+          GVNFlag changes_flag = HValue::ChangesFlagFromInt(i);
+          GVNFlag depends_on_flag = HValue::DependsOnFlagFromInt(i);
+          if (instr->DependsOnFlags().Contains(depends_on_flag) &&
+              (other != NULL)) {
+            TRACE_GVN_5("Side-effect #%d in %d (%s) is dominated by %d (%s)\n",
+                        i,
+                        instr->id(),
+                        instr->Mnemonic(),
+                        other->id(),
+                        other->Mnemonic());
+            instr->HandleSideEffectDominator(changes_flag, other);
+          }
+        }
+      }
+      // Instruction was unlinked during graph traversal.
+      if (!instr->IsLinked()) continue;
+
       GVNFlagSet flags = instr->ChangesFlags();
       if (!flags.IsEmpty()) {
         // Clear all instructions in the map that are affected by side effects.
@@ -801,25 +823,6 @@ void HGlobalValueNumberingPhase::AnalyzeGraph() {
           map->Add(instr, zone());
         }
       }
-      if (instr->IsLinked() &&
-          instr->CheckFlag(HValue::kTrackSideEffectDominators)) {
-        for (int i = 0; i < kNumberOfTrackedSideEffects; i++) {
-          HValue* other = dominators->at(i);
-          GVNFlag changes_flag = HValue::ChangesFlagFromInt(i);
-          GVNFlag depends_on_flag = HValue::DependsOnFlagFromInt(i);
-          if (instr->DependsOnFlags().Contains(depends_on_flag) &&
-              (other != NULL)) {
-            TRACE_GVN_5("Side-effect #%d in %d (%s) is dominated by %d (%s)\n",
-                        i,
-                        instr->id(),
-                        instr->Mnemonic(),
-                        other->id(),
-                        other->Mnemonic());
-            instr->SetSideEffectDominator(changes_flag, other);
-          }
-        }
-      }
-      instr = next;
     }
 
     HBasicBlock* dominator_block;
