@@ -62,8 +62,6 @@
 #include "version.h" /* Version macro */
 #include "util.h"    /* Misc functions useful in many places */
 
-//#include "v8scripting.h"
-
 /* Error codes */
 #define REDIS_OK                0
 #define REDIS_ERR               -1
@@ -222,7 +220,6 @@
 #define REDIS_CLOSE_ASAP (1<<10)/* Close this client ASAP */
 #define REDIS_UNIX_SOCKET (1<<11) /* Client connected via Unix domain socket */
 #define REDIS_DIRTY_EXEC (1<<12)  /* EXEC will fail for errors while queueing */
-
 #define REDIS_MASTER_FORCE_REPLY (1<<13)  /* Queue replies even if is master */
 #define REDIS_FORCE_AOF (1<<14)   /* Force AOF propagation of current cmd. */
 #define REDIS_FORCE_REPL (1<<15)  /* Force replication of current cmd. */
@@ -408,13 +405,15 @@ typedef struct multiCmd {
 typedef struct multiState {
     multiCmd *commands;     /* Array of MULTI commands */
     int count;              /* Total number of MULTI commands */
+    int minreplicas;        /* MINREPLICAS for synchronous replication */
+    time_t minreplicas_timeout; /* MINREPLICAS timeout as unixtime. */
 } multiState;
 
 typedef struct blockingState {
     dict *keys;             /* The keys we are waiting to terminate a blocking
                              * operation such as BLPOP. Otherwise NULL. */
     time_t timeout;         /* Blocking operation timeout. If UNIX current time
-                             * is >= timeout then the operation timed out. */
+                             * is > timeout then the operation timed out. */
     robj *target;           /* The key that should receive the element,
                              * for BRPOPLPUSH. */
 } blockingState;
@@ -481,7 +480,6 @@ typedef struct redisClient {
     char buf[REDIS_REPLY_CHUNK_BYTES];
 } redisClient;
 
-
 struct saveparam {
     time_t seconds;
     int changes;
@@ -492,7 +490,7 @@ struct sharedObjectsStruct {
     *colon, *nullbulk, *nullmultibulk, *queued,
     *emptymultibulk, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr,
     *outofrangeerr, *noscripterr, *loadingerr, *slowscripterr, *bgsaveerr,
-    *masterdownerr, *roslaveerr, *execaborterr, *noautherr,
+    *masterdownerr, *roslaveerr, *execaborterr, *noautherr, *noreplicaserr,
     *oomerr, *plus, *messagebulk, *pmessagebulk, *subscribebulk,
     *unsubscribebulk, *psubscribebulk, *punsubscribebulk, *del, *rpop, *lpop,
     *lpush,
@@ -529,6 +527,8 @@ typedef struct clientBufferLimitsConfig {
     unsigned long long soft_limit_bytes;
     time_t soft_limit_seconds;
 } clientBufferLimitsConfig;
+
+extern clientBufferLimitsConfig clientBufferLimitsDefaults[REDIS_CLIENT_LIMIT_NUM_CLASSES];
 
 /* The redisOp structure defines a Redis Operation, that is an instance of
  * a command with an argument vector, database ID, propagation target
@@ -926,7 +926,6 @@ struct redisServer {
     int watchdog_period;  /* Software watchdog period in ms. 0 = off */
 };
 
-
 typedef struct pubsubPattern {
     redisClient *client;
     robj *pattern;
@@ -1064,8 +1063,6 @@ void addReplyStatus(redisClient *c, char *status);
 void addReplyDouble(redisClient *c, double d);
 void addReplyLongLong(redisClient *c, long long ll);
 void addReplyMultiBulkLen(redisClient *c, long length);
-void addReplyString(redisClient *c, char *s, size_t len);
-void addReplyBulkLen(redisClient *c, robj *obj);
 void copyClientOutputBuffer(redisClient *dst, redisClient *src);
 void *dupClientReplyValue(void *o);
 void getClientsMaxBuffers(unsigned long *longest_output_list,
@@ -1523,13 +1520,14 @@ void redisLogHexDump(int level, char *descr, void *value, size_t len);
     printf("-- MARK %s:%d --\n", __FILE__, __LINE__)
 
 
+
+
 /*V8 section*/
 void v8setup();
 void v8Command(redisClient *c);
 void v8CommandAsync(redisClient *c);
 void v8CommandCall(redisClient *c);
 void v8Reload(redisClient *c);
-
 
 void passPointerTolookupCommandByCString(struct redisCommand* (*functionPtr)(char*));
 void passPointerToRedisLogRaw(void (*functionPtr)(int,const char*));
@@ -1548,7 +1546,6 @@ void passPointerToredisLog(void (*functionPtr)(int,const char*,...));
 void passPointerToaddReply(void (*functionPtr)(redisClient *, robj *));
 void passPointerTosdsnew(sds (*functionPtr)(const char*));
 void passPointerTocreateObject(robj* (*functionPtr)(int,void*));
-void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t));
 void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*));
 void passPointerToaddReplyError(void (*functionPtr)(redisClient*,char*));
 void passPointerTolookupKeyRead(robj *(*functionPtr)(redisDb*, robj *));
@@ -1572,5 +1569,8 @@ char *config_get_js_dir();
 char *config_get_js_flags();
 int config_get_js_timeout();
 int config_get_js_slow();
+
+
+
 
 #endif

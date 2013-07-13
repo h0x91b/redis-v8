@@ -74,7 +74,6 @@ void (*redisLogPtr)(int,const char*,...);
 void (*addReplyPtr)(redisClient *, robj *);
 sds (*sdsnewPtr)(const char*);
 robj* (*createObjectPtr)(int,void*);
-void (*addReplyStringPtr)(redisClient*,char *,size_t);
 void (*addReplyBulkPtr)(redisClient*,robj*);
 void (*addReplyErrorPtr)(redisClient*,char*);
 robj *(*lookupKeyReadPtr)(redisDb*, robj*);
@@ -901,11 +900,6 @@ extern "C"
 	void passPointerTocreateObject(robj* (*functionPtr)(int,void*)){
 		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerTocreateObject");
 		createObjectPtr = functionPtr;
-	}
-	
-	void passPointerToaddReplyString(void (*functionPtr)(redisClient*,char *,size_t)){
-		redisLogRawPtr(REDIS_DEBUG, (char*)"passPointerToaddReplyString");
-		addReplyStringPtr = functionPtr;
 	}
 	
 	void passPointerToaddReplyBulk(void (*functionPtr)(redisClient*,robj*)){

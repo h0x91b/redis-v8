@@ -32,10 +32,6 @@ start_server {tags {"basic"}} {
 		r js {return redis.dump('HSET');}
 	} {cant handle binary data}
 
-	test {V8 test user script blogpost.new} {
-		r js {blogpost.new('test title','test body'); return redis.hmget('HSET:BLOG_POST:1','id','title','body');}
-	} {{"ret":{"id":"1","title":"test title","body":"test body"},"cmds":4}}
-
 	test {V8 exception test} {
 		assert_error {ERR -Exception error: "error"} {r js {throw "error"}}
 	}
