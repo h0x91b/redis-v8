@@ -787,6 +787,7 @@ extern "C"
 	}
 	
 	void v8_reload(redisClient *c){
+		v8::V8::TerminateExecution();
 		v8::V8::Dispose();
 		pthread_cancel(thread_id_for_single_thread_check);
 		initV8();
