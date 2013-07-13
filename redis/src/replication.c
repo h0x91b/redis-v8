@@ -290,10 +290,10 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
 void replicationFeedMonitors(redisClient *c, list *monitors, int dictid, robj **argv, int argc) {
     listNode *ln;
     listIter li;
-    int j, port;
+    int j;
     sds cmdrepr = sdsnew("+");
     robj *cmdobj;
-    char ip[32];
+    char peerid[REDIS_PEER_ID_LEN];
     struct timeval tv;
 
     gettimeofday(&tv,NULL);
@@ -303,8 +303,8 @@ void replicationFeedMonitors(redisClient *c, list *monitors, int dictid, robj **
     } else if (c->flags & REDIS_UNIX_SOCKET) {
         cmdrepr = sdscatprintf(cmdrepr,"[%d unix:%s] ",dictid,server.unixsocket);
     } else {
-        anetPeerToString(c->fd,ip,&port);
-        cmdrepr = sdscatprintf(cmdrepr,"[%d %s:%d] ",dictid,ip,port);
+        getClientPeerId(c,peerid,sizeof(peerid));
+        cmdrepr = sdscatprintf(cmdrepr,"[%d %s] ",dictid,peerid);
     }
 
     for (j = 0; j < argc; j++) {
@@ -1554,7 +1554,7 @@ void replicationCron(void) {
     if (server.masterhost && server.repl_state == REDIS_REPL_CONNECTED &&
         (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
     {
-        redisLog(REDIS_WARNING,"MASTER time out: no data nor PING received...");
+        redisLog(REDIS_WARNING,"MASTER timeout: no data nor PING received...");
         freeClient(server.master);
     }
 
@@ -1614,10 +1614,10 @@ void replicationCron(void) {
             if (slave->flags & REDIS_PRE_PSYNC_SLAVE) continue;
             if ((server.unixtime - slave->repl_ack_time) > server.repl_timeout)
             {
-                char ip[32];
+                char ip[REDIS_IP_STR_LEN];
                 int port;
 
-                if (anetPeerToString(slave->fd,ip,&port) != -1) {
+                if (anetPeerToString(slave->fd,ip,sizeof(ip),&port) != -1) {
                     redisLog(REDIS_WARNING,
                         "Disconnecting timedout slave: %s:%d",
                         ip, slave->slave_listening_port);

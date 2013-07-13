@@ -120,7 +120,9 @@
 #define REDIS_DEFAULT_AOF_REWRITE_INCREMENTAL_FSYNC 1
 #define REDIS_DEFAULT_MIN_SLAVES_TO_WRITE 0
 #define REDIS_DEFAULT_MIN_SLAVES_MAX_LAG 10
-#define REDIS_IP_STR_LEN 16
+#define REDIS_IP_STR_LEN INET6_ADDRSTRLEN
+#define REDIS_PEER_ID_LEN (REDIS_IP_STR_LEN+32) /* Must be enough for ip:port */
+#define REDIS_BINDADDR_MAX 16
 
 /* Protocol and I/O related defines */
 #define REDIS_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
@@ -563,6 +565,7 @@ typedef struct redisOpArray {
 #define REDIS_CLUSTER_FAIL 1        /* The cluster can't work */
 #define REDIS_CLUSTER_NAMELEN 40    /* sha1 hex length */
 #define REDIS_CLUSTER_PORT_INCR 10000 /* Cluster port = baseport + PORT_INCR */
+#define REDIS_CLUSTER_IPLEN INET6_ADDRSTRLEN /* IPv6 address string length */
 
 /* The following defines are amunt of time, sometimes expressed as
  * multiplicators of the node timeout value (when ending with MULT). */
@@ -730,12 +733,15 @@ struct redisServer {
     int sentinel_mode;          /* True if this instance is a Sentinel. */
     /* Networking */
     int port;                   /* TCP listening port */
-    char *bindaddr;             /* Bind address or NULL */
+    char *bindaddr[REDIS_BINDADDR_MAX]; /* Addresses we should bind to */
+    int bindaddr_count;         /* Number of addresses in server.bindaddr[] */
     char *unixsocket;           /* UNIX socket path */
     mode_t unixsocketperm;      /* UNIX socket permission */
-    int ipfd;                   /* TCP socket file descriptor */
+    int ipfd[REDIS_BINDADDR_MAX]; /* TCP socket file descriptors */
+    int ipfd_count;             /* Used slots in ipfd[] */
     int sofd;                   /* Unix socket file descriptor */
-    int cfd;                    /* Cluster bus listening socket */
+    int cfd[REDIS_BINDADDR_MAX];/* Cluster bus listening socket */
+    int cfd_count;              /* Used slots in cfd[] */
     list *clients;              /* List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
@@ -885,6 +891,7 @@ struct redisServer {
     int sort_desc;
     int sort_alpha;
     int sort_bypattern;
+    int sort_store;
     /* Zip structure config, see redis.conf for more information  */
     size_t hash_max_ziplist_entries;
     size_t hash_max_ziplist_value;
@@ -1067,6 +1074,8 @@ void copyClientOutputBuffer(redisClient *dst, redisClient *src);
 void *dupClientReplyValue(void *o);
 void getClientsMaxBuffers(unsigned long *longest_output_list,
                           unsigned long *biggest_input_buffer);
+void formatPeerId(char *peerid, size_t peerid_len, char *ip, int port);
+int getClientPeerId(redisClient *client, char *peerid, size_t peerid_len);
 sds getClientInfoString(redisClient *client);
 sds getAllClientsInfoString(void);
 void rewriteClientCommandVector(redisClient *c, int argc, ...);
@@ -1151,6 +1160,7 @@ int getLongDoubleFromObject(robj *o, long double *target);
 int getLongDoubleFromObjectOrReply(redisClient *c, robj *o, long double *target, const char *msg);
 char *strEncoding(int encoding);
 int compareStringObjects(robj *a, robj *b);
+int collateStringObjects(robj *a, robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long estimateObjectIdleTime(robj *o);
 
@@ -1244,6 +1254,7 @@ void oom(const char *msg);
 void populateCommandTable(void);
 void resetCommandTableStats(void);
 void adjustOpenFilesLimit(void);
+void closeListeningSockets(int unlink_unix_socket);
 
 /* Set data type */
 robj *setTypeCreate(robj *value);
