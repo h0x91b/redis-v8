@@ -169,9 +169,7 @@ void FullCodeGenerator::Generate() {
     // The following three instructions must remain together and unmodified
     // for code aging to work properly.
     __ stm(db_w, sp, r1.bit() | cp.bit() | fp.bit() | lr.bit());
-    // Load undefined value here, so the value is ready for the loop
-    // below.
-    __ LoadRoot(ip, Heap::kUndefinedValueRootIndex);
+    __ nop(ip.code());
     // Adjust FP to point to saved FP.
     __ add(fp, sp, Operand(2 * kPointerSize));
   }
@@ -181,8 +179,11 @@ void FullCodeGenerator::Generate() {
     int locals_count = info->scope()->num_stack_slots();
     // Generators allocate locals, if any, in context slots.
     ASSERT(!info->function()->is_generator() || locals_count == 0);
-    for (int i = 0; i < locals_count; i++) {
-      __ push(ip);
+    if (locals_count > 0) {
+      __ LoadRoot(ip, Heap::kUndefinedValueRootIndex);
+      for (int i = 0; i < locals_count; i++) {
+        __ push(ip);
+      }
     }
   }
 
@@ -785,9 +786,9 @@ void FullCodeGenerator::EmitDebugCheckDeclarationContext(Variable* variable) {
     // Check that we're not inside a with or catch context.
     __ ldr(r1, FieldMemOperand(cp, HeapObject::kMapOffset));
     __ CompareRoot(r1, Heap::kWithContextMapRootIndex);
-    __ Check(ne, "Declaration in with context.");
+    __ Check(ne, kDeclarationInWithContext);
     __ CompareRoot(r1, Heap::kCatchContextMapRootIndex);
-    __ Check(ne, "Declaration in catch context.");
+    __ Check(ne, kDeclarationInCatchContext);
   }
 }
 
@@ -1622,7 +1623,7 @@ void FullCodeGenerator::VisitRegExpLiteral(RegExpLiteral* expr) {
   // r0: Newly allocated regexp.
   // r5: Materialized regexp.
   // r2: temp.
-  __ CopyFields(r0, r5, d0, s0, size / kPointerSize);
+  __ CopyFields(r0, r5, d0, size / kPointerSize);
   context()->Plug(r0);
 }
 
@@ -2511,7 +2512,7 @@ void FullCodeGenerator::EmitVariableAssignment(Variable* var,
         // Check for an uninitialized let binding.
         __ ldr(r2, location);
         __ CompareRoot(r2, Heap::kTheHoleValueRootIndex);
-        __ Check(eq, "Let binding re-initialization.");
+        __ Check(eq, kLetBindingReInitialization);
       }
       // Perform the assignment.
       __ str(r0, location);
@@ -3472,23 +3473,23 @@ void FullCodeGenerator::EmitSeqStringSetCharCheck(Register string,
                                                   Register value,
                                                   uint32_t encoding_mask) {
   __ SmiTst(index);
-  __ Check(eq, "Non-smi index");
+  __ Check(eq, kNonSmiIndex);
   __ SmiTst(value);
-  __ Check(eq, "Non-smi value");
+  __ Check(eq, kNonSmiValue);
 
   __ ldr(ip, FieldMemOperand(string, String::kLengthOffset));
   __ cmp(index, ip);
-  __ Check(lt, "Index is too large");
+  __ Check(lt, kIndexIsTooLarge);
 
   __ cmp(index, Operand(Smi::FromInt(0)));
-  __ Check(ge, "Index is negative");
+  __ Check(ge, kIndexIsNegative);
 
   __ ldr(ip, FieldMemOperand(string, HeapObject::kMapOffset));
   __ ldrb(ip, FieldMemOperand(ip, Map::kInstanceTypeOffset));
 
   __ and_(ip, ip, Operand(kStringRepresentationMask | kStringEncodingMask));
   __ cmp(ip, Operand(encoding_mask));
-  __ Check(eq, "Unexpected string type");
+  __ Check(eq, kUnexpectedStringType);
 }
 
 
@@ -3718,7 +3719,7 @@ void FullCodeGenerator::EmitStringAdd(CallRuntime* expr) {
   VisitForStackValue(args->at(0));
   VisitForStackValue(args->at(1));
 
-  StringAddStub stub(NO_STRING_ADD_FLAGS);
+  StringAddStub stub(STRING_ADD_CHECK_BOTH);
   __ CallStub(&stub);
   context()->Plug(r0);
 }
@@ -3848,7 +3849,7 @@ void FullCodeGenerator::EmitGetFromCache(CallRuntime* expr) {
   Handle<FixedArray> jsfunction_result_caches(
       isolate()->native_context()->jsfunction_result_caches());
   if (jsfunction_result_caches->length() <= cache_id) {
-    __ Abort("Attempt to use undefined cache.");
+    __ Abort(kAttemptToUseUndefinedCache);
     __ LoadRoot(r0, Heap::kUndefinedValueRootIndex);
     context()->Plug(r0);
     return;
@@ -4029,7 +4030,7 @@ void FullCodeGenerator::EmitFastAsciiArrayJoin(CallRuntime* expr) {
   //   elements_end: Array end.
   if (generate_debug_code_) {
     __ cmp(array_length, Operand::Zero());
-    __ Assert(gt, "No empty arrays here in EmitFastAsciiArrayJoin");
+    __ Assert(gt, kNoEmptyArraysHereInEmitFastAsciiArrayJoin);
   }
   __ bind(&loop);
   __ ldr(string, MemOperand(element, kPointerSize, PostIndex));
@@ -4348,32 +4349,9 @@ void FullCodeGenerator::VisitUnaryOperation(UnaryOperation* expr) {
       break;
     }
 
-    case Token::SUB:
-      EmitUnaryOperation(expr, "[ UnaryOperation (SUB)");
-      break;
-
-    case Token::BIT_NOT:
-      EmitUnaryOperation(expr, "[ UnaryOperation (BIT_NOT)");
-      break;
-
     default:
       UNREACHABLE();
   }
-}
-
-
-void FullCodeGenerator::EmitUnaryOperation(UnaryOperation* expr,
-                                           const char* comment) {
-  // TODO(svenpanne): Allowing format strings in Comment would be nice here...
-  Comment cmt(masm_, comment);
-  UnaryOpStub stub(expr->op());
-  // UnaryOpStub expects the argument to be in the
-  // accumulator register r0.
-  VisitForAccumulatorValue(expr->expression());
-  SetSourcePosition(expr->position());
-  CallIC(stub.GetCode(isolate()), RelocInfo::CODE_TARGET,
-         expr->UnaryOperationFeedbackId());
-  context()->Plug(r0);
 }
 
 
@@ -4435,7 +4413,9 @@ void FullCodeGenerator::VisitCountOperation(CountOperation* expr) {
 
   // Call ToNumber only if operand is not a smi.
   Label no_conversion;
-  __ JumpIfSmi(r0, &no_conversion);
+  if (ShouldInlineSmiCase(expr->op())) {
+    __ JumpIfSmi(r0, &no_conversion);
+  }
   ToNumberStub convert_stub;
   __ CallStub(&convert_stub);
   __ bind(&no_conversion);

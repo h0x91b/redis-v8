@@ -577,6 +577,10 @@ void ExternalReferenceTable::PopulateTable(Isolate* isolate) {
       UNCLASSIFIED,
       62,
       "Heap::NewSpaceAllocationLimitAddress");
+  Add(ExternalReference::allocation_sites_list_address(isolate).address(),
+      UNCLASSIFIED,
+      63,
+      "Heap::allocation_sites_list_address()");
 
   // Add a small set of deopt entry addresses to encoder without generating the
   // deopt table code, which isn't possible at deserialization time.
@@ -587,7 +591,7 @@ void ExternalReferenceTable::PopulateTable(Isolate* isolate) {
         entry,
         Deoptimizer::LAZY,
         Deoptimizer::CALCULATE_ENTRY_ADDRESS);
-    Add(address, LAZY_DEOPTIMIZATION, 63 + entry, "lazy_deopt");
+    Add(address, LAZY_DEOPTIMIZATION, 64 + entry, "lazy_deopt");
   }
 }
 
@@ -661,6 +665,141 @@ bool Serializer::serialization_enabled_ = false;
 bool Serializer::too_late_to_enable_now_ = false;
 
 
+class CodeAddressMap: public CodeEventLogger {
+ public:
+  explicit CodeAddressMap(Isolate* isolate)
+      : isolate_(isolate) {
+    isolate->logger()->addCodeEventListener(this);
+  }
+
+  virtual ~CodeAddressMap() {
+    isolate_->logger()->removeCodeEventListener(this);
+  }
+
+  virtual void CodeMoveEvent(Address from, Address to) {
+    address_to_name_map_.Move(from, to);
+  }
+
+  virtual void CodeDeleteEvent(Address from) {
+    address_to_name_map_.Remove(from);
+  }
+
+  const char* Lookup(Address address) {
+    return address_to_name_map_.Lookup(address);
+  }
+
+ private:
+  class NameMap {
+   public:
+    NameMap() : impl_(&PointerEquals) {}
+
+    ~NameMap() {
+      for (HashMap::Entry* p = impl_.Start(); p != NULL; p = impl_.Next(p)) {
+        DeleteArray(static_cast<const char*>(p->value));
+      }
+    }
+
+    void Insert(Address code_address, const char* name, int name_size) {
+      HashMap::Entry* entry = FindOrCreateEntry(code_address);
+      if (entry->value == NULL) {
+        entry->value = CopyName(name, name_size);
+      }
+    }
+
+    const char* Lookup(Address code_address) {
+      HashMap::Entry* entry = FindEntry(code_address);
+      return (entry != NULL) ? static_cast<const char*>(entry->value) : NULL;
+    }
+
+    void Remove(Address code_address) {
+      HashMap::Entry* entry = FindEntry(code_address);
+      if (entry != NULL) {
+        DeleteArray(static_cast<char*>(entry->value));
+        RemoveEntry(entry);
+      }
+    }
+
+    void Move(Address from, Address to) {
+      if (from == to) return;
+      HashMap::Entry* from_entry = FindEntry(from);
+      ASSERT(from_entry != NULL);
+      void* value = from_entry->value;
+      RemoveEntry(from_entry);
+      HashMap::Entry* to_entry = FindOrCreateEntry(to);
+      ASSERT(to_entry->value == NULL);
+      to_entry->value = value;
+    }
+
+   private:
+    static bool PointerEquals(void* lhs, void* rhs) {
+      return lhs == rhs;
+    }
+
+    static char* CopyName(const char* name, int name_size) {
+      char* result = NewArray<char>(name_size + 1);
+      for (int i = 0; i < name_size; ++i) {
+        char c = name[i];
+        if (c == '\0') c = ' ';
+        result[i] = c;
+      }
+      result[name_size] = '\0';
+      return result;
+    }
+
+    HashMap::Entry* FindOrCreateEntry(Address code_address) {
+      return impl_.Lookup(code_address, ComputePointerHash(code_address), true);
+    }
+
+    HashMap::Entry* FindEntry(Address code_address) {
+      return impl_.Lookup(code_address,
+                          ComputePointerHash(code_address),
+                          false);
+    }
+
+    void RemoveEntry(HashMap::Entry* entry) {
+      impl_.Remove(entry->key, entry->hash);
+    }
+
+    HashMap impl_;
+
+    DISALLOW_COPY_AND_ASSIGN(NameMap);
+  };
+
+  virtual void LogRecordedBuffer(Code* code,
+                                 SharedFunctionInfo*,
+                                 const char* name,
+                                 int length) {
+    address_to_name_map_.Insert(code->address(), name, length);
+  }
+
+  NameMap address_to_name_map_;
+  Isolate* isolate_;
+};
+
+
+CodeAddressMap* Serializer::code_address_map_ = NULL;
+
+
+void Serializer::Enable() {
+  if (!serialization_enabled_) {
+    ASSERT(!too_late_to_enable_now_);
+  }
+  if (serialization_enabled_) return;
+  serialization_enabled_ = true;
+  i::Isolate* isolate = Isolate::Current();
+  isolate->InitializeLoggingAndCounters();
+  code_address_map_ = new CodeAddressMap(isolate);
+}
+
+
+void Serializer::Disable() {
+  if (!serialization_enabled_) return;
+  serialization_enabled_ = false;
+  delete code_address_map_;
+  code_address_map_ = NULL;
+}
+
+
 Deserializer::Deserializer(SnapshotByteSource* source)
     : isolate_(NULL),
       source_(source),
@@ -689,6 +828,13 @@ void Deserializer::Deserialize() {
       isolate_->heap()->undefined_value());
   isolate_->heap()->set_array_buffers_list(
       isolate_->heap()->undefined_value());
+
+  // The allocation site list is build during root iteration, but if no sites
+  // were encountered then it needs to be initialized to undefined.
+  if (isolate_->heap()->allocation_sites_list() == Smi::FromInt(0)) {
+    isolate_->heap()->set_allocation_sites_list(
+        isolate_->heap()->undefined_value());
+  }
 
   // Update data pointers to the external strings containing natives sources.
   for (int i = 0; i < Natives::GetBuiltinsCount(); i++) {
@@ -745,6 +891,16 @@ void Deserializer::VisitPointers(Object** start, Object** end) {
 }
 
 
+void Deserializer::RelinkAllocationSite(AllocationSite* site) {
+  if (isolate_->heap()->allocation_sites_list() == Smi::FromInt(0)) {
+    site->set_weak_next(isolate_->heap()->undefined_value());
+  } else {
+    site->set_weak_next(isolate_->heap()->allocation_sites_list());
+  }
+  isolate_->heap()->set_allocation_sites_list(site);
+}
+
+
 // This routine writes the new object into the pointer provided and then
 // returns true if the new object was in young space and false otherwise.
 // The reason for this strange interface is that otherwise the object is
@@ -754,16 +910,25 @@ void Deserializer::ReadObject(int space_number,
                               Object** write_back) {
   int size = source_->GetInt() << kObjectAlignmentBits;
   Address address = Allocate(space_number, size);
-  *write_back = HeapObject::FromAddress(address);
+  HeapObject* obj = HeapObject::FromAddress(address);
+  *write_back = obj;
   Object** current = reinterpret_cast<Object**>(address);
   Object** limit = current + (size >> kPointerSizeLog2);
   if (FLAG_log_snapshot_positions) {
     LOG(isolate_, SnapshotPositionEvent(address, source_->position()));
   }
   ReadChunk(current, limit, space_number, address);
+
+  // TODO(mvstanton): consider treating the heap()->allocation_sites_list()
+  // as a (weak) root. If this root is relocated correctly,
+  // RelinkAllocationSite() isn't necessary.
+  if (obj->IsAllocationSite()) {
+    RelinkAllocationSite(AllocationSite::cast(obj));
+  }
+
 #ifdef DEBUG
   bool is_codespace = (space_number == CODE_SPACE);
-  ASSERT(HeapObject::FromAddress(address)->IsCode() == is_codespace);
+  ASSERT(obj->IsCode() == is_codespace);
 #endif
 }
 
@@ -1139,6 +1304,7 @@ void StartupSerializer::SerializeStrongReferences() {
   // No active or weak handles.
   CHECK(isolate->handle_scope_implementer()->blocks()->is_empty());
   CHECK_EQ(0, isolate->global_handles()->NumberOfWeakHandles());
+  CHECK_EQ(0, isolate->eternal_handles()->NumberOfHandles());
   // We don't support serializing installed extensions.
   CHECK(!isolate->has_installed_extensions());
 
@@ -1428,7 +1594,11 @@ void Serializer::ObjectSerializer::Serialize() {
              "ObjectSerialization");
   sink_->PutInt(size >> kObjectAlignmentBits, "Size in words");
 
-  LOG(i::Isolate::Current(),
+  ASSERT(code_address_map_);
+  const char* code_name = code_address_map_->Lookup(object_->address());
+  LOG(serializer_->isolate_,
+      CodeNameEvent(object_->address(), sink_->Position(), code_name));
+  LOG(serializer_->isolate_,
       SnapshotPositionEvent(object_->address(), sink_->Position()));
 
   // Mark this object as already serialized.

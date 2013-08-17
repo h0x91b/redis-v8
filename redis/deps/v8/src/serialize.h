@@ -347,6 +347,10 @@ class Deserializer: public SerializerDeserializer {
     UNREACHABLE();
   }
 
+  // Allocation sites are present in the snapshot, and must be linked into
+  // a list at deserialization time.
+  void RelinkAllocationSite(AllocationSite* site);
+
   // Fills in some heap data in an area from start to end (non-inclusive).  The
   // space id is used for the write barrier.  The object_address is the address
   // of the object we are writing into, or NULL if we are not writing into an
@@ -455,6 +459,8 @@ class SerializationAddressMapper {
 };
 
 
+class CodeAddressMap;
+
 // There can be only one serializer per V8 process.
 class Serializer : public SerializerDeserializer {
  public:
@@ -468,14 +474,9 @@ class Serializer : public SerializerDeserializer {
     return fullness_[space];
   }
 
-  static void Enable() {
-    if (!serialization_enabled_) {
-      ASSERT(!too_late_to_enable_now_);
-    }
-    serialization_enabled_ = true;
-  }
+  static void Enable();
+  static void Disable();
 
-  static void Disable() { serialization_enabled_ = false; }
   // Call this when you have made use of the fact that there is no serialization
   // going on.
   static void TooLateToEnableNow() { too_late_to_enable_now_ = true; }
@@ -585,6 +586,7 @@ class Serializer : public SerializerDeserializer {
   friend class Deserializer;
 
  private:
+  static CodeAddressMap* code_address_map_;
   DISALLOW_COPY_AND_ASSIGN(Serializer);
 };
 

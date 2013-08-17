@@ -563,6 +563,7 @@ Parser::Parser(CompilationInfo* info)
   set_allow_lazy(false);  // Must be explicitly enabled.
   set_allow_generators(FLAG_harmony_generators);
   set_allow_for_of(FLAG_harmony_iteration);
+  set_allow_harmony_numeric_literals(FLAG_harmony_numeric_literals);
 }
 
 
@@ -1563,24 +1564,18 @@ void Parser::Declare(Declaration* declaration, bool resolve, bool* ok) {
     // For global const variables we bind the proxy to a variable.
     ASSERT(resolve);  // should be set by all callers
     Variable::Kind kind = Variable::NORMAL;
-    var = new(zone()) Variable(declaration_scope,
-                               name,
-                               mode,
-                               true,
-                               kind,
-                               kNeedsInitialization);
+    var = new(zone()) Variable(
+        declaration_scope, name, mode, true, kind,
+        kNeedsInitialization, proxy->interface());
   } else if (declaration_scope->is_eval_scope() &&
              declaration_scope->is_classic_mode()) {
     // For variable declarations in a non-strict eval scope the proxy is bound
     // to a lookup variable to force a dynamic declaration using the
     // DeclareContextSlot runtime function.
     Variable::Kind kind = Variable::NORMAL;
-    var = new(zone()) Variable(declaration_scope,
-                               name,
-                               mode,
-                               true,
-                               kind,
-                               declaration->initialization());
+    var = new(zone()) Variable(
+        declaration_scope, name, mode, true, kind,
+        declaration->initialization(), proxy->interface());
     var->AllocateTo(Variable::LOOKUP, -1);
     resolve = true;
   }
@@ -3202,6 +3197,20 @@ Expression* Parser::ParseUnaryExpression(bool* ok) {
                                            factory()->NewNumberLiteral(1),
                                            position);
     }
+    // The same idea for '-foo' => 'foo*(-1)'.
+    if (op == Token::SUB) {
+      return factory()->NewBinaryOperation(Token::MUL,
+                                           expression,
+                                           factory()->NewNumberLiteral(-1),
+                                           position);
+    }
+    // ...and one more time for '~foo' => 'foo^(~0)'.
+    if (op == Token::BIT_NOT) {
+      return factory()->NewBinaryOperation(Token::BIT_XOR,
+                                           expression,
+                                           factory()->NewNumberLiteral(~0),
+                                           position);
+    }
 
     return factory()->NewUnaryOperation(op, expression, position);
 
@@ -3579,7 +3588,8 @@ Expression* Parser::ParsePrimaryExpression(bool* ok) {
       ASSERT(scanner().is_literal_ascii());
       double value = StringToDouble(isolate()->unicode_cache(),
                                     scanner().literal_ascii_string(),
-                                    ALLOW_HEX | ALLOW_OCTALS);
+                                    ALLOW_HEX | ALLOW_OCTAL |
+                                        ALLOW_IMPLICIT_OCTAL | ALLOW_BINARY);
       result = factory()->NewNumberLiteral(value);
       break;
     }
@@ -4032,7 +4042,8 @@ Expression* Parser::ParseObjectLiteral(bool* ok) {
         ASSERT(scanner().is_literal_ascii());
         double value = StringToDouble(isolate()->unicode_cache(),
                                       scanner().literal_ascii_string(),
-                                      ALLOW_HEX | ALLOW_OCTALS);
+                                      ALLOW_HEX | ALLOW_OCTAL |
+                                          ALLOW_IMPLICIT_OCTAL | ALLOW_BINARY);
         key = factory()->NewNumberLiteral(value);
         break;
       }
@@ -4587,6 +4598,8 @@ preparser::PreParser::PreParseResult Parser::LazyParseFunctionLiteral(
     reusable_preparser_->set_allow_lazy(true);
     reusable_preparser_->set_allow_generators(allow_generators());
     reusable_preparser_->set_allow_for_of(allow_for_of());
+    reusable_preparser_->set_allow_harmony_numeric_literals(
+        allow_harmony_numeric_literals());
   }
   preparser::PreParser::PreParseResult result =
       reusable_preparser_->PreParseLazyFunction(top_scope_->language_mode(),
@@ -5856,6 +5869,7 @@ ScriptDataImpl* PreParserApi::PreParse(Utf16CharacterStream* source) {
   preparser.set_allow_generators(FLAG_harmony_generators);
   preparser.set_allow_for_of(FLAG_harmony_iteration);
   preparser.set_allow_harmony_scoping(FLAG_harmony_scoping);
+  preparser.set_allow_harmony_numeric_literals(FLAG_harmony_numeric_literals);
   scanner.Initialize(source);
   preparser::PreParser::PreParseResult result = preparser.PreParseProgram();
   if (result == preparser::PreParser::kPreParseStackOverflow) {

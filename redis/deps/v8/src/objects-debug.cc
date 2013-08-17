@@ -181,6 +181,9 @@ void HeapObject::HeapObjectVerify() {
     case JS_WEAK_MAP_TYPE:
       JSWeakMap::cast(this)->JSWeakMapVerify();
       break;
+    case JS_WEAK_SET_TYPE:
+      JSWeakSet::cast(this)->JSWeakSetVerify();
+      break;
     case JS_REGEXP_TYPE:
       JSRegExp::cast(this)->JSRegExpVerify();
       break;
@@ -363,9 +366,12 @@ void Map::SharedMapVerify() {
 }
 
 
-void Map::VerifyOmittedPrototypeChecks() {
-  if (!FLAG_omit_prototype_checks_for_leaf_maps) return;
-  if (HasTransitionArray() || is_dictionary_map()) {
+void Map::VerifyOmittedMapChecks() {
+  if (!FLAG_omit_map_checks_for_leaf_maps) return;
+  if (!is_stable() ||
+      is_deprecated() ||
+      HasTransitionArray() ||
+      is_dictionary_map()) {
     CHECK_EQ(0, dependent_code()->number_of_entries(
         DependentCode::kPrototypeCheckGroup));
   }
@@ -699,6 +705,14 @@ void JSWeakMap::JSWeakMapVerify() {
 }
 
 
+void JSWeakSet::JSWeakSetVerify() {
+  CHECK(IsJSWeakSet());
+  JSObjectVerify();
+  VerifyHeapPointer(table());
+  CHECK(table()->IsHashTable() || table()->IsUndefined());
+}
+
+
 void JSRegExp::JSRegExpVerify() {
   JSObjectVerify();
   CHECK(data()->IsUndefined() || data()->IsFixedArray());
@@ -919,8 +933,8 @@ void AllocationSite::AllocationSiteVerify() {
 }
 
 
-void AllocationSiteInfo::AllocationSiteInfoVerify() {
-  CHECK(IsAllocationSiteInfo());
+void AllocationMemento::AllocationMementoVerify() {
+  CHECK(IsAllocationMemento());
   VerifyHeapPointer(allocation_site());
   CHECK(!IsValid() || GetAllocationSite()->IsAllocationSite());
 }
@@ -1151,10 +1165,6 @@ static bool CheckOneBackPointer(Map* current_map, Object* target) {
 
 
 bool TransitionArray::IsConsistentWithBackPointers(Map* current_map) {
-  if (HasElementsTransition() &&
-      !CheckOneBackPointer(current_map, elements_transition())) {
-    return false;
-  }
   for (int i = 0; i < number_of_transitions(); ++i) {
     if (!CheckOneBackPointer(current_map, GetTarget(i))) return false;
   }

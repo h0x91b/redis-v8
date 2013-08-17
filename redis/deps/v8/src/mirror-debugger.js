@@ -173,7 +173,7 @@ PropertyKind.Indexed = 2;
 var PropertyType = {};
 PropertyType.Normal                  = 0;
 PropertyType.Field                   = 1;
-PropertyType.ConstantFunction        = 2;
+PropertyType.Constant                = 2;
 PropertyType.Callbacks               = 3;
 PropertyType.Handler                 = 4;
 PropertyType.Interceptor             = 5;
@@ -1699,30 +1699,12 @@ FrameMirror.prototype.stepInPositions = function() {
 
 FrameMirror.prototype.evaluate = function(source, disable_break,
                                           opt_context_object) {
-  var result_array = %DebugEvaluate(this.break_id_,
-                                    this.details_.frameId(),
-                                    this.details_.inlinedFrameIndex(),
-                                    source,
-                                    Boolean(disable_break),
-                                    opt_context_object);
-  // Silently ignore local variables changes if the frame is optimized.
-  if (!this.isOptimizedFrame()) {
-    var local_scope_on_stack = result_array[1];
-    var local_scope_modifed = result_array[2];
-    for (var n in local_scope_modifed) {
-      var value_on_stack = local_scope_on_stack[n];
-      var value_modifed = local_scope_modifed[n];
-      if (value_on_stack !== value_modifed) {
-        %SetScopeVariableValue(this.break_id_,
-                               this.details_.frameId(),
-                               this.details_.inlinedFrameIndex(),
-                               0,
-                               n,
-                               value_modifed);
-      }
-    }
-  }
-  return MakeMirror(result_array[0]);
+  return MakeMirror(%DebugEvaluate(this.break_id_,
+                                   this.details_.frameId(),
+                                   this.details_.inlinedFrameIndex(),
+                                   source,
+                                   Boolean(disable_break),
+                                   opt_context_object));
 };
 
 

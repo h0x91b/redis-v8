@@ -127,7 +127,7 @@ static void CheckFindCodeObject(Isolate* isolate) {
   Address obj_addr = obj->address();
 
   for (int i = 0; i < obj->Size(); i += kPointerSize) {
-    Object* found = heap->FindCodeObject(obj_addr + i);
+    Object* found = isolate->FindCodeObject(obj_addr + i);
     CHECK_EQ(code, found);
   }
 
@@ -137,8 +137,8 @@ static void CheckFindCodeObject(Isolate* isolate) {
       Handle<Code>())->ToObjectChecked();
   CHECK(copy->IsCode());
   HeapObject* obj_copy = HeapObject::cast(copy);
-  Object* not_right = heap->FindCodeObject(obj_copy->address() +
-                                           obj_copy->Size() / 2);
+  Object* not_right = isolate->FindCodeObject(obj_copy->address() +
+                                              obj_copy->Size() / 2);
   CHECK(not_right != code);
 }
 
@@ -661,7 +661,7 @@ TEST(ObjectProperties) {
   CHECK(obj->HasLocalProperty(*first));
 
   // delete first
-  CHECK(obj->DeleteProperty(*first, JSObject::NORMAL_DELETION));
+  JSReceiver::DeleteProperty(obj, first, JSReceiver::NORMAL_DELETION);
   CHECK(!obj->HasLocalProperty(*first));
 
   // add first and then second
@@ -673,9 +673,9 @@ TEST(ObjectProperties) {
   CHECK(obj->HasLocalProperty(*second));
 
   // delete first and then second
-  CHECK(obj->DeleteProperty(*first, JSObject::NORMAL_DELETION));
+  JSReceiver::DeleteProperty(obj, first, JSReceiver::NORMAL_DELETION);
   CHECK(obj->HasLocalProperty(*second));
-  CHECK(obj->DeleteProperty(*second, JSObject::NORMAL_DELETION));
+  JSReceiver::DeleteProperty(obj, second, JSReceiver::NORMAL_DELETION);
   CHECK(!obj->HasLocalProperty(*first));
   CHECK(!obj->HasLocalProperty(*second));
 
@@ -688,9 +688,9 @@ TEST(ObjectProperties) {
   CHECK(obj->HasLocalProperty(*second));
 
   // delete second and then first
-  CHECK(obj->DeleteProperty(*second, JSObject::NORMAL_DELETION));
+  JSReceiver::DeleteProperty(obj, second, JSReceiver::NORMAL_DELETION);
   CHECK(obj->HasLocalProperty(*first));
-  CHECK(obj->DeleteProperty(*first, JSObject::NORMAL_DELETION));
+  JSReceiver::DeleteProperty(obj, first, JSReceiver::NORMAL_DELETION);
   CHECK(!obj->HasLocalProperty(*first));
   CHECK(!obj->HasLocalProperty(*second));
 
@@ -960,7 +960,7 @@ TEST(Regression39128) {
   Factory* factory = isolate->factory();
 
   // Increase the chance of 'bump-the-pointer' allocation in old space.
-  HEAP->CollectAllGarbage(Heap::kNoGCFlags);
+  HEAP->CollectAllGarbage(Heap::kAbortIncrementalMarkingMask);
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -984,7 +984,7 @@ TEST(Regression39128) {
   // just enough room to allocate JSObject and thus fill the newspace.
 
   int allocation_amount = Min(FixedArray::kMaxSize,
-                              HEAP->MaxObjectSizeInNewSpace());
+                              Page::kMaxNonCodeHeapObjectSize + kPointerSize);
   int allocation_len = LenFromSize(allocation_amount);
   NewSpace* new_space = HEAP->new_space();
   Address* top_addr = new_space->allocation_top_address();
@@ -1948,7 +1948,7 @@ TEST(PrototypeTransitionClearing) {
 
   // Verify that only dead prototype transitions are cleared.
   CHECK_EQ(10, baseObject->map()->NumberOfProtoTransitions());
-  HEAP->CollectAllGarbage(Heap::kNoGCFlags);
+  HEAP->CollectAllGarbage(Heap::kAbortIncrementalMarkingMask);
   const int transitions = 10 - 3;
   CHECK_EQ(transitions, baseObject->map()->NumberOfProtoTransitions());
 
@@ -2349,6 +2349,31 @@ TEST(OptimizedAllocationArrayLiterals) {
       v8::Utils::OpenHandle(*v8::Handle<v8::Object>::Cast(res));
 
   CHECK(HEAP->InNewSpace(o->elements()));
+}
+
+
+TEST(OptimizedPretenuringCallNew) {
+  i::FLAG_allow_natives_syntax = true;
+  i::FLAG_pretenuring_call_new = true;
+  CcTest::InitializeVM();
+  if (!i::V8::UseCrankshaft() || i::FLAG_always_opt) return;
+  if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
+  v8::HandleScope scope(CcTest::isolate());
+  HEAP->SetNewSpaceHighPromotionModeActive(true);
+
+  AlwaysAllocateScope always_allocate;
+  v8::Local<v8::Value> res = CompileRun(
+      "function g() { this.a = 0; }"
+      "function f() {"
+      "  return new g();"
+      "};"
+      "f(); f(); f();"
+      "%OptimizeFunctionOnNextCall(f);"
+      "f();");
+
+  Handle<JSObject> o =
+      v8::Utils::OpenHandle(*v8::Handle<v8::Object>::Cast(res));
+  CHECK(HEAP->InOldPointerSpace(*o));
 }
 
 
@@ -2795,20 +2820,27 @@ class SourceResource: public v8::String::ExternalAsciiStringResource {
 };
 
 
-void ReleaseStackTraceDataTest(const char* source) {
+void ReleaseStackTraceDataTest(const char* source, const char* accessor) {
   // Test that the data retained by the Error.stack accessor is released
   // after the first time the accessor is fired.  We use external string
   // to check whether the data is being released since the external string
   // resource's callback is fired when the external string is GC'ed.
+  FLAG_use_ic = false;  // ICs retain objects.
+  FLAG_parallel_recompilation = false;
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   SourceResource* resource = new SourceResource(i::StrDup(source));
   {
     v8::HandleScope scope(CcTest::isolate());
     v8::Handle<v8::String> source_string = v8::String::NewExternal(resource);
+    HEAP->CollectAllAvailableGarbage();
     v8::Script::Compile(source_string)->Run();
     CHECK(!resource->IsDisposed());
   }
+  // HEAP->CollectAllAvailableGarbage();
+  CHECK(!resource->IsDisposed());
+
+  CompileRun(accessor);
   HEAP->CollectAllAvailableGarbage();
 
   // External source has been released.
@@ -2830,8 +2862,33 @@ TEST(ReleaseStackTraceData) {
                                "} catch (e) {                "
                                "  error = e;                 "
                                "}                            ";
-  ReleaseStackTraceDataTest(source1);
-  ReleaseStackTraceDataTest(source2);
+  static const char* source3 = "var error = null;            "
+  /* Normal Error */           "try {                        "
+  /* as prototype */           "  throw new Error();         "
+                               "} catch (e) {                "
+                               "  error = {};                "
+                               "  error.__proto__ = e;       "
+                               "}                            ";
+  static const char* source4 = "var error = null;            "
+  /* Stack overflow */         "try {                        "
+  /* as prototype   */         "  (function f() { f(); })(); "
+                               "} catch (e) {                "
+                               "  error = {};                "
+                               "  error.__proto__ = e;       "
+                               "}                            ";
+  static const char* getter = "error.stack";
+  static const char* setter = "error.stack = 0";
+
+  ReleaseStackTraceDataTest(source1, setter);
+  ReleaseStackTraceDataTest(source2, setter);
+  // We do not test source3 and source4 with setter, since the setter is
+  // supposed to (untypically) write to the receiver, not the holder.  This is
+  // to emulate the behavior of a data property.
+
+  ReleaseStackTraceDataTest(source1, getter);
+  ReleaseStackTraceDataTest(source2, getter);
+  ReleaseStackTraceDataTest(source3, getter);
+  ReleaseStackTraceDataTest(source4, getter);
 }
 
 
@@ -3145,7 +3202,7 @@ TEST(Regress169928) {
   array_data->set(1, Smi::FromInt(2));
 
   AllocateAllButNBytes(HEAP->new_space(),
-                       JSArray::kSize + AllocationSiteInfo::kSize +
+                       JSArray::kSize + AllocationMemento::kSize +
                        kPointerSize);
 
   Handle<JSArray> array = factory->NewJSArrayWithElements(array_data,
@@ -3155,16 +3212,16 @@ TEST(Regress169928) {
   CHECK_EQ(Smi::FromInt(2), array->length());
   CHECK(array->HasFastSmiOrObjectElements());
 
-  // We need filler the size of AllocationSiteInfo object, plus an extra
+  // We need filler the size of AllocationMemento object, plus an extra
   // fill pointer value.
   MaybeObject* maybe_object = HEAP->AllocateRaw(
-      AllocationSiteInfo::kSize + kPointerSize, NEW_SPACE, OLD_POINTER_SPACE);
+      AllocationMemento::kSize + kPointerSize, NEW_SPACE, OLD_POINTER_SPACE);
   Object* obj = NULL;
   CHECK(maybe_object->ToObject(&obj));
   Address addr_obj = reinterpret_cast<Address>(
       reinterpret_cast<byte*>(obj - kHeapObjectTag));
   HEAP->CreateFillerObjectAt(addr_obj,
-                             AllocationSiteInfo::kSize + kPointerSize);
+                             AllocationMemento::kSize + kPointerSize);
 
   // Give the array a name, making sure not to allocate strings.
   v8::Handle<v8::Object> array_obj = v8::Utils::ToLocal(array);

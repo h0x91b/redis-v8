@@ -651,7 +651,7 @@ OS::MemMoveFunction CreateMemMoveFunction() {
 
 void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
     MacroAssembler* masm, AllocationSiteMode mode,
-    Label* allocation_site_info_found) {
+    Label* allocation_memento_found) {
   // ----------- S t a t e -------------
   //  -- eax    : value
   //  -- ebx    : target map
@@ -660,9 +660,9 @@ void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
   //  -- esp[0] : return address
   // -----------------------------------
   if (mode == TRACK_ALLOCATION_SITE) {
-    ASSERT(allocation_site_info_found != NULL);
-    __ TestJSArrayForAllocationSiteInfo(edx, edi);
-    __ j(equal, allocation_site_info_found);
+    ASSERT(allocation_memento_found != NULL);
+    __ TestJSArrayForAllocationMemento(edx, edi);
+    __ j(equal, allocation_memento_found);
   }
 
   // Set transitioned map.
@@ -689,7 +689,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
   Label loop, entry, convert_hole, gc_required, only_change_map;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    __ TestJSArrayForAllocationSiteInfo(edx, edi);
+    __ TestJSArrayForAllocationMemento(edx, edi);
     __ j(equal, fail);
   }
 
@@ -779,7 +779,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
 
   if (FLAG_debug_code) {
     __ cmp(ebx, masm->isolate()->factory()->the_hole_value());
-    __ Assert(equal, "object found in smi-only array");
+    __ Assert(equal, kObjectFoundInSmiOnlyArray);
   }
 
   if (CpuFeatures::IsSupported(SSE2)) {
@@ -828,7 +828,7 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   Label loop, entry, convert_hole, gc_required, only_change_map, success;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    __ TestJSArrayForAllocationSiteInfo(edx, edi);
+    __ TestJSArrayForAllocationMemento(edx, edi);
     __ j(equal, fail);
   }
 
@@ -1011,7 +1011,7 @@ void StringCharLoadGenerator::Generate(MacroAssembler* masm,
     // Assert that we do not have a cons or slice (indirect strings) here.
     // Sequential strings have already been ruled out.
     __ test(result, Immediate(kIsIndirectStringMask));
-    __ Assert(zero, "external string expected, but not found");
+    __ Assert(zero, kExternalStringExpectedButNotFound);
   }
   // Rule out short external strings.
   STATIC_CHECK(kShortExternalStringTag != 0);

@@ -36,6 +36,7 @@
 #include "safepoint-table.h"
 #include "scopeinfo.h"
 #include "string-stream.h"
+#include "vm-state-inl.h"
 
 #include "allocation-inl.h"
 
@@ -221,7 +222,8 @@ SafeStackFrameIterator::SafeStackFrameIterator(
     : StackFrameIteratorBase(isolate, false),
       low_bound_(sp),
       high_bound_(js_entry_sp),
-      top_frame_type_(StackFrame::NONE) {
+      top_frame_type_(StackFrame::NONE),
+      external_callback_scope_(isolate->external_callback_scope()) {
   StackFrame::State state;
   StackFrame::Type type;
   ThreadLocalTop* top = isolate->thread_local_top();
@@ -256,16 +258,28 @@ SafeStackFrameIterator::SafeStackFrameIterator(
   }
   if (SingletonFor(type) == NULL) return;
   frame_ = SingletonFor(type, &state);
+  if (frame_ == NULL) return;
 
-  if (!done()) Advance();
+  Advance();
+
+  if (frame_ != NULL && !frame_->is_exit() &&
+      external_callback_scope_ != NULL &&
+      external_callback_scope_->scope_address() < frame_->fp()) {
+    // Skip top ExternalCallbackScope if we already advanced to a JS frame
+    // under it. Sampler will anyways take this top external callback.
+    external_callback_scope_ = external_callback_scope_->previous();
+  }
 }
 
 
 bool SafeStackFrameIterator::IsValidTop(ThreadLocalTop* top) const {
-  Address fp = Isolate::c_entry_fp(top);
-  if (!IsValidExitFrame(fp)) return false;
+  Address c_entry_fp = Isolate::c_entry_fp(top);
+  if (!IsValidExitFrame(c_entry_fp)) return false;
   // There should be at least one JS_ENTRY stack handler.
-  return Isolate::handler(top) != NULL;
+  Address handler = Isolate::handler(top);
+  if (handler == NULL) return false;
+  // Check that there are no js frames on top of the native frames.
+  return c_entry_fp < handler;
 }
 
 
@@ -340,6 +354,24 @@ void SafeStackFrameIterator::Advance() {
     AdvanceOneFrame();
     if (done()) return;
     if (frame_->is_java_script()) return;
+    if (frame_->is_exit() && external_callback_scope_) {
+      // Some of the EXIT frames may have ExternalCallbackScope allocated on
+      // top of them. In that case the scope corresponds to the first EXIT
+      // frame beneath it. There may be other EXIT frames on top of the
+      // ExternalCallbackScope, just skip them as we cannot collect any useful
+      // information about them.
+      if (external_callback_scope_->scope_address() < frame_->fp()) {
+        Address* callback_address =
+            external_callback_scope_->callback_address();
+        if (*callback_address != NULL) {
+          frame_->state_.pc_address = callback_address;
+        }
+        external_callback_scope_ = external_callback_scope_->previous();
+        ASSERT(external_callback_scope_ == NULL ||
+               external_callback_scope_->scope_address() > frame_->fp());
+        return;
+      }
+    }
   }
 }
 
@@ -540,7 +572,7 @@ void ExitFrame::FillState(Address fp, Address sp, State* state) {
   state->sp = sp;
   state->fp = fp;
   state->pc_address = ResolveReturnAddressLocation(
-      reinterpret_cast<Address*>(sp - 1 * kPointerSize));
+      reinterpret_cast<Address*>(sp - 1 * kPCOnStackSize));
 }
 
 
@@ -673,7 +705,7 @@ void StubFrame::Iterate(ObjectVisitor* v) const {
 
 
 Code* StubFrame::unchecked_code() const {
-  return static_cast<Code*>(isolate()->heap()->FindCodeObject(pc()));
+  return static_cast<Code*>(isolate()->FindCodeObject(pc()));
 }
 
 
@@ -783,7 +815,7 @@ void JavaScriptFrame::PrintTop(Isolate* isolate,
       SharedFunctionInfo* shared = fun->shared();
       if (print_line_number) {
         Code* code = Code::cast(
-            v8::internal::Isolate::Current()->heap()->FindCodeObject(pc));
+            v8::internal::Isolate::Current()->FindCodeObject(pc));
         int source_pos = code->SourcePosition(pc);
         Object* maybe_script = shared->script();
         if (maybe_script->IsScript()) {
@@ -1489,9 +1521,9 @@ void StackHandler::Unwind(Isolate* isolate,
                           FixedArray* array,
                           int offset,
                           int previous_handler_offset) const {
-  STATIC_ASSERT(StackHandlerConstants::kSlotCount == 5);
+  STATIC_ASSERT(StackHandlerConstants::kSlotCount >= 5);
   ASSERT_LE(0, offset);
-  ASSERT_GE(array->length(), offset + 5);
+  ASSERT_GE(array->length(), offset + StackHandlerConstants::kSlotCount);
   // Unwinding a stack handler into an array chains it in the opposite
   // direction, re-using the "next" slot as a "previous" link, so that stack
   // handlers can be later re-wound in the correct order.  Decode the "state"
@@ -1510,9 +1542,9 @@ int StackHandler::Rewind(Isolate* isolate,
                          FixedArray* array,
                          int offset,
                          Address fp) {
-  STATIC_ASSERT(StackHandlerConstants::kSlotCount == 5);
+  STATIC_ASSERT(StackHandlerConstants::kSlotCount >= 5);
   ASSERT_LE(0, offset);
-  ASSERT_GE(array->length(), offset + 5);
+  ASSERT_GE(array->length(), offset + StackHandlerConstants::kSlotCount);
   Smi* prev_handler_offset = Smi::cast(array->get(offset));
   Code* code = Code::cast(array->get(offset + 1));
   Smi* smi_index = Smi::cast(array->get(offset + 2));
@@ -1528,7 +1560,7 @@ int StackHandler::Rewind(Isolate* isolate,
   Memory::uintptr_at(address() + StackHandlerConstants::kStateOffset) = state;
   Memory::Object_at(address() + StackHandlerConstants::kContextOffset) =
       context;
-  Memory::Address_at(address() + StackHandlerConstants::kFPOffset) = fp;
+  SetFp(address() + StackHandlerConstants::kFPOffset, fp);
 
   *isolate->handler_address() = address();
 

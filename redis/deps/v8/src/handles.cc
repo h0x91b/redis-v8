@@ -169,12 +169,6 @@ void SetExpectedNofProperties(Handle<JSFunction> func, int nof) {
 }
 
 
-void SetPrototypeProperty(Handle<JSFunction> func, Handle<JSObject> value) {
-  CALL_HEAP_FUNCTION_VOID(func->GetIsolate(),
-                          func->SetPrototype(*value));
-}
-
-
 static int ExpectedNofPropertiesFromEstimate(int estimate) {
   // If no properties are added in the constructor, they are more likely
   // to be added later.
@@ -211,17 +205,6 @@ void FlattenString(Handle<String> string) {
 
 Handle<String> FlattenGetString(Handle<String> string) {
   CALL_HEAP_FUNCTION(string->GetIsolate(), string->TryFlatten(), String);
-}
-
-
-Handle<Object> SetPrototype(Handle<JSFunction> function,
-                            Handle<Object> prototype) {
-  ASSERT(function->should_have_prototype());
-  CALL_HEAP_FUNCTION(function->GetIsolate(),
-                     Accessors::FunctionSetPrototype(*function,
-                                                     *prototype,
-                                                     NULL),
-                     Object);
 }
 
 

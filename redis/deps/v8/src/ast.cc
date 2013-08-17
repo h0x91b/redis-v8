@@ -71,8 +71,14 @@ bool Expression::IsNullLiteral() {
 }
 
 
-bool Expression::IsUndefinedLiteral() {
-  return AsLiteral() != NULL && AsLiteral()->value()->IsUndefined();
+bool Expression::IsUndefinedLiteral(Isolate* isolate) {
+  VariableProxy* var_proxy = AsVariableProxy();
+  if (var_proxy == NULL) return false;
+  Variable* var = var_proxy->var();
+  // The global identifier "undefined" is immutable. Everything
+  // else could be reassigned.
+  return var != NULL && var->location() == Variable::UNALLOCATED &&
+         var_proxy->name()->Equals(isolate->heap()->undefined_string());
 }
 
 
@@ -267,7 +273,8 @@ void ObjectLiteral::CalculateEmitStore(Zone* zone) {
     uint32_t hash = literal->Hash();
     // If the key of a computed property is in the table, do not emit
     // a store for the property later.
-    if (property->kind() == ObjectLiteral::Property::COMPUTED &&
+    if ((property->kind() == ObjectLiteral::Property::MATERIALIZED_LITERAL ||
+         property->kind() == ObjectLiteral::Property::COMPUTED) &&
         table.Lookup(literal, hash, false, allocator) != NULL) {
       property->set_emit_store(false);
     } else {
@@ -295,17 +302,6 @@ void UnaryOperation::RecordToBooleanTypeFeedback(TypeFeedbackOracle* oracle) {
   // corresponding to the TestContext, therefore we have to store it here and
   // not on the operand.
   set_to_boolean_types(oracle->ToBooleanTypes(expression()->test_id()));
-}
-
-
-bool UnaryOperation::ResultOverwriteAllowed() {
-  switch (op_) {
-    case Token::BIT_NOT:
-    case Token::SUB:
-      return true;
-    default:
-      return false;
-  }
 }
 
 
@@ -385,12 +381,13 @@ static bool IsVoidOfLiteral(Expression* expr) {
 static bool MatchLiteralCompareUndefined(Expression* left,
                                          Token::Value op,
                                          Expression* right,
-                                         Expression** expr) {
+                                         Expression** expr,
+                                         Isolate* isolate) {
   if (IsVoidOfLiteral(left) && Token::IsEqualityOp(op)) {
     *expr = right;
     return true;
   }
-  if (left->IsUndefinedLiteral() && Token::IsEqualityOp(op)) {
+  if (left->IsUndefinedLiteral(isolate) && Token::IsEqualityOp(op)) {
     *expr = right;
     return true;
   }
@@ -398,9 +395,10 @@ static bool MatchLiteralCompareUndefined(Expression* left,
 }
 
 
-bool CompareOperation::IsLiteralCompareUndefined(Expression** expr) {
-  return MatchLiteralCompareUndefined(left_, op_, right_, expr) ||
-      MatchLiteralCompareUndefined(right_, op_, left_, expr);
+bool CompareOperation::IsLiteralCompareUndefined(
+    Expression** expr, Isolate* isolate) {
+  return MatchLiteralCompareUndefined(left_, op_, right_, expr, isolate) ||
+      MatchLiteralCompareUndefined(right_, op_, left_, expr, isolate);
 }
 
 
@@ -557,11 +555,16 @@ bool Call::ComputeTarget(Handle<Map> type, Handle<String> name) {
     type->LookupDescriptor(NULL, *name, &lookup);
     if (lookup.IsFound()) {
       switch (lookup.type()) {
-        case CONSTANT_FUNCTION:
+        case CONSTANT: {
           // We surely know the target for a constant function.
-          target_ =
-              Handle<JSFunction>(lookup.GetConstantFunctionFromMap(*type));
-          return true;
+          Handle<Object> constant(lookup.GetConstantFromMap(*type),
+                                  type->GetIsolate());
+          if (constant->IsJSFunction()) {
+            target_ = Handle<JSFunction>::cast(constant);
+            return true;
+          }
+          // Fall through.
+        }
         case NORMAL:
         case FIELD:
         case CALLBACKS:

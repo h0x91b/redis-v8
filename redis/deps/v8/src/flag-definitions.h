@@ -171,6 +171,10 @@ DEFINE_bool(harmony_array_buffer, false,
 DEFINE_implication(harmony_typed_arrays, harmony_array_buffer)
 DEFINE_bool(harmony_generators, false, "enable harmony generators")
 DEFINE_bool(harmony_iteration, false, "enable harmony iteration (for-of)")
+DEFINE_bool(harmony_numeric_literals, false,
+            "enable harmony numeric literals (0o77, 0b11)")
+DEFINE_bool(harmony_strings, false, "enable harmony string")
+DEFINE_bool(harmony_arrays, false, "enable harmony arrays")
 DEFINE_bool(harmony, false, "enable all harmony features (except typeof)")
 DEFINE_implication(harmony, harmony_scoping)
 DEFINE_implication(harmony, harmony_modules)
@@ -180,6 +184,9 @@ DEFINE_implication(harmony, harmony_collections)
 DEFINE_implication(harmony, harmony_observation)
 DEFINE_implication(harmony, harmony_generators)
 DEFINE_implication(harmony, harmony_iteration)
+DEFINE_implication(harmony, harmony_numeric_literals)
+DEFINE_implication(harmony, harmony_strings)
+DEFINE_implication(harmony, harmony_arrays)
 DEFINE_implication(harmony_modules, harmony_scoping)
 DEFINE_implication(harmony_observation, harmony_collections)
 // TODO[dslomov] add harmony => harmony_typed_arrays
@@ -187,14 +194,15 @@ DEFINE_implication(harmony_observation, harmony_collections)
 // Flags for experimental implementation features.
 DEFINE_bool(packed_arrays, true, "optimizes arrays that have no holes")
 DEFINE_bool(smi_only_arrays, true, "tracks arrays with only smi values")
-DEFINE_bool(compiled_transitions, false, "use optimizing compiler to "
-            "generate array elements transition stubs")
 DEFINE_bool(compiled_keyed_stores, true, "use optimizing compiler to "
             "generate keyed store stubs")
 DEFINE_bool(clever_optimizations,
             true,
             "Optimize object size, Array shift, DOM strings and string +")
 DEFINE_bool(pretenuring, true, "allocate objects in old space")
+// TODO(hpayer): We will remove this flag as soon as we have pretenuring
+// support for specific allocation sites.
+DEFINE_bool(pretenuring_call_new, false, "pretenure call new")
 DEFINE_bool(track_fields, true, "track fields with only smi values")
 DEFINE_bool(track_double_fields, true, "track fields with double values")
 DEFINE_bool(track_heap_object_fields, true, "track fields with heap values")
@@ -202,6 +210,7 @@ DEFINE_bool(track_computed_fields, true, "track computed boilerplate fields")
 DEFINE_implication(track_double_fields, track_fields)
 DEFINE_implication(track_heap_object_fields, track_fields)
 DEFINE_implication(track_computed_fields, track_fields)
+DEFINE_bool(smi_binop, true, "support smi representation in binary operations")
 
 // Flags for data representation optimizations
 DEFINE_bool(unbox_double_arrays, true, "automatically unbox arrays of doubles")
@@ -209,18 +218,19 @@ DEFINE_bool(string_slices, true, "use string slices")
 
 // Flags for Crankshaft.
 DEFINE_bool(crankshaft, true, "use crankshaft")
-DEFINE_string(hydrogen_filter, "", "optimization filter")
+DEFINE_string(hydrogen_filter, "*", "optimization filter")
 DEFINE_bool(use_range, true, "use hydrogen range analysis")
 DEFINE_bool(use_gvn, true, "use hydrogen global value numbering")
 DEFINE_bool(use_canonicalizing, true, "use hydrogen instruction canonicalizing")
 DEFINE_bool(use_inlining, true, "use function inlining")
 DEFINE_bool(use_escape_analysis, false, "use hydrogen escape analysis")
 DEFINE_bool(use_allocation_folding, true, "use allocation folding")
+DEFINE_int(max_inlining_levels, 5, "maximum number of inlining levels")
 DEFINE_int(max_inlined_source_size, 600,
            "maximum source size in bytes considered for a single inlining")
 DEFINE_int(max_inlined_nodes, 196,
            "maximum number of AST nodes considered for a single inlining")
-DEFINE_int(max_inlined_nodes_cumulative, 196,
+DEFINE_int(max_inlined_nodes_cumulative, 400,
            "maximum cumulative number of AST nodes considered for inlining")
 DEFINE_bool(loop_invariant_code_motion, true, "loop invariant code motion")
 DEFINE_bool(fast_math, true, "faster (but maybe less accurate) math functions")
@@ -229,7 +239,9 @@ DEFINE_bool(collect_megamorphic_maps_from_stub_cache,
             "crankshaft harvests type feedback from stub cache")
 DEFINE_bool(hydrogen_stats, false, "print statistics for hydrogen")
 DEFINE_bool(trace_hydrogen, false, "trace generated hydrogen to file")
-DEFINE_string(trace_phase, "Z", "trace generated IR for specified phases")
+DEFINE_bool(trace_hydrogen_stubs, false, "trace generated hydrogen for stubs")
+DEFINE_string(trace_hydrogen_file, NULL, "trace hydrogen to given file name")
+DEFINE_string(trace_phase, "HLZ", "trace generated IR for specified phases")
 DEFINE_bool(trace_inlining, false, "trace inlining decisions")
 DEFINE_bool(trace_alloc, false, "trace register allocator")
 DEFINE_bool(trace_all_uses, false, "trace all use positions")
@@ -250,13 +262,17 @@ DEFINE_int(deopt_every_n_times,
 DEFINE_int(deopt_every_n_garbage_collections,
            0,
            "deoptimize every n garbage collections")
+DEFINE_bool(print_deopt_stress, false, "print number of possible deopt points")
 DEFINE_bool(trap_on_deopt, false, "put a break point before deoptimizing")
+DEFINE_bool(trap_on_stub_deopt, false,
+            "put a break point before deoptimizing a stub")
 DEFINE_bool(deoptimize_uncommon_cases, true, "deoptimize uncommon cases")
 DEFINE_bool(polymorphic_inlining, true, "polymorphic inlining")
 DEFINE_bool(use_osr, true, "use on-stack replacement")
-DEFINE_bool(idefs, false, "use informative definitions")
 DEFINE_bool(array_bounds_checks_elimination, true,
             "perform array bounds checks elimination")
+DEFINE_bool(array_bounds_checks_hoisting, false,
+            "perform array bounds checks hoisting")
 DEFINE_bool(array_index_dehoisting, true,
             "perform array index dehoisting")
 DEFINE_bool(analyze_environment_liveness, true,
@@ -296,8 +312,8 @@ DEFINE_int(parallel_recompilation_queue_length, 8,
            "the length of the parallel compilation queue")
 DEFINE_int(parallel_recompilation_delay, 0,
            "artificial compilation delay in ms")
-DEFINE_bool(omit_prototype_checks_for_leaf_maps, true,
-            "do not emit prototype checks if all prototypes have leaf maps, "
+DEFINE_bool(omit_map_checks_for_leaf_maps, true,
+            "do not emit check maps for constant values that have a leaf map, "
             "deoptimize the optimized code if the layout of the maps changes.")
 
 // Experimental profiler changes.
@@ -728,11 +744,9 @@ DEFINE_bool(log_snapshot_positions, false,
 DEFINE_bool(log_suspect, false, "Log suspect operations.")
 DEFINE_bool(prof, false,
             "Log statistical profiling information (implies --log-code).")
-DEFINE_bool(prof_auto, true,
-            "Used with --prof, starts profiling automatically")
 DEFINE_bool(prof_lazy, false,
             "Used with --prof, only does sampling and logging"
-            " when profiler is active (implies --noprof_auto).")
+            " when profiler is active.")
 DEFINE_bool(prof_browser_mode, true,
             "Used with --prof, turns on browser-compatible mode for profiling.")
 DEFINE_bool(log_regexp, false, "Log regular expression execution.")

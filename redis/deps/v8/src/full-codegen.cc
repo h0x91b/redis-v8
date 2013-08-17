@@ -350,21 +350,17 @@ bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
   code->set_back_edge_table_offset(table_offset);
   code->set_back_edges_patched_for_osr(false);
   CodeGenerator::PrintCode(code, info);
-  info->SetCode(code);  // May be an empty handle.
+  info->SetCode(code);
 #ifdef ENABLE_GDB_JIT_INTERFACE
-  if (FLAG_gdbjit && !code.is_null()) {
+  if (FLAG_gdbjit) {
     GDBJITLineInfo* lineinfo =
         masm.positions_recorder()->DetachGDBJITLineInfo();
-
     GDBJIT(RegisterDetailedLineInfo(*code, lineinfo));
   }
 #endif
-  if (!code.is_null()) {
-    void* line_info =
-        masm.positions_recorder()->DetachJITHandlerData();
-    LOG_CODE_EVENT(isolate, CodeEndLinePosInfoRecordEvent(*code, line_info));
-  }
-  return !code.is_null();
+  void* line_info = masm.positions_recorder()->DetachJITHandlerData();
+  LOG_CODE_EVENT(isolate, CodeEndLinePosInfoRecordEvent(*code, line_info));
+  return true;
 }
 
 
@@ -379,7 +375,7 @@ unsigned FullCodeGenerator::EmitBackEdgeTable() {
   for (unsigned i = 0; i < length; ++i) {
     __ dd(back_edges_[i].id.ToInt());
     __ dd(back_edges_[i].pc);
-    __ db(back_edges_[i].loop_depth);
+    __ dd(back_edges_[i].loop_depth);
   }
   return offset;
 }
@@ -512,7 +508,7 @@ void FullCodeGenerator::AccumulatorValueContext::Plug(Register reg) const {
 
 
 void FullCodeGenerator::StackValueContext::Plug(Register reg) const {
-  __ push(reg);
+  __ Push(reg);
 }
 
 
@@ -530,7 +526,7 @@ void FullCodeGenerator::EffectContext::PlugTOS() const {
 
 
 void FullCodeGenerator::AccumulatorValueContext::PlugTOS() const {
-  __ pop(result_register());
+  __ Pop(result_register());
 }
 
 
@@ -540,7 +536,7 @@ void FullCodeGenerator::StackValueContext::PlugTOS() const {
 
 void FullCodeGenerator::TestContext::PlugTOS() const {
   // For simplicity we always test the accumulator register.
-  __ pop(result_register());
+  __ Pop(result_register());
   codegen()->PrepareForBailoutBeforeSplit(condition(), false, NULL, NULL);
   codegen()->DoTest(this);
 }
@@ -1006,7 +1002,7 @@ void FullCodeGenerator::VisitLogicalExpression(BinaryOperation* expr) {
     VisitForAccumulatorValue(left);
     // We want the value in the accumulator for the test, and on the stack in
     // case we need it.
-    __ push(result_register());
+    __ Push(result_register());
     Label discard, restore;
     if (is_logical_and) {
       DoTest(left, &discard, &restore, &restore);
@@ -1014,7 +1010,7 @@ void FullCodeGenerator::VisitLogicalExpression(BinaryOperation* expr) {
       DoTest(left, &restore, &discard, &restore);
     }
     __ bind(&restore);
-    __ pop(result_register());
+    __ Pop(result_register());
     __ jmp(&done);
     __ bind(&discard);
     __ Drop(1);
@@ -1024,7 +1020,7 @@ void FullCodeGenerator::VisitLogicalExpression(BinaryOperation* expr) {
     VisitForAccumulatorValue(left);
     // We want the value in the accumulator for the test, and on the stack in
     // case we need it.
-    __ push(result_register());
+    __ Push(result_register());
     Label discard;
     if (is_logical_and) {
       DoTest(left, &discard, &done, &discard);
@@ -1416,7 +1412,7 @@ void FullCodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   // Extend the context before executing the catch block.
   { Comment cmnt(masm_, "[ Extend catch context");
     __ Push(stmt->variable()->name());
-    __ push(result_register());
+    __ Push(result_register());
     PushFunctionArgumentForContextAllocation();
     __ CallRuntime(Runtime::kPushCatchContext, 3);
     StoreToFrameField(StandardFrameConstants::kContextOffset,
@@ -1481,7 +1477,7 @@ void FullCodeGenerator::VisitTryFinallyStatement(TryFinallyStatement* stmt) {
   // preserved by the finally block.  Call the finally block and then
   // rethrow the exception if it returns.
   __ Call(&finally_entry);
-  __ push(result_register());
+  __ Push(result_register());
   __ CallRuntime(Runtime::kReThrow, 1);
 
   // Finally block implementation.
@@ -1605,7 +1601,7 @@ bool FullCodeGenerator::TryLiteralCompare(CompareOperation* expr) {
     return true;
   }
 
-  if (expr->IsLiteralCompareUndefined(&sub_expr)) {
+  if (expr->IsLiteralCompareUndefined(&sub_expr, isolate())) {
     EmitLiteralCompareNil(expr, sub_expr, kUndefinedValue);
     return true;
   }

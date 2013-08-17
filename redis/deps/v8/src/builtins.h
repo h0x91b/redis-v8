@@ -194,10 +194,6 @@ enum BuiltinExtraArguments {
                                     kStrictMode)                        \
   V(KeyedStoreIC_NonStrictArguments, KEYED_STORE_IC, MONOMORPHIC,       \
                                      Code::kNoExtraICState)             \
-  V(TransitionElementsSmiToDouble,  BUILTIN, UNINITIALIZED,             \
-                                    Code::kNoExtraICState)              \
-  V(TransitionElementsDoubleToObject, BUILTIN, UNINITIALIZED,           \
-                                      Code::kNoExtraICState)            \
                                                                         \
   /* Uses KeyedLoadIC_Initialize; must be after in list. */             \
   V(FunctionCall,                   BUILTIN, UNINITIALIZED,             \
@@ -263,8 +259,6 @@ enum BuiltinExtraArguments {
   V(BIT_OR, 1)                           \
   V(BIT_AND, 1)                          \
   V(BIT_XOR, 1)                          \
-  V(UNARY_MINUS, 0)                      \
-  V(BIT_NOT, 0)                          \
   V(SHL, 1)                              \
   V(SAR, 1)                              \
   V(SHR, 1)                              \

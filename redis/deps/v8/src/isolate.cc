@@ -95,7 +95,7 @@ void ThreadLocalTop::InitializeInternal() {
   simulator_ = NULL;
 #endif
   js_entry_sp_ = NULL;
-  external_callback_ = NULL;
+  external_callback_scope_ = NULL;
   current_vm_state_ = EXTERNAL;
   try_catch_handler_address_ = NULL;
   context_ = NULL;
@@ -669,7 +669,7 @@ Handle<JSArray> Isolate::CaptureSimpleStackTrace(Handle<JSObject> error_object,
       JavaScriptFrame* frame = JavaScriptFrame::cast(raw_frame);
       // Set initial size to the maximum inlining level + 1 for the outermost
       // function.
-      List<FrameSummary> frames(Compiler::kMaxInliningLevels + 1);
+      List<FrameSummary> frames(FLAG_max_inlining_levels + 1);
       frame->Summarize(&frames);
       for (int i = frames.length() - 1; i >= 0; i--) {
         if (cursor + 4 > elements->length()) {
@@ -752,7 +752,7 @@ Handle<JSArray> Isolate::CaptureCurrentStackTrace(
     JavaScriptFrame* frame = it.frame();
     // Set initial size to the maximum inlining level + 1 for the outermost
     // function.
-    List<FrameSummary> frames(Compiler::kMaxInliningLevels + 1);
+    List<FrameSummary> frames(FLAG_max_inlining_levels + 1);
     frame->Summarize(&frames);
     for (int i = frames.length() - 1; i >= 0 && frames_seen < limit; i--) {
       // Create a JSObject to hold the information for the StackFrame.
@@ -816,9 +816,9 @@ Handle<JSArray> Isolate::CaptureCurrentStackTrace(
       }
 
       if (options & StackTrace::kIsEval) {
-        int type = Smi::cast(script->compilation_type())->value();
-        Handle<Object> is_eval = (type == Script::COMPILATION_TYPE_EVAL) ?
-            factory()->true_value() : factory()->false_value();
+        Handle<Object> is_eval =
+            script->compilation_type() == Script::COMPILATION_TYPE_EVAL ?
+                factory()->true_value() : factory()->false_value();
         CHECK_NOT_EMPTY_HANDLE(this,
                                JSObject::SetLocalPropertyIgnoreAttributes(
                                    stack_frame, eval_key, is_eval, NONE));
@@ -841,6 +841,11 @@ Handle<JSArray> Isolate::CaptureCurrentStackTrace(
 
   stack_trace->set_length(Smi::FromInt(frames_seen));
   return stack_trace;
+}
+
+
+void Isolate::PrintStack() {
+  PrintStack(stdout);
 }
 
 
@@ -1769,6 +1774,7 @@ Isolate::Isolate()
       inner_pointer_to_code_cache_(NULL),
       write_iterator_(NULL),
       global_handles_(NULL),
+      eternal_handles_(NULL),
       context_switcher_(NULL),
       thread_manager_(NULL),
       fp_stubs_generated_(false),
@@ -1777,7 +1783,6 @@ Isolate::Isolate()
       regexp_stack_(NULL),
       date_cache_(NULL),
       code_stub_interface_descriptors_(NULL),
-      context_exit_happened_(false),
       initialized_from_snapshot_(false),
       cpu_profiler_(NULL),
       heap_profiler_(NULL),
@@ -1786,7 +1791,8 @@ Isolate::Isolate()
       optimizing_compiler_thread_(this),
       marking_thread_(NULL),
       sweeper_thread_(NULL),
-      callback_table_(NULL) {
+      callback_table_(NULL),
+      stress_deopt_count_(0) {
   id_ = NoBarrier_AtomicIncrement(&isolate_counter_, 1);
   TRACE_ISOLATE(constructor);
 
@@ -1897,6 +1903,10 @@ void Isolate::Deinit() {
     }
 
     if (FLAG_hydrogen_stats) GetHStatistics()->Print();
+
+    if (FLAG_print_deopt_stress) {
+      PrintF(stdout, "=== Stress deopt counter: %u\n", stress_deopt_count_);
+    }
 
     // We must stop the logger before we tear down other components.
     Sampler* sampler = logger_->sampler();
@@ -2042,6 +2052,8 @@ Isolate::~Isolate() {
   code_range_ = NULL;
   delete global_handles_;
   global_handles_ = NULL;
+  delete eternal_handles_;
+  eternal_handles_ = NULL;
 
   delete string_stream_debug_object_cache_;
   string_stream_debug_object_cache_ = NULL;
@@ -2132,6 +2144,8 @@ bool Isolate::Init(Deserializer* des) {
   ASSERT(Isolate::Current() == this);
   TRACE_ISOLATE(init);
 
+  stress_deopt_count_ = FLAG_deopt_every_n_times;
+
   if (function_entry_hook() != NULL) {
     // When function entry hooking is in effect, we have to create the code
     // stubs from scratch to get entry hooks, rather than loading the previously
@@ -2171,6 +2185,7 @@ bool Isolate::Init(Deserializer* des) {
   inner_pointer_to_code_cache_ = new InnerPointerToCodeCache(this);
   write_iterator_ = new ConsStringIteratorOp();
   global_handles_ = new GlobalHandles(this);
+  eternal_handles_ = new EternalHandles();
   bootstrapper_ = new Bootstrapper(this);
   handle_scope_implementer_ = new HandleScopeImplementer(this);
   stub_cache_ = new StubCache(this);
@@ -2500,6 +2515,11 @@ bool Isolate::IsFastArrayConstructorPrototypeChainIntact() {
 CodeStubInterfaceDescriptor*
     Isolate::code_stub_interface_descriptor(int index) {
   return code_stub_interface_descriptors_ + index;
+}
+
+
+Object* Isolate::FindCodeObject(Address a) {
+  return inner_pointer_to_code_cache()->GcSafeFindCodeForInnerPointer(a);
 }
 
 

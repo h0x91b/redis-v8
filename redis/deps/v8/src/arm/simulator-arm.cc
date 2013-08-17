@@ -1534,11 +1534,11 @@ static int count_bits(int bit_vector) {
 }
 
 
-void Simulator::ProcessPUW(Instruction* instr,
-                           int num_regs,
-                           int reg_size,
-                           intptr_t* start_address,
-                           intptr_t* end_address) {
+int32_t Simulator::ProcessPU(Instruction* instr,
+                             int num_regs,
+                             int reg_size,
+                             intptr_t* start_address,
+                             intptr_t* end_address) {
   int rn = instr->RnValue();
   int32_t rn_val = get_register(rn);
   switch (instr->PUField()) {
@@ -1569,9 +1569,7 @@ void Simulator::ProcessPUW(Instruction* instr,
       break;
     }
   }
-  if (instr->HasW()) {
-    set_register(rn, rn_val);
-  }
+  return rn_val;
 }
 
 
@@ -1582,7 +1580,8 @@ void Simulator::HandleRList(Instruction* instr, bool load) {
 
   intptr_t start_address = 0;
   intptr_t end_address = 0;
-  ProcessPUW(instr, num_regs, kPointerSize, &start_address, &end_address);
+  int32_t rn_val =
+      ProcessPU(instr, num_regs, kPointerSize, &start_address, &end_address);
 
   intptr_t* address = reinterpret_cast<intptr_t*>(start_address);
   // Catch null pointers a little earlier.
@@ -1601,6 +1600,9 @@ void Simulator::HandleRList(Instruction* instr, bool load) {
     rlist >>= 1;
   }
   ASSERT(end_address == ((intptr_t)address) - 4);
+  if (instr->HasW()) {
+    set_register(instr->RnValue(), rn_val);
+  }
 }
 
 
@@ -1623,7 +1625,8 @@ void Simulator::HandleVList(Instruction* instr) {
 
   intptr_t start_address = 0;
   intptr_t end_address = 0;
-  ProcessPUW(instr, num_regs, operand_size, &start_address, &end_address);
+  int32_t rn_val =
+      ProcessPU(instr, num_regs, operand_size, &start_address, &end_address);
 
   intptr_t* address = reinterpret_cast<intptr_t*>(start_address);
   for (int reg = vd; reg < vd + num_regs; reg++) {
@@ -1656,6 +1659,9 @@ void Simulator::HandleVList(Instruction* instr) {
     }
   }
   ASSERT(reinterpret_cast<intptr_t>(address) - operand_size == end_address);
+  if (instr->HasW()) {
+    set_register(instr->RnValue(), rn_val);
+  }
 }
 
 
@@ -3104,6 +3110,15 @@ void Simulator::DecodeTypeVFP(Instruction* instr) {
       data[instr->Bit(21)] = get_register(instr->RtValue());
       OS::MemCopy(&dd_value, data, 8);
       set_d_register_from_double(vd, dd_value);
+    } else if ((instr->VLValue() == 0x1) &&
+               (instr->VCValue() == 0x1) &&
+               (instr->Bit(23) == 0x0)) {
+      // vmov (scalar to ARM core register)
+      int vn = instr->Bits(19, 16) | (instr->Bit(7) << 4);
+      double dn_value = get_double_from_d_register(vn);
+      int32_t data[2];
+      OS::MemCopy(data, &dn_value, 8);
+      set_register(instr->RtValue(), data[instr->Bit(21)]);
     } else if ((instr->VLValue() == 0x1) &&
                (instr->VCValue() == 0x0) &&
                (instr->VAValue() == 0x7) &&

@@ -391,7 +391,7 @@ void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
 
 void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
     MacroAssembler* masm, AllocationSiteMode mode,
-    Label* allocation_site_info_found) {
+    Label* allocation_memento_found) {
   // ----------- S t a t e -------------
   //  -- r0    : value
   //  -- r1    : key
@@ -401,9 +401,9 @@ void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
   //  -- r4    : scratch (elements)
   // -----------------------------------
   if (mode == TRACK_ALLOCATION_SITE) {
-    ASSERT(allocation_site_info_found != NULL);
-    __ TestJSArrayForAllocationSiteInfo(r2, r4);
-    __ b(eq, allocation_site_info_found);
+    ASSERT(allocation_memento_found != NULL);
+    __ TestJSArrayForAllocationMemento(r2, r4);
+    __ b(eq, allocation_memento_found);
   }
 
   // Set transitioned map.
@@ -432,7 +432,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
   Label loop, entry, convert_hole, gc_required, only_change_map, done;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    __ TestJSArrayForAllocationSiteInfo(r2, r4);
+    __ TestJSArrayForAllocationMemento(r2, r4);
     __ b(eq, fail);
   }
 
@@ -532,7 +532,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
     __ SmiTag(r9);
     __ orr(r9, r9, Operand(1));
     __ CompareRoot(r9, Heap::kTheHoleValueRootIndex);
-    __ Assert(eq, "object found in smi-only array");
+    __ Assert(eq, kObjectFoundInSmiOnlyArray);
   }
   __ Strd(r4, r5, MemOperand(r7, 8, PostIndex));
 
@@ -558,7 +558,7 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   Label entry, loop, convert_hole, gc_required, only_change_map;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    __ TestJSArrayForAllocationSiteInfo(r2, r4);
+    __ TestJSArrayForAllocationMemento(r2, r4);
     __ b(eq, fail);
   }
 
@@ -728,7 +728,7 @@ void StringCharLoadGenerator::Generate(MacroAssembler* masm,
     // Assert that we do not have a cons or slice (indirect strings) here.
     // Sequential strings have already been ruled out.
     __ tst(result, Operand(kIsIndirectStringMask));
-    __ Assert(eq, "external string expected, but not found");
+    __ Assert(eq, kExternalStringExpectedButNotFound);
   }
   // Rule out short external strings.
   STATIC_CHECK(kShortExternalStringTag != 0);
@@ -838,7 +838,7 @@ static byte* GetNoCodeAgeSequence(uint32_t* length) {
     CodePatcher patcher(byte_sequence, kNoCodeAgeSequenceLength);
     PredictableCodeSizeScope scope(patcher.masm(), *length);
     patcher.masm()->stm(db_w, sp, r1.bit() | cp.bit() | fp.bit() | lr.bit());
-    patcher.masm()->LoadRoot(ip, Heap::kUndefinedValueRootIndex);
+    patcher.masm()->nop(ip.code());
     patcher.masm()->add(fp, sp, Operand(2 * kPointerSize));
     initialized = true;
   }

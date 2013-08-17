@@ -816,11 +816,9 @@ void BaseStoreStubCompiler::GenerateStoreTransition(MacroAssembler* masm,
   Representation representation = details.representation();
   ASSERT(!representation.IsNone());
 
-  if (details.type() == CONSTANT_FUNCTION) {
-    Handle<HeapObject> constant(
-        HeapObject::cast(descriptors->GetValue(descriptor)));
-    __ LoadHeapObject(scratch1, constant);
-    __ cmp(value_reg, scratch1);
+  if (details.type() == CONSTANT) {
+    Handle<Object> constant(descriptors->GetValue(descriptor), masm->isolate());
+    __ CmpObject(value_reg, constant);
     __ j(not_equal, miss_label);
   } else if (FLAG_track_fields && representation.IsSmi()) {
       __ JumpIfNotSmi(value_reg, miss_label);
@@ -897,7 +895,7 @@ void BaseStoreStubCompiler::GenerateStoreTransition(MacroAssembler* masm,
                       OMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
 
-  if (details.type() == CONSTANT_FUNCTION) {
+  if (details.type() == CONSTANT) {
     ASSERT(value_reg.is(eax));
     __ ret(0);
     return;
@@ -1132,6 +1130,10 @@ Register StubCompiler::CheckPrototypes(Handle<JSObject> object,
                                        int save_at_depth,
                                        Label* miss,
                                        PrototypeCheckType check) {
+  // Make sure that the type feedback oracle harvests the receiver map.
+  // TODO(svenpanne) Remove this hack when all ICs are reworked.
+  __ mov(scratch1, Handle<Map>(object->map()));
+
   Handle<JSObject> first = object;
   // Make sure there's no overlap between holder and object registers.
   ASSERT(!scratch1.is(object_reg) && !scratch1.is(holder_reg));
@@ -1424,9 +1426,9 @@ void BaseLoadStubCompiler::GenerateLoadCallback(
 }
 
 
-void BaseLoadStubCompiler::GenerateLoadConstant(Handle<JSFunction> value) {
+void BaseLoadStubCompiler::GenerateLoadConstant(Handle<Object> value) {
   // Return the constant value.
-  __ LoadHeapObject(eax, value);
+  __ LoadObject(eax, value);
   __ ret(0);
 }
 
@@ -2477,6 +2479,8 @@ Handle<Code> CallStubCompiler::CompileMathAbsCall(
   STATIC_ASSERT(kSmiTag == 0);
   __ JumpIfNotSmi(eax, &not_smi);
 
+  // Branchless abs implementation, refer to below:
+  // http://graphics.stanford.edu/~seander/bithacks.html#IntegerAbs
   // Set ebx to 1...1 (== -1) if the argument is negative, or to 0...0
   // otherwise.
   __ mov(ebx, eax);
@@ -2723,7 +2727,7 @@ Handle<Code> CallStubCompiler::CompileCallConstant(
     Handle<Code> code = CompileCustomCall(object, holder,
                                           Handle<Cell>::null(),
                                           function, Handle<String>::cast(name),
-                                          Code::CONSTANT_FUNCTION);
+                                          Code::CONSTANT);
     // A null handle means bail out to the regular compiler code below.
     if (!code.is_null()) return code;
   }
@@ -3151,7 +3155,7 @@ Handle<Code> LoadStubCompiler::CompileLoadGlobal(
     __ j(equal, &miss);
   } else if (FLAG_debug_code) {
     __ cmp(eax, factory()->the_hole_value());
-    __ Check(not_equal, "DontDelete cells can't contain the hole");
+    __ Check(not_equal, kDontDeleteCellsCannotContainTheHole);
   }
 
   HandlerFrontendFooter(name, &success, &miss);

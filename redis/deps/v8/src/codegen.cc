@@ -114,17 +114,16 @@ Handle<Code> CodeGenerator::MakeCodeEpilogue(MacroAssembler* masm,
   Handle<Code> code =
       isolate->factory()->NewCode(desc, flags, masm->CodeObject(),
                                   false, is_crankshafted);
-  if (!code.is_null()) {
-    isolate->counters()->total_compiled_code_size()->Increment(
-        code->instruction_size());
-    code->set_prologue_offset(info->prologue_offset());
-  }
+  isolate->counters()->total_compiled_code_size()->Increment(
+      code->instruction_size());
+  code->set_prologue_offset(info->prologue_offset());
   return code;
 }
 
 
 void CodeGenerator::PrintCode(Handle<Code> code, CompilationInfo* info) {
 #ifdef ENABLE_DISASSEMBLER
+  AllowDeferredHandleDereference allow_deference_for_print_code;
   bool print_code = Isolate::Current()->bootstrapper()->IsActive()
       ? FLAG_print_builtin_code
       : (FLAG_print_code ||

@@ -42,25 +42,11 @@ const int Deoptimizer::table_entry_size_ = 10;
 
 
 int Deoptimizer::patch_size() {
-  return Assembler::kCallInstructionLength;
+  return Assembler::kCallSequenceLength;
 }
 
 
-void Deoptimizer::DeoptimizeFunctionWithPreparedFunctionList(
-    JSFunction* function) {
-  Isolate* isolate = function->GetIsolate();
-  HandleScope scope(isolate);
-  DisallowHeapAllocation nha;
-
-  ASSERT(function->IsOptimized());
-  ASSERT(function->FunctionsInFunctionListShareSameCode());
-
-  // Get the optimized code.
-  Code* code = function->code();
-
-  // The optimized code is going to be patched, so we cannot use it any more.
-  function->shared()->EvictFromOptimizedCodeMap(code, "deoptimized function");
-
+void Deoptimizer::PatchCodeForDeoptimization(Isolate* isolate, Code* code) {
   // Invalidate the relocation information, as it will become invalid by the
   // code patching below, and is not needed any more.
   code->InvalidateRelocation();
@@ -71,7 +57,7 @@ void Deoptimizer::DeoptimizeFunctionWithPreparedFunctionList(
   // before the safepoint table (space was allocated there when the Code
   // object was created, if necessary).
 
-  Address instruction_start = function->code()->instruction_start();
+  Address instruction_start = code->instruction_start();
 #ifdef DEBUG
   Address prev_call_address = NULL;
 #endif
@@ -83,7 +69,7 @@ void Deoptimizer::DeoptimizeFunctionWithPreparedFunctionList(
     Address call_address = instruction_start + deopt_data->Pc(i)->value();
     // There is room enough to write a long call instruction because we pad
     // LLazyBailout instructions with nops if necessary.
-    CodePatcher patcher(call_address, Assembler::kCallInstructionLength);
+    CodePatcher patcher(call_address, Assembler::kCallSequenceLength);
     patcher.masm()->Call(GetDeoptimizationEntry(isolate, i, LAZY),
                          RelocInfo::NONE64);
     ASSERT(prev_call_address == NULL ||
@@ -92,25 +78,6 @@ void Deoptimizer::DeoptimizeFunctionWithPreparedFunctionList(
 #ifdef DEBUG
     prev_call_address = call_address;
 #endif
-  }
-
-  // Add the deoptimizing code to the list.
-  DeoptimizingCodeListNode* node = new DeoptimizingCodeListNode(code);
-  DeoptimizerData* data = isolate->deoptimizer_data();
-  node->set_next(data->deoptimizing_code_list_);
-  data->deoptimizing_code_list_ = node;
-
-  // We might be in the middle of incremental marking with compaction.
-  // Tell collector to treat this code object in a special way and
-  // ignore all slots that might have been recorded on it.
-  isolate->heap()->mark_compact_collector()->InvalidateCode(code);
-
-  ReplaceCodeForRelatedFunctions(function, code);
-
-  if (FLAG_trace_deopt) {
-    PrintF("[forced deoptimization: ");
-    function->PrintName();
-    PrintF(" / %" V8PRIxPTR "]\n", reinterpret_cast<intptr_t>(function));
   }
 }
 
@@ -609,6 +576,17 @@ void Deoptimizer::TableEntryGenerator::GeneratePrologue() {
   }
   __ bind(&done);
 }
+
+
+void FrameDescription::SetCallerPc(unsigned offset, intptr_t value) {
+  SetFrameSlot(offset, value);
+}
+
+
+void FrameDescription::SetCallerFp(unsigned offset, intptr_t value) {
+  SetFrameSlot(offset, value);
+}
+
 
 #undef __
 

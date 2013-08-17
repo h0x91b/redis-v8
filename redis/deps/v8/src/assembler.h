@@ -684,6 +684,8 @@ class ExternalReference BASE_EMBEDDED {
 
   typedef void* ExternalReferenceRedirector(void* original, Type type);
 
+  ExternalReference() : address_(NULL) {}
+
   ExternalReference(Builtins::CFunctionId id, Isolate* isolate);
 
   ExternalReference(ApiFunction* ptr, Type type, Isolate* isolate);
@@ -746,6 +748,9 @@ class ExternalReference BASE_EMBEDDED {
 
   // Static variable Heap::roots_array_start()
   static ExternalReference roots_array_start(Isolate* isolate);
+
+  // Static variable Heap::allocation_sites_list_address()
+  static ExternalReference allocation_sites_list_address(Isolate* isolate);
 
   // Static variable StackGuard::address_of_jslimit()
   static ExternalReference address_of_stack_limit(Isolate* isolate);
@@ -826,7 +831,7 @@ class ExternalReference BASE_EMBEDDED {
 
   static ExternalReference cpu_features();
 
-  Address address() const {return reinterpret_cast<Address>(address_);}
+  Address address() const { return reinterpret_cast<Address>(address_); }
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // Function Debug::Break()
@@ -861,6 +866,16 @@ class ExternalReference BASE_EMBEDDED {
     ASSERT(isolate->external_reference_redirector() == NULL);
     isolate->set_external_reference_redirector(
         reinterpret_cast<ExternalReferenceRedirectorPointer*>(redirector));
+  }
+
+  static ExternalReference stress_deopt_count(Isolate* isolate);
+
+  bool operator==(const ExternalReference& other) const {
+    return address_ == other.address_;
+  }
+
+  bool operator!=(const ExternalReference& other) const {
+    return !(*this == other);
   }
 
  private:

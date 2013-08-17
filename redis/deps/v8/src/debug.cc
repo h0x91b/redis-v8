@@ -159,7 +159,6 @@ void BreakLocationIterator::Next() {
       Code* code = Code::GetCodeFromTargetAddress(target);
       if ((code->is_inline_cache_stub() &&
            !code->is_binary_op_stub() &&
-           !code->is_unary_op_stub() &&
            !code->is_compare_ic_stub() &&
            !code->is_to_boolean_ic_stub()) ||
           RelocInfo::IsConstructCall(rmode())) {
@@ -410,6 +409,9 @@ bool BreakLocationIterator::IsStepInLocation(Isolate* isolate) {
     HandleScope scope(debug_info_->GetIsolate());
     Address target = rinfo()->target_address();
     Handle<Code> target_code(Code::GetCodeFromTargetAddress(target));
+    if (target_code->kind() == Code::STUB) {
+      return target_code->major_key() == CodeStub::CallFunction;
+    }
     return target_code->is_call_stub() || target_code->is_keyed_call_stub();
   } else {
     return false;
@@ -786,6 +788,7 @@ bool Debug::CompileDebuggerScript(int index) {
   function_info = Compiler::Compile(source_code,
                                     script_name,
                                     0, 0,
+                                    false,
                                     context,
                                     NULL, NULL,
                                     Handle<String>::null(),
@@ -1906,7 +1909,7 @@ static void CollectActiveFunctionsFromThread(
   for (JavaScriptFrameIterator it(isolate, top); !it.done(); it.Advance()) {
     JavaScriptFrame* frame = it.frame();
     if (frame->is_optimized()) {
-      List<JSFunction*> functions(Compiler::kMaxInliningLevels + 1);
+      List<JSFunction*> functions(FLAG_max_inlining_levels + 1);
       frame->GetFunctions(&functions);
       for (int i = 0; i < functions.length(); i++) {
         JSFunction* function = functions[i];
@@ -2044,6 +2047,10 @@ void Debug::PrepareForBreakPoints() {
   // If preparing for the first break point make sure to deoptimize all
   // functions as debugging does not work with optimized code.
   if (!has_break_points_) {
+    if (FLAG_parallel_recompilation) {
+      isolate_->optimizing_compiler_thread()->Flush();
+    }
+
     Deoptimizer::DeoptimizeAll(isolate_);
 
     Handle<Code> lazy_compile =

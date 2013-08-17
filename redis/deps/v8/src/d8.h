@@ -231,6 +231,7 @@ class ShellOptions {
      stress_deopt(false),
      interactive_shell(false),
      test_shell(false),
+     dump_heap_constants(false),
      num_isolates(1),
      isolate_sources(NULL) { }
 
@@ -254,6 +255,7 @@ class ShellOptions {
   bool stress_deopt;
   bool interactive_shell;
   bool test_shell;
+  bool dump_heap_constants;
   int num_isolates;
   SourceGroup* isolate_sources;
 };
@@ -317,8 +319,6 @@ class Shell : public i::AllStatic {
   static void Write(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Quit(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Version(const v8::FunctionCallbackInfo<v8::Value>& args);
-  static void EnableProfiler(const v8::FunctionCallbackInfo<v8::Value>& args);
-  static void DisableProfiler(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Read(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void ReadBuffer(const v8::FunctionCallbackInfo<v8::Value>& args);
   static Handle<String> ReadFromStdin(Isolate* isolate);

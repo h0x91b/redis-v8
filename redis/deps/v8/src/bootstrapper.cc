@@ -200,7 +200,7 @@ class Genesis BASE_EMBEDDED {
   // detached from the other objects in the snapshot.
   void HookUpInnerGlobal(Handle<GlobalObject> inner_global);
   // New context initialization.  Used for creating a context from scratch.
-  bool InitializeGlobal(Handle<GlobalObject> inner_global,
+  void InitializeGlobal(Handle<GlobalObject> inner_global,
                         Handle<JSFunction> empty_function);
   void InitializeExperimentalGlobal();
   // Installs the contents of the native .js files on the global objects.
@@ -491,7 +491,7 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
     // prototype, otherwise the missing initial_array_prototype will cause
     // assertions during startup.
     native_context()->set_initial_array_prototype(*prototype);
-    SetPrototype(object_fun, prototype);
+    Accessors::FunctionSetPrototype(object_fun, prototype);
   }
 
   // Allocate the empty function as the prototype for function ECMAScript
@@ -829,7 +829,7 @@ void Genesis::HookUpInnerGlobal(Handle<GlobalObject> inner_global) {
 
 // This is only called if we are not using snapshots.  The equivalent
 // work in the snapshot case is done in HookUpInnerGlobal.
-bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
+void Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
                                Handle<JSFunction> empty_function) {
   // --- G l o b a l   C o n t e x t ---
   // Use the empty function as closure (no scope info).
@@ -1053,10 +1053,8 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
     Handle<String> name = factory->NewStringFromAscii(CStrVector("JSON"));
     Handle<JSFunction> cons = factory->NewFunction(name,
                                                    factory->the_hole_value());
-    { MaybeObject* result = cons->SetInstancePrototype(
-        native_context()->initial_object_prototype());
-      if (result->IsFailure()) return false;
-    }
+    JSFunction::SetInstancePrototype(cons,
+        Handle<Object>(native_context()->initial_object_prototype(), isolate));
     cons->SetInstanceClassName(*name);
     Handle<JSObject> json_object = factory->NewJSObject(cons, TENURED);
     ASSERT(json_object->IsJSObject());
@@ -1097,12 +1095,12 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
                            JSObject::SetLocalPropertyIgnoreAttributes(
                                result, factory->length_string(),
                                factory->undefined_value(), DONT_ENUM,
-                               Object::FORCE_TAGGED));
+                               Object::FORCE_TAGGED, JSReceiver::FORCE_FIELD));
     CHECK_NOT_EMPTY_HANDLE(isolate,
                            JSObject::SetLocalPropertyIgnoreAttributes(
                                result, factory->callee_string(),
                                factory->undefined_value(), DONT_ENUM,
-                               Object::FORCE_TAGGED));
+                               Object::FORCE_TAGGED, JSReceiver::FORCE_FIELD));
 
 #ifdef DEBUG
     LookupResult lookup(isolate);
@@ -1277,7 +1275,6 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
     native_context()->set_random_seed(*zeroed_byte_array);
     memset(zeroed_byte_array->GetDataStartAddress(), 0, kRandomStateSize);
   }
-  return true;
 }
 
 
@@ -1324,6 +1321,11 @@ void Genesis::InitializeExperimentalGlobal() {
     }
     {  // -- W e a k M a p
       InstallFunction(global, "WeakMap", JS_WEAK_MAP_TYPE, JSWeakMap::kSize,
+                      isolate()->initial_object_prototype(),
+                      Builtins::kIllegal, true, true);
+    }
+    {  // -- W e a k S e t
+      InstallFunction(global, "WeakSet", JS_WEAK_SET_TYPE, JSWeakSet::kSize,
                       isolate()->initial_object_prototype(),
                       Builtins::kIllegal, true, true);
     }
@@ -1523,6 +1525,7 @@ bool Genesis::CompileScriptCached(Isolate* isolate,
         script_name,
         0,
         0,
+        false,
         top_context,
         extension,
         NULL,
@@ -1629,7 +1632,7 @@ Handle<JSFunction> Genesis::InstallInternalArray(
                       true, true);
   Handle<JSObject> prototype =
       factory()->NewJSObject(isolate()->object_function(), TENURED);
-  SetPrototype(array_function, prototype);
+  Accessors::FunctionSetPrototype(array_function, prototype);
 
   InternalArrayConstructorStub internal_array_constructor_stub(isolate());
   Handle<Code> code = internal_array_constructor_stub.GetCode(isolate());
@@ -1727,7 +1730,7 @@ bool Genesis::InstallNatives() {
                         Builtins::kIllegal, false, false);
     Handle<JSObject> prototype =
         factory()->NewJSObject(isolate()->object_function(), TENURED);
-    SetPrototype(script_fun, prototype);
+    Accessors::FunctionSetPrototype(script_fun, prototype);
     native_context()->set_script_function(*script_fun);
 
     Handle<Map> script_map = Handle<Map>(script_fun->initial_map());
@@ -1883,7 +1886,7 @@ bool Genesis::InstallNatives() {
                         Builtins::kIllegal, false, false);
     Handle<JSObject> prototype =
         factory()->NewJSObject(isolate()->object_function(), TENURED);
-    SetPrototype(opaque_reference_fun, prototype);
+    Accessors::FunctionSetPrototype(opaque_reference_fun, prototype);
     native_context()->set_opaque_reference_function(*opaque_reference_fun);
   }
 
@@ -2075,6 +2078,16 @@ bool Genesis::InstallExperimentalNatives() {
     if (FLAG_harmony_iteration &&
         strcmp(ExperimentalNatives::GetScriptName(i).start(),
                "native array-iterator.js") == 0) {
+      if (!CompileExperimentalBuiltin(isolate(), i)) return false;
+    }
+    if (FLAG_harmony_strings &&
+        strcmp(ExperimentalNatives::GetScriptName(i).start(),
+               "native harmony-string.js") == 0) {
+      if (!CompileExperimentalBuiltin(isolate(), i)) return false;
+    }
+    if (FLAG_harmony_arrays &&
+        strcmp(ExperimentalNatives::GetScriptName(i).start(),
+               "native harmony-array.js") == 0) {
       if (!CompileExperimentalBuiltin(isolate(), i)) return false;
     }
   }
@@ -2473,14 +2486,13 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
                                      to, key, value, details.attributes()));
           break;
         }
-        case CONSTANT_FUNCTION: {
+        case CONSTANT: {
           HandleScope inner(isolate());
           Handle<Name> key = Handle<Name>(descs->GetKey(i));
-          Handle<JSFunction> fun =
-              Handle<JSFunction>(descs->GetConstantFunction(i));
+          Handle<Object> constant(descs->GetConstant(i), isolate());
           CHECK_NOT_EMPTY_HANDLE(isolate(),
                                  JSObject::SetLocalPropertyIgnoreAttributes(
-                                     to, key, fun, details.attributes()));
+                                     to, key, constant, details.attributes()));
           break;
         }
         case CALLBACKS: {
@@ -2632,7 +2644,7 @@ Genesis::Genesis(Isolate* isolate,
     Handle<JSGlobalProxy> global_proxy =
         CreateNewGlobals(global_template, global_object, &inner_global);
     HookUpGlobalProxy(inner_global, global_proxy);
-    if (!InitializeGlobal(inner_global, empty_function)) return;
+    InitializeGlobal(inner_global, empty_function);
     InstallJSFunctionResultCaches();
     InitializeNormalizedMapCaches();
     if (!InstallNatives()) return;

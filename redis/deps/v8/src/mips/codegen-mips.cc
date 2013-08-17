@@ -145,7 +145,7 @@ void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
 
 void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
     MacroAssembler* masm, AllocationSiteMode mode,
-    Label* allocation_site_info_found) {
+    Label* allocation_memento_found) {
   // ----------- S t a t e -------------
   //  -- a0    : value
   //  -- a1    : key
@@ -155,9 +155,9 @@ void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
   //  -- t0    : scratch (elements)
   // -----------------------------------
   if (mode == TRACK_ALLOCATION_SITE) {
-    ASSERT(allocation_site_info_found != NULL);
-    masm->TestJSArrayForAllocationSiteInfo(a2, t0, eq,
-                                           allocation_site_info_found);
+    ASSERT(allocation_memento_found != NULL);
+    masm->TestJSArrayForAllocationMemento(a2, t0, eq,
+                                          allocation_memento_found);
   }
 
   // Set transitioned map.
@@ -188,7 +188,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
   Register scratch = t6;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    masm->TestJSArrayForAllocationSiteInfo(a2, t0, eq, fail);
+    masm->TestJSArrayForAllocationMemento(a2, t0, eq, fail);
   }
 
   // Check for empty arrays, which only require a map transition and no changes
@@ -205,7 +205,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
   // Allocate new FixedDoubleArray.
   __ sll(scratch, t1, 2);
   __ Addu(scratch, scratch, FixedDoubleArray::kHeaderSize);
-  __ Allocate(scratch, t2, t3, t5, &gc_required, NO_ALLOCATION_FLAGS);
+  __ Allocate(scratch, t2, t3, t5, &gc_required, DOUBLE_ALIGNMENT);
   // t2: destination FixedDoubleArray, not tagged as heap object
 
   // Set destination FixedDoubleArray's length and map.
@@ -289,7 +289,7 @@ void ElementsTransitionGenerator::GenerateSmiToDouble(
     __ SmiTag(t5);
     __ Or(t5, t5, Operand(1));
     __ LoadRoot(at, Heap::kTheHoleValueRootIndex);
-    __ Assert(eq, "object found in smi-only array", at, Operand(t5));
+    __ Assert(eq, kObjectFoundInSmiOnlyArray, at, Operand(t5));
   }
   __ sw(t0, MemOperand(t3));  // mantissa
   __ sw(t1, MemOperand(t3, kIntSize));  // exponent
@@ -316,7 +316,7 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   Label entry, loop, convert_hole, gc_required, only_change_map;
 
   if (mode == TRACK_ALLOCATION_SITE) {
-    masm->TestJSArrayForAllocationSiteInfo(a2, t0, eq, fail);
+    masm->TestJSArrayForAllocationMemento(a2, t0, eq, fail);
   }
 
   // Check for empty arrays, which only require a map transition and no changes
@@ -489,7 +489,7 @@ void StringCharLoadGenerator::Generate(MacroAssembler* masm,
     // Assert that we do not have a cons or slice (indirect strings) here.
     // Sequential strings have already been ruled out.
     __ And(at, result, Operand(kIsIndirectStringMask));
-    __ Assert(eq, "external string expected, but not found",
+    __ Assert(eq, kExternalStringExpectedButNotFound,
         at, Operand(zero_reg));
   }
   // Rule out short external strings.
@@ -603,7 +603,7 @@ static byte* GetNoCodeAgeSequence(uint32_t* length) {
   if (!initialized) {
     CodePatcher patcher(byte_sequence, kNoCodeAgeSequenceLength);
     patcher.masm()->Push(ra, fp, cp, a1);
-    patcher.masm()->LoadRoot(at, Heap::kUndefinedValueRootIndex);
+    patcher.masm()->nop(Assembler::CODE_AGE_SEQUENCE_NOP);
     patcher.masm()->Addu(fp, sp, Operand(2 * kPointerSize));
     initialized = true;
   }

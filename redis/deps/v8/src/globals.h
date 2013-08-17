@@ -239,12 +239,15 @@ const int kMinInt = -kMaxInt - 1;
 
 const uint32_t kMaxUInt32 = 0xFFFFFFFFu;
 
-const int kCharSize     = sizeof(char);      // NOLINT
-const int kShortSize    = sizeof(short);     // NOLINT
-const int kIntSize      = sizeof(int);       // NOLINT
-const int kDoubleSize   = sizeof(double);    // NOLINT
-const int kIntptrSize   = sizeof(intptr_t);  // NOLINT
-const int kPointerSize  = sizeof(void*);     // NOLINT
+const int kCharSize      = sizeof(char);      // NOLINT
+const int kShortSize     = sizeof(short);     // NOLINT
+const int kIntSize       = sizeof(int);       // NOLINT
+const int kDoubleSize    = sizeof(double);    // NOLINT
+const int kIntptrSize    = sizeof(intptr_t);  // NOLINT
+const int kPointerSize   = sizeof(void*);     // NOLINT
+const int kRegisterSize  = kPointerSize;
+const int kPCOnStackSize = kRegisterSize;
+const int kFPOnStackSize = kRegisterSize;
 
 const int kDoubleSizeLog2 = 3;
 
@@ -327,11 +330,18 @@ F FUNCTION_CAST(Address addr) {
 }
 
 
+#if __cplusplus >= 201103L
+#define DISALLOW_BY_DELETE = delete
+#else
+#define DISALLOW_BY_DELETE
+#endif
+
+
 // A macro to disallow the evil copy constructor and operator= functions
 // This should be used in the private: declarations for a class
-#define DISALLOW_COPY_AND_ASSIGN(TypeName)      \
-  TypeName(const TypeName&);                    \
-  void operator=(const TypeName&)
+#define DISALLOW_COPY_AND_ASSIGN(TypeName)           \
+  TypeName(const TypeName&) DISALLOW_BY_DELETE;      \
+  void operator=(const TypeName&) DISALLOW_BY_DELETE
 
 
 // A macro to disallow all the implicit constructors, namely the
@@ -341,7 +351,7 @@ F FUNCTION_CAST(Address addr) {
 // that wants to prevent anyone from instantiating it. This is
 // especially useful for classes containing only static methods.
 #define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
-  TypeName();                                    \
+  TypeName() DISALLOW_BY_DELETE;                 \
   DISALLOW_COPY_AND_ASSIGN(TypeName)
 
 

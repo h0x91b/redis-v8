@@ -49,11 +49,14 @@
 #include "snapshot.h"
 #include "unicode-inl.h"
 #include "utils.h"
+#include "vm-state.h"
 
 static const bool kLogThreading = false;
 
 using ::v8::AccessorInfo;
 using ::v8::Arguments;
+using ::v8::Boolean;
+using ::v8::BooleanObject;
 using ::v8::Context;
 using ::v8::Extension;
 using ::v8::Function;
@@ -620,6 +623,41 @@ TEST(MakingExternalAsciiStringConditions) {
 }
 
 
+TEST(MakingExternalUnalignedAsciiString) {
+  LocalContext env;
+  v8::HandleScope scope(env->GetIsolate());
+
+  CompileRun("function cons(a, b) { return a + b; }"
+             "function slice(a) { return a.substring(1); }");
+  // Create a cons string that will land in old pointer space.
+  Local<String> cons = Local<String>::Cast(CompileRun(
+      "cons('abcdefghijklm', 'nopqrstuvwxyz');"));
+  // Create a sliced string that will land in old pointer space.
+  Local<String> slice = Local<String>::Cast(CompileRun(
+      "slice('abcdefghijklmnopqrstuvwxyz');"));
+
+  // Trigger GCs so that the newly allocated string moves to old gen.
+  SimulateFullSpace(HEAP->old_pointer_space());
+  HEAP->CollectGarbage(i::NEW_SPACE);  // in survivor space now
+  HEAP->CollectGarbage(i::NEW_SPACE);  // in old gen now
+
+  // Turn into external string with unaligned resource data.
+  int dispose_count = 0;
+  const char* c_cons = "_abcdefghijklmnopqrstuvwxyz";
+  bool success = cons->MakeExternal(
+      new TestAsciiResource(i::StrDup(c_cons) + 1, &dispose_count));
+  CHECK(success);
+  const char* c_slice = "_bcdefghijklmnopqrstuvwxyz";
+  success = slice->MakeExternal(
+      new TestAsciiResource(i::StrDup(c_slice) + 1, &dispose_count));
+  CHECK(success);
+
+  // Trigger GCs and force evacuation.
+  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+  HEAP->CollectAllGarbage(i::Heap::kReduceMemoryFootprintMask);
+}
+
+
 THREADED_TEST(UsingExternalString) {
   i::Factory* factory = i::Isolate::Current()->factory();
   {
@@ -848,8 +886,8 @@ static void CheckReturnValue(const T& t, i::Address callback) {
   // VMState is set to EXTERNAL.
   if (isolate->cpu_profiler()->is_profiling()) {
     CHECK_EQ(i::EXTERNAL, isolate->current_vm_state());
-    CHECK(isolate->external_callback());
-    CHECK_EQ(callback, isolate->external_callback());
+    CHECK(isolate->external_callback_scope());
+    CHECK_EQ(callback, isolate->external_callback_scope()->callback());
   }
 }
 
@@ -1450,13 +1488,13 @@ THREADED_TEST(StringObject) {
   CHECK(!not_object->IsStringObject());
   v8::Handle<v8::StringObject> as_boxed = boxed_string.As<v8::StringObject>();
   CHECK(!as_boxed.IsEmpty());
-  Local<v8::String> the_string = as_boxed->StringValue();
+  Local<v8::String> the_string = as_boxed->ValueOf();
   CHECK(!the_string.IsEmpty());
   ExpectObject("\"test\"", the_string);
   v8::Handle<v8::Value> new_boxed_string = v8::StringObject::New(the_string);
   CHECK(new_boxed_string->IsStringObject());
   as_boxed = new_boxed_string.As<v8::StringObject>();
-  the_string = as_boxed->StringValue();
+  the_string = as_boxed->ValueOf();
   CHECK(!the_string.IsEmpty());
   ExpectObject("\"test\"", the_string);
 }
@@ -1473,12 +1511,12 @@ THREADED_TEST(NumberObject) {
   CHECK(!boxed_not_number->IsNumberObject());
   v8::Handle<v8::NumberObject> as_boxed = boxed_number.As<v8::NumberObject>();
   CHECK(!as_boxed.IsEmpty());
-  double the_number = as_boxed->NumberValue();
+  double the_number = as_boxed->ValueOf();
   CHECK_EQ(42.0, the_number);
   v8::Handle<v8::Value> new_boxed_number = v8::NumberObject::New(43);
   CHECK(new_boxed_number->IsNumberObject());
   as_boxed = new_boxed_number.As<v8::NumberObject>();
-  the_number = as_boxed->NumberValue();
+  the_number = as_boxed->ValueOf();
   CHECK_EQ(43.0, the_number);
 }
 
@@ -1495,16 +1533,68 @@ THREADED_TEST(BooleanObject) {
   v8::Handle<v8::BooleanObject> as_boxed =
       boxed_boolean.As<v8::BooleanObject>();
   CHECK(!as_boxed.IsEmpty());
-  bool the_boolean = as_boxed->BooleanValue();
+  bool the_boolean = as_boxed->ValueOf();
   CHECK_EQ(true, the_boolean);
   v8::Handle<v8::Value> boxed_true = v8::BooleanObject::New(true);
   v8::Handle<v8::Value> boxed_false = v8::BooleanObject::New(false);
   CHECK(boxed_true->IsBooleanObject());
   CHECK(boxed_false->IsBooleanObject());
   as_boxed = boxed_true.As<v8::BooleanObject>();
-  CHECK_EQ(true, as_boxed->BooleanValue());
+  CHECK_EQ(true, as_boxed->ValueOf());
   as_boxed = boxed_false.As<v8::BooleanObject>();
-  CHECK_EQ(false, as_boxed->BooleanValue());
+  CHECK_EQ(false, as_boxed->ValueOf());
+}
+
+
+THREADED_TEST(PrimitiveAndWrappedBooleans) {
+  LocalContext env;
+  v8::HandleScope scope(env->GetIsolate());
+
+  Local<Value> primitive_false = Boolean::New(false);
+  CHECK(primitive_false->IsBoolean());
+  CHECK(!primitive_false->IsBooleanObject());
+  CHECK(!primitive_false->BooleanValue());
+  CHECK(!primitive_false->IsTrue());
+  CHECK(primitive_false->IsFalse());
+
+  Local<Value> false_value = BooleanObject::New(false);
+  CHECK(!false_value->IsBoolean());
+  CHECK(false_value->IsBooleanObject());
+  CHECK(false_value->BooleanValue());
+  CHECK(!false_value->IsTrue());
+  CHECK(!false_value->IsFalse());
+
+  Local<BooleanObject> false_boolean_object = false_value.As<BooleanObject>();
+  CHECK(!false_boolean_object->IsBoolean());
+  CHECK(false_boolean_object->IsBooleanObject());
+  // TODO(svenpanne) Uncomment when BooleanObject::BooleanValue() is deleted.
+  // CHECK(false_boolean_object->BooleanValue());
+  CHECK(!false_boolean_object->ValueOf());
+  CHECK(!false_boolean_object->IsTrue());
+  CHECK(!false_boolean_object->IsFalse());
+
+  Local<Value> primitive_true = Boolean::New(true);
+  CHECK(primitive_true->IsBoolean());
+  CHECK(!primitive_true->IsBooleanObject());
+  CHECK(primitive_true->BooleanValue());
+  CHECK(primitive_true->IsTrue());
+  CHECK(!primitive_true->IsFalse());
+
+  Local<Value> true_value = BooleanObject::New(true);
+  CHECK(!true_value->IsBoolean());
+  CHECK(true_value->IsBooleanObject());
+  CHECK(true_value->BooleanValue());
+  CHECK(!true_value->IsTrue());
+  CHECK(!true_value->IsFalse());
+
+  Local<BooleanObject> true_boolean_object = true_value.As<BooleanObject>();
+  CHECK(!true_boolean_object->IsBoolean());
+  CHECK(true_boolean_object->IsBooleanObject());
+  // TODO(svenpanne) Uncomment when BooleanObject::BooleanValue() is deleted.
+  // CHECK(true_boolean_object->BooleanValue());
+  CHECK(true_boolean_object->ValueOf());
+  CHECK(!true_boolean_object->IsTrue());
+  CHECK(!true_boolean_object->IsFalse());
 }
 
 
@@ -2530,7 +2620,7 @@ THREADED_TEST(SymbolProperties) {
   CHECK(sym_obj->Equals(sym2));
   CHECK(!sym_obj->StrictEquals(sym2));
   CHECK(v8::SymbolObject::Cast(*sym_obj)->Equals(sym_obj));
-  CHECK(v8::SymbolObject::Cast(*sym_obj)->SymbolValue()->Equals(sym2));
+  CHECK(v8::SymbolObject::Cast(*sym_obj)->ValueOf()->Equals(sym2));
 
   // Make sure delete of a non-existent symbol property works.
   CHECK(obj->Delete(sym1));
@@ -3475,6 +3565,7 @@ static void check_message_0(v8::Handle<v8::Message> message,
   CHECK_EQ(5.76, data->NumberValue());
   CHECK_EQ(6.75, message->GetScriptResourceName()->NumberValue());
   CHECK_EQ(7.56, message->GetScriptData()->NumberValue());
+  CHECK(!message->IsSharedCrossOrigin());
   message_received = true;
 }
 
@@ -3501,6 +3592,7 @@ static void check_message_1(v8::Handle<v8::Message> message,
                             v8::Handle<Value> data) {
   CHECK(data->IsNumber());
   CHECK_EQ(1337, data->Int32Value());
+  CHECK(!message->IsSharedCrossOrigin());
   message_received = true;
 }
 
@@ -3525,6 +3617,7 @@ static void check_message_2(v8::Handle<v8::Message> message,
   v8::Local<v8::Value> hidden_property =
       v8::Object::Cast(*data)->GetHiddenValue(v8_str("hidden key"));
   CHECK(v8_str("hidden value")->Equals(hidden_property));
+  CHECK(!message->IsSharedCrossOrigin());
   message_received = true;
 }
 
@@ -3543,6 +3636,112 @@ TEST(MessageHandler2) {
   CHECK(message_received);
   // clear out the message listener
   v8::V8::RemoveMessageListeners(check_message_2);
+}
+
+
+static void check_message_3(v8::Handle<v8::Message> message,
+                            v8::Handle<Value> data) {
+  CHECK(message->IsSharedCrossOrigin());
+  CHECK_EQ(6.75, message->GetScriptResourceName()->NumberValue());
+  message_received = true;
+}
+
+
+TEST(MessageHandler3) {
+  message_received = false;
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  CHECK(!message_received);
+  v8::V8::AddMessageListener(check_message_3);
+  LocalContext context;
+  v8::ScriptOrigin origin =
+      v8::ScriptOrigin(v8_str("6.75"),
+                       v8::Integer::New(1),
+                       v8::Integer::New(2),
+                       v8::True());
+  v8::Handle<v8::Script> script = Script::Compile(v8_str("throw 'error'"),
+                                                  &origin);
+  script->Run();
+  CHECK(message_received);
+  // clear out the message listener
+  v8::V8::RemoveMessageListeners(check_message_3);
+}
+
+
+static void check_message_4(v8::Handle<v8::Message> message,
+                            v8::Handle<Value> data) {
+  CHECK(!message->IsSharedCrossOrigin());
+  CHECK_EQ(6.75, message->GetScriptResourceName()->NumberValue());
+  message_received = true;
+}
+
+
+TEST(MessageHandler4) {
+  message_received = false;
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  CHECK(!message_received);
+  v8::V8::AddMessageListener(check_message_4);
+  LocalContext context;
+  v8::ScriptOrigin origin =
+      v8::ScriptOrigin(v8_str("6.75"),
+                       v8::Integer::New(1),
+                       v8::Integer::New(2),
+                       v8::False());
+  v8::Handle<v8::Script> script = Script::Compile(v8_str("throw 'error'"),
+                                                  &origin);
+  script->Run();
+  CHECK(message_received);
+  // clear out the message listener
+  v8::V8::RemoveMessageListeners(check_message_4);
+}
+
+
+static void check_message_5a(v8::Handle<v8::Message> message,
+                            v8::Handle<Value> data) {
+  CHECK(message->IsSharedCrossOrigin());
+  CHECK_EQ(6.75, message->GetScriptResourceName()->NumberValue());
+  message_received = true;
+}
+
+
+static void check_message_5b(v8::Handle<v8::Message> message,
+                            v8::Handle<Value> data) {
+  CHECK(!message->IsSharedCrossOrigin());
+  CHECK_EQ(6.75, message->GetScriptResourceName()->NumberValue());
+  message_received = true;
+}
+
+
+TEST(MessageHandler5) {
+  message_received = false;
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  CHECK(!message_received);
+  v8::V8::AddMessageListener(check_message_5a);
+  LocalContext context;
+  v8::ScriptOrigin origin =
+      v8::ScriptOrigin(v8_str("6.75"),
+                       v8::Integer::New(1),
+                       v8::Integer::New(2),
+                       v8::True());
+  v8::Handle<v8::Script> script = Script::Compile(v8_str("throw 'error'"),
+                                                  &origin);
+  script->Run();
+  CHECK(message_received);
+  // clear out the message listener
+  v8::V8::RemoveMessageListeners(check_message_5a);
+
+  message_received = false;
+  v8::V8::AddMessageListener(check_message_5b);
+  origin =
+      v8::ScriptOrigin(v8_str("6.75"),
+                       v8::Integer::New(1),
+                       v8::Integer::New(2),
+                       v8::False());
+  script = Script::Compile(v8_str("throw 'error'"),
+                           &origin);
+  script->Run();
+  CHECK(message_received);
+  // clear out the message listener
+  v8::V8::RemoveMessageListeners(check_message_5b);
 }
 
 
@@ -4189,7 +4388,7 @@ TEST(APIThrowMessageOverwrittenToString) {
 }
 
 
-static void check_custom_error_message(
+static void check_custom_error_tostring(
     v8::Handle<v8::Message> message,
     v8::Handle<v8::Value> data) {
   const char* uncaught_error = "Uncaught MyError toString";
@@ -4200,7 +4399,7 @@ static void check_custom_error_message(
 TEST(CustomErrorToString) {
   LocalContext context;
   v8::HandleScope scope(context->GetIsolate());
-  v8::V8::AddMessageListener(check_custom_error_message);
+  v8::V8::AddMessageListener(check_custom_error_tostring);
   CompileRun(
     "function MyError(name, message) {                   "
     "  this.name = name;                                 "
@@ -4211,6 +4410,58 @@ TEST(CustomErrorToString) {
     "  return 'MyError toString';                        "
     "};                                                  "
     "throw new MyError('my name', 'my message');         ");
+  v8::V8::RemoveMessageListeners(check_custom_error_tostring);
+}
+
+
+static void check_custom_error_message(
+    v8::Handle<v8::Message> message,
+    v8::Handle<v8::Value> data) {
+  const char* uncaught_error = "Uncaught MyError: my message";
+  printf("%s\n", *v8::String::Utf8Value(message->Get()));
+  CHECK(message->Get()->Equals(v8_str(uncaught_error)));
+}
+
+
+TEST(CustomErrorMessage) {
+  LocalContext context;
+  v8::HandleScope scope(context->GetIsolate());
+  v8::V8::AddMessageListener(check_custom_error_message);
+
+  // Handlebars.
+  CompileRun(
+    "function MyError(msg) {                             "
+    "  this.name = 'MyError';                            "
+    "  this.message = msg;                               "
+    "}                                                   "
+    "MyError.prototype = new Error();                    "
+    "throw new MyError('my message');                    ");
+
+  // Closure.
+  CompileRun(
+    "function MyError(msg) {                             "
+    "  this.name = 'MyError';                            "
+    "  this.message = msg;                               "
+    "}                                                   "
+    "inherits = function(childCtor, parentCtor) {        "
+    "    function tempCtor() {};                         "
+    "    tempCtor.prototype = parentCtor.prototype;      "
+    "    childCtor.superClass_ = parentCtor.prototype;   "
+    "    childCtor.prototype = new tempCtor();           "
+    "    childCtor.prototype.constructor = childCtor;    "
+    "};                                                  "
+    "inherits(MyError, Error);                           "
+    "throw new MyError('my message');                    ");
+
+  // Object.create.
+  CompileRun(
+    "function MyError(msg) {                             "
+    "  this.name = 'MyError';                            "
+    "  this.message = msg;                               "
+    "}                                                   "
+    "MyError.prototype = Object.create(Error.prototype); "
+    "throw new MyError('my message');                    ");
+
   v8::V8::RemoveMessageListeners(check_custom_error_message);
 }
 
@@ -13138,7 +13389,7 @@ THREADED_TEST(DateAccess) {
   v8::HandleScope scope(context->GetIsolate());
   v8::Handle<v8::Value> date = v8::Date::New(1224744689038.0);
   CHECK(date->IsDate());
-  CHECK_EQ(1224744689038.0, date.As<v8::Date>()->NumberValue());
+  CHECK_EQ(1224744689038.0, date.As<v8::Date>()->ValueOf());
 }
 
 
@@ -19650,6 +19901,37 @@ THREADED_TEST(Regress2746) {
   Local<Value> value = obj->GetHiddenValue(key);
   CHECK(!value.IsEmpty());
   CHECK(value->IsUndefined());
+}
+
+
+THREADED_TEST(Regress260106) {
+  LocalContext context;
+  v8::HandleScope scope(context->GetIsolate());
+  Local<FunctionTemplate> templ = FunctionTemplate::New(DummyCallHandler);
+  CompileRun("for (var i = 0; i < 128; i++) Object.prototype[i] = 0;");
+  Local<Function> function = templ->GetFunction();
+  CHECK(!function.IsEmpty());
+  CHECK(function->IsFunction());
+}
+
+
+THREADED_TEST(JSONParseObject) {
+  LocalContext context;
+  HandleScope scope(context->GetIsolate());
+  Local<Value> obj = v8::JSON::Parse(v8_str("{\"x\":42}"));
+  Handle<Object> global = context->Global();
+  global->Set(v8_str("obj"), obj);
+  ExpectString("JSON.stringify(obj)", "{\"x\":42}");
+}
+
+
+THREADED_TEST(JSONParseNumber) {
+  LocalContext context;
+  HandleScope scope(context->GetIsolate());
+  Local<Value> obj = v8::JSON::Parse(v8_str("42"));
+  Handle<Object> global = context->Global();
+  global->Set(v8_str("obj"), obj);
+  ExpectString("JSON.stringify(obj)", "42");
 }
 
 

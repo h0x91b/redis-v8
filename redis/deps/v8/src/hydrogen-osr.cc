@@ -94,7 +94,7 @@ HBasicBlock* HOsrBuilder::BuildPossibleOsrLoopEntry(
     }
   }
 
-  builder_->AddSimulate(osr_entry_id);
+  builder_->Add<HSimulate>(osr_entry_id);
   builder_->Add<HOsrEntry>(osr_entry_id);
   HContext* context = builder_->Add<HContext>();
   environment->BindContext(context);
@@ -117,6 +117,7 @@ void HOsrBuilder::FinishOsrValues() {
   const ZoneList<HPhi*>* phis = osr_loop_entry_->phis();
   for (int j = 0; j < phis->length(); j++) {
     HPhi* phi = phis->at(j);
+    ASSERT(phi->HasMergedIndex());
     osr_values_->at(phi->merged_index())->set_incoming_value(phi);
   }
 }

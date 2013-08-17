@@ -220,7 +220,7 @@ double ProfileNode::GetTotalMillis() const {
 
 
 void ProfileNode::Print(int indent) {
-  OS::Print("%5u %5u %*c %s%s #%d %d",
+  OS::Print("%5u %5u %*c %s%s %d #%d",
             total_ticks_, self_ticks_,
             indent, ' ',
             entry_->name_prefix(),
@@ -372,19 +372,30 @@ void ProfileTree::ShortPrint() {
 }
 
 
+CpuProfile::CpuProfile(const char* title, unsigned uid, bool record_samples)
+    : title_(title),
+      uid_(uid),
+      record_samples_(record_samples),
+      start_time_us_(OS::Ticks()),
+      end_time_us_(0) {
+}
+
+
 void CpuProfile::AddPath(const Vector<CodeEntry*>& path) {
   ProfileNode* top_frame_node = top_down_.AddPathFromEnd(path);
   if (record_samples_) samples_.Add(top_frame_node);
 }
 
 
-void CpuProfile::CalculateTotalTicks() {
+void CpuProfile::CalculateTotalTicksAndSamplingRate() {
+  end_time_us_ = OS::Ticks();
   top_down_.CalculateTotalTicks();
-}
 
-
-void CpuProfile::SetActualSamplingRate(double actual_sampling_rate) {
-  top_down_.SetTickRatePerMs(actual_sampling_rate);
+  double duration_ms = (end_time_us_ - start_time_us_) / 1000.;
+  if (duration_ms < 1) duration_ms = 1;
+  unsigned ticks = top_down_.root()->total_ticks();
+  double rate = ticks / duration_ms;
+  top_down_.SetTickRatePerMs(rate);
 }
 
 
@@ -529,8 +540,7 @@ bool CpuProfilesCollection::StartProfiling(const char* title, unsigned uid,
 }
 
 
-CpuProfile* CpuProfilesCollection::StopProfiling(const char* title,
-                                                 double actual_sampling_rate) {
+CpuProfile* CpuProfilesCollection::StopProfiling(const char* title) {
   const int title_len = StrLength(title);
   CpuProfile* profile = NULL;
   current_profiles_semaphore_->Wait();
@@ -543,8 +553,7 @@ CpuProfile* CpuProfilesCollection::StopProfiling(const char* title,
   current_profiles_semaphore_->Signal();
 
   if (profile == NULL) return NULL;
-  profile->CalculateTotalTicks();
-  profile->SetActualSamplingRate(actual_sampling_rate);
+  profile->CalculateTotalTicksAndSamplingRate();
   finished_profiles_.Add(profile);
   return profile;
 }
@@ -601,33 +610,12 @@ CodeEntry* CpuProfilesCollection::NewCodeEntry(
 }
 
 
-void SampleRateCalculator::Tick() {
-  if (--wall_time_query_countdown_ == 0)
-    UpdateMeasurements(OS::TimeCurrentMillis());
-}
-
-
-void SampleRateCalculator::UpdateMeasurements(double current_time) {
-  if (measurements_count_++ != 0) {
-    const double measured_ticks_per_ms =
-        (kWallTimeQueryIntervalMs * ticks_per_ms_) /
-        (current_time - last_wall_time_);
-    // Update the average value.
-    ticks_per_ms_ +=
-        (measured_ticks_per_ms - ticks_per_ms_) / measurements_count_;
-    // Update the externally accessible result.
-    result_ = static_cast<AtomicWord>(ticks_per_ms_ * kResultScale);
-  }
-  last_wall_time_ = current_time;
-  wall_time_query_countdown_ =
-      static_cast<unsigned>(kWallTimeQueryIntervalMs * ticks_per_ms_);
-}
-
-
 const char* const ProfileGenerator::kAnonymousFunctionName =
     "(anonymous function)";
 const char* const ProfileGenerator::kProgramEntryName =
     "(program)";
+const char* const ProfileGenerator::kIdleEntryName =
+    "(idle)";
 const char* const ProfileGenerator::kGarbageCollectorEntryName =
     "(garbage collector)";
 const char* const ProfileGenerator::kUnresolvedFunctionName =
@@ -638,6 +626,8 @@ ProfileGenerator::ProfileGenerator(CpuProfilesCollection* profiles)
     : profiles_(profiles),
       program_entry_(
           profiles->NewCodeEntry(Logger::FUNCTION_TAG, kProgramEntryName)),
+      idle_entry_(
+          profiles->NewCodeEntry(Logger::FUNCTION_TAG, kIdleEntryName)),
       gc_entry_(
           profiles->NewCodeEntry(Logger::BUILTIN_TAG,
                                  kGarbageCollectorEntryName)),
@@ -655,7 +645,8 @@ void ProfileGenerator::RecordTickSample(const TickSample& sample) {
   CodeEntry** entry = entries.start();
   memset(entry, 0, entries.length() * sizeof(*entry));
   if (sample.pc != NULL) {
-    if (sample.has_external_callback) {
+    if (sample.has_external_callback && sample.state == EXTERNAL &&
+        sample.top_frame_type == StackFrame::EXIT) {
       // Don't use PC when in external callback code, as it can point
       // inside callback's code, and we will erroneously report
       // that a callback calls itself.

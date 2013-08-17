@@ -77,11 +77,10 @@ function CreateTypedArrayConstructor(name, elementSize, arrayId, constructor) {
   function ConstructByArrayLike(obj, arrayLike) {
     var length = arrayLike.length;
     var l =  ToPositiveInteger(length, "invalid_typed_array_length");
-    var byteLength = l * elementSize;
-    var buffer = new $ArrayBuffer(byteLength);
-    %TypedArrayInitialize(obj, arrayId, buffer, 0, byteLength);
-    for (var i = 0; i < l; i++) {
-      obj[i] = arrayLike[i];
+    if(!%TypedArrayInitializeFromArrayLike(obj, arrayId, arrayLike, l)) {
+      for (var i = 0; i < l; i++) {
+        obj[i] = arrayLike[i];
+      }
     }
   }
 
@@ -144,23 +143,103 @@ function CreateSubArray(elementSize, constructor) {
   }
 }
 
+function TypedArraySetFromArrayLike(target, source, sourceLength, offset) {
+  if (offset > 0) {
+    for (var i = 0; i < sourceLength; i++) {
+      target[offset + i] = source[i];
+    }
+  }
+  else {
+    for (var i = 0; i < sourceLength; i++) {
+      target[i] = source[i];
+    }
+  }
+}
+
+function TypedArraySetFromOverlappingTypedArray(target, source, offset) {
+  var sourceElementSize = source.BYTES_PER_ELEMENT;
+  var targetElementSize = target.BYTES_PER_ELEMENT;
+  var sourceLength = source.length;
+
+  // Copy left part.
+  function CopyLeftPart() {
+    // First un-mutated byte after the next write
+    var targetPtr = target.byteOffset + (offset + 1) * targetElementSize;
+    // Next read at sourcePtr. We do not care for memory changing before
+    // sourcePtr - we have already copied it.
+    var sourcePtr = source.byteOffset;
+    for (var leftIndex = 0;
+         leftIndex < sourceLength && targetPtr <= sourcePtr;
+         leftIndex++) {
+      target[offset + leftIndex] = source[leftIndex];
+      targetPtr += targetElementSize;
+      sourcePtr += sourceElementSize;
+    }
+    return leftIndex;
+  }
+  var leftIndex = CopyLeftPart();
+
+  // Copy rigth part;
+  function CopyRightPart() {
+    // First unmutated byte before the next write
+    var targetPtr =
+      target.byteOffset + (offset + sourceLength - 1) * targetElementSize;
+    // Next read before sourcePtr. We do not care for memory changing after
+    // sourcePtr - we have already copied it.
+    var sourcePtr =
+      source.byteOffset + sourceLength * sourceElementSize;
+    for(var rightIndex = sourceLength - 1;
+        rightIndex >= leftIndex && targetPtr >= sourcePtr;
+        rightIndex--) {
+      target[offset + rightIndex] = source[rightIndex];
+      targetPtr -= targetElementSize;
+      sourcePtr -= sourceElementSize;
+    }
+    return rightIndex;
+  }
+  var rightIndex = CopyRightPart();
+
+  var temp = new $Array(rightIndex + 1 - leftIndex);
+  for (var i = leftIndex; i <= rightIndex; i++) {
+    temp[i - leftIndex] = source[i];
+  }
+  for (i = leftIndex; i <= rightIndex; i++) {
+    target[offset + i] = temp[i - leftIndex];
+  }
+}
+
 function TypedArraySet(obj, offset) {
   var intOffset = IS_UNDEFINED(offset) ? 0 : TO_INTEGER(offset);
   if (intOffset < 0) {
     throw MakeTypeError("typed_array_set_negative_offset");
   }
-  if (%TypedArraySetFastCases(this, obj, intOffset))
-    return;
-
-  var l = obj.length;
-  if (IS_UNDEFINED(l)) {
-    throw MakeTypeError("invalid_argument");
-  }
-  if (intOffset + l > this.length) {
-    throw MakeRangeError("typed_array_set_source_too_large");
-  }
-  for (var i = 0; i < l; i++) {
-    this[intOffset + i] = obj[i];
+  switch (%TypedArraySetFastCases(this, obj, intOffset)) {
+    // These numbers should be synchronized with runtime.cc.
+    case 0: // TYPED_ARRAY_SET_TYPED_ARRAY_SAME_TYPE
+      return;
+    case 1: // TYPED_ARRAY_SET_TYPED_ARRAY_OVERLAPPING
+      TypedArraySetFromOverlappingTypedArray(this, obj, intOffset);
+      return;
+    case 2: // TYPED_ARRAY_SET_TYPED_ARRAY_NONOVERLAPPING
+      TypedArraySetFromArrayLike(this, obj, obj.length, intOffset);
+      return;
+    case 3: // TYPED_ARRAY_SET_NON_TYPED_ARRAY
+      var l = obj.length;
+      if (IS_UNDEFINED(l)) {
+        if (IS_NUMBER(obj)) {
+            // For number as a first argument, throw TypeError
+            // instead of silently ignoring the call, so that
+            // the user knows (s)he did something wrong.
+            // (Consistent with Firefox and Blink/WebKit)
+            throw MakeTypeError("invalid_argument");
+        }
+        return;
+      }
+      if (intOffset + l > this.length) {
+        throw MakeRangeError("typed_array_set_source_too_large");
+      }
+      TypedArraySetFromArrayLike(this, obj, l, intOffset);
+      return;
   }
 }
 
@@ -173,6 +252,8 @@ function SetupTypedArray(arrayId, name, constructor, elementSize) {
   %SetCode(constructor, fun);
   %FunctionSetPrototype(constructor, new $Object());
 
+  %SetProperty(constructor, "BYTES_PER_ELEMENT", elementSize,
+               READ_ONLY | DONT_ENUM | DONT_DELETE);
   %SetProperty(constructor.prototype,
                "constructor", constructor, DONT_ENUM);
   %SetProperty(constructor.prototype,
@@ -228,7 +309,7 @@ function DataViewConstructor(buffer, byteOffset, byteLength) { // length = 3
 
 function DataViewGetBuffer() {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.buffer', this]);
   }
   return %DataViewGetBuffer(this);
@@ -236,7 +317,7 @@ function DataViewGetBuffer() {
 
 function DataViewGetByteOffset() {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.byteOffset', this]);
   }
   return %DataViewGetByteOffset(this);
@@ -244,7 +325,7 @@ function DataViewGetByteOffset() {
 
 function DataViewGetByteLength() {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.byteLength', this]);
   }
   return %DataViewGetByteLength(this);
@@ -256,7 +337,7 @@ function ToPositiveDataViewOffset(offset) {
 
 function DataViewGetInt8(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getInt8', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -269,10 +350,10 @@ function DataViewGetInt8(offset, little_endian) {
 
 function DataViewSetInt8(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setInt8', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetInt8(this,
@@ -283,7 +364,7 @@ function DataViewSetInt8(offset, value, little_endian) {
 
 function DataViewGetUint8(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getUint8', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -296,10 +377,10 @@ function DataViewGetUint8(offset, little_endian) {
 
 function DataViewSetUint8(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setUint8', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetUint8(this,
@@ -310,7 +391,7 @@ function DataViewSetUint8(offset, value, little_endian) {
 
 function DataViewGetInt16(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getInt16', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -323,10 +404,10 @@ function DataViewGetInt16(offset, little_endian) {
 
 function DataViewSetInt16(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setInt16', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetInt16(this,
@@ -337,7 +418,7 @@ function DataViewSetInt16(offset, value, little_endian) {
 
 function DataViewGetUint16(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getUint16', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -350,10 +431,10 @@ function DataViewGetUint16(offset, little_endian) {
 
 function DataViewSetUint16(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setUint16', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetUint16(this,
@@ -364,7 +445,7 @@ function DataViewSetUint16(offset, value, little_endian) {
 
 function DataViewGetInt32(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getInt32', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -377,7 +458,7 @@ function DataViewGetInt32(offset, little_endian) {
 
 function DataViewSetInt32(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setInt32', this]);
   }
   if (%_ArgumentsLength() < 2) {
@@ -391,7 +472,7 @@ function DataViewSetInt32(offset, value, little_endian) {
 
 function DataViewGetUint32(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getUint32', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -404,10 +485,10 @@ function DataViewGetUint32(offset, little_endian) {
 
 function DataViewSetUint32(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setUint32', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetUint32(this,
@@ -418,7 +499,7 @@ function DataViewSetUint32(offset, value, little_endian) {
 
 function DataViewGetFloat32(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getFloat32', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -431,10 +512,10 @@ function DataViewGetFloat32(offset, little_endian) {
 
 function DataViewSetFloat32(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setFloat32', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetFloat32(this,
@@ -445,7 +526,7 @@ function DataViewSetFloat32(offset, value, little_endian) {
 
 function DataViewGetFloat64(offset, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.getFloat64', this]);
   }
   if (%_ArgumentsLength() < 1) {
@@ -458,10 +539,10 @@ function DataViewGetFloat64(offset, little_endian) {
 
 function DataViewSetFloat64(offset, value, little_endian) {
   if (!IS_DATAVIEW(this)) {
-    throw MakeTypeError('incompatible_method_reciever',
+    throw MakeTypeError('incompatible_method_receiver',
                         ['DataView.setFloat64', this]);
   }
-  if (%_ArgumentsLength() < 1) {
+  if (%_ArgumentsLength() < 2) {
     throw MakeTypeError('invalid_argument');
   }
   %DataViewSetFloat64(this,

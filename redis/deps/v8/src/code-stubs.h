@@ -40,7 +40,6 @@ namespace internal {
 #define CODE_STUB_LIST_ALL_PLATFORMS(V)  \
   V(CallFunction)                        \
   V(CallConstruct)                       \
-  V(UnaryOp)                             \
   V(BinaryOp)                            \
   V(StringAdd)                           \
   V(SubString)                           \
@@ -393,6 +392,22 @@ class RuntimeCallHelper {
   DISALLOW_COPY_AND_ASSIGN(RuntimeCallHelper);
 };
 
+
+// TODO(bmeurer): Move to the StringAddStub declaration once we're
+// done with the translation to a hydrogen code stub.
+enum StringAddFlags {
+  // Omit both parameter checks.
+  STRING_ADD_CHECK_NONE = 0,
+  // Check left parameter.
+  STRING_ADD_CHECK_LEFT = 1 << 0,
+  // Check right parameter.
+  STRING_ADD_CHECK_RIGHT = 1 << 1,
+  // Check both parameters.
+  STRING_ADD_CHECK_BOTH = STRING_ADD_CHECK_LEFT | STRING_ADD_CHECK_RIGHT,
+  // Stub needs a frame before calling the runtime
+  STRING_ADD_ERECT_FRAME = 1 << 2
+};
+
 } }  // namespace v8::internal
 
 #if V8_TARGET_ARCH_IA32
@@ -458,15 +473,19 @@ class InterruptStub : public PlatformCodeStub {
 };
 
 
-class ToNumberStub: public PlatformCodeStub {
+class ToNumberStub: public HydrogenCodeStub {
  public:
   ToNumberStub() { }
 
-  void Generate(MacroAssembler* masm);
+  virtual Handle<Code> GenerateCode();
+
+  virtual void InitializeInterfaceDescriptor(
+      Isolate* isolate,
+      CodeStubInterfaceDescriptor* descriptor);
 
  private:
   Major MajorKey() { return ToNumber; }
-  int MinorKey() { return 0; }
+  int NotMissMinorKey() { return 0; }
 };
 
 
@@ -570,73 +589,6 @@ class StoreGlobalStub : public HydrogenCodeStub {
   int bit_field_;
 
   DISALLOW_COPY_AND_ASSIGN(StoreGlobalStub);
-};
-
-
-class UnaryOpStub : public HydrogenCodeStub {
- public:
-  // Stub without type info available -> construct uninitialized
-  explicit UnaryOpStub(Token::Value operation)
-      : HydrogenCodeStub(UNINITIALIZED), operation_(operation) { }
-  explicit UnaryOpStub(Code::ExtraICState ic_state) :
-      state_(StateBits::decode(ic_state)),
-      operation_(OperatorBits::decode(ic_state)) { }
-
-  virtual void InitializeInterfaceDescriptor(
-      Isolate* isolate,
-      CodeStubInterfaceDescriptor* descriptor);
-
-  virtual Code::Kind GetCodeKind() const { return Code::UNARY_OP_IC; }
-  virtual InlineCacheState GetICState() {
-    if (state_.Contains(GENERIC)) {
-      return MEGAMORPHIC;
-    } else if (state_.IsEmpty()) {
-      return PREMONOMORPHIC;
-    } else {
-      return MONOMORPHIC;
-    }
-  }
-  virtual Code::ExtraICState GetExtraICState() {
-    return OperatorBits::encode(operation_) |
-           StateBits::encode(state_.ToIntegral());
-  }
-
-  Token::Value operation() { return operation_; }
-  Handle<JSFunction> ToJSFunction(Isolate* isolate);
-  Builtins::JavaScript ToJSBuiltin();
-
-  void UpdateStatus(Handle<Object> object);
-  MaybeObject* Result(Handle<Object> object, Isolate* isolate);
-  Handle<Code> GenerateCode();
-  Handle<Type> GetType(Isolate* isolate);
-
- protected:
-  void PrintState(StringStream* stream);
-  void PrintBaseName(StringStream* stream);
-
- private:
-  enum UnaryOpType {
-    SMI,
-    HEAP_NUMBER,
-    GENERIC,
-    NUMBER_OF_TYPES
-  };
-
-  class State : public EnumSet<UnaryOpType, byte> {
-   public:
-    State() : EnumSet<UnaryOpType, byte>() { }
-    explicit State(byte bits) : EnumSet<UnaryOpType, byte>(bits) { }
-    void Print(StringStream* stream) const;
-  };
-
-  class StateBits : public BitField<int, 0, NUMBER_OF_TYPES> { };
-  class OperatorBits : public BitField<Token::Value, NUMBER_OF_TYPES, 8> { };
-
-  State state_;
-  Token::Value operation_;
-
-  virtual CodeStub::Major MajorKey() { return UnaryOp; }
-  virtual int NotMissMinorKey() { return GetExtraICState(); }
 };
 
 
@@ -2247,19 +2199,17 @@ class ToBooleanStub: public HydrogenCodeStub {
 
 class ElementsTransitionAndStoreStub : public HydrogenCodeStub {
  public:
-  ElementsTransitionAndStoreStub(ElementsKind from,
-                                 ElementsKind to,
+  ElementsTransitionAndStoreStub(ElementsKind from_kind,
+                                 ElementsKind to_kind,
                                  bool is_jsarray,
                                  KeyedAccessStoreMode store_mode)
-      : from_(from),
-        to_(to),
+      : from_kind_(from_kind),
+        to_kind_(to_kind),
         is_jsarray_(is_jsarray),
-        store_mode_(store_mode) {
-    ASSERT(!IsFastHoleyElementsKind(from) || IsFastHoleyElementsKind(to));
-  }
+        store_mode_(store_mode) {}
 
-  ElementsKind from() const { return from_; }
-  ElementsKind to() const { return to_; }
+  ElementsKind from_kind() const { return from_kind_; }
+  ElementsKind to_kind() const { return to_kind_; }
   bool is_jsarray() const { return is_jsarray_; }
   KeyedAccessStoreMode store_mode() const { return store_mode_; }
 
@@ -2277,14 +2227,14 @@ class ElementsTransitionAndStoreStub : public HydrogenCodeStub {
 
   Major MajorKey() { return ElementsTransitionAndStore; }
   int NotMissMinorKey() {
-    return FromBits::encode(from()) |
-        ToBits::encode(to()) |
-        IsJSArrayBits::encode(is_jsarray()) |
-        StoreModeBits::encode(store_mode());
+    return FromBits::encode(from_kind_) |
+        ToBits::encode(to_kind_) |
+        IsJSArrayBits::encode(is_jsarray_) |
+        StoreModeBits::encode(store_mode_);
   }
 
-  ElementsKind from_;
-  ElementsKind to_;
+  ElementsKind from_kind_;
+  ElementsKind to_kind_;
   bool is_jsarray_;
   KeyedAccessStoreMode store_mode_;
 

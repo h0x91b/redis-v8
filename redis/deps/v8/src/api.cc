@@ -46,6 +46,7 @@
 #include "heap-profiler.h"
 #include "heap-snapshot-generator-inl.h"
 #include "icu_util.h"
+#include "json-parser.h"
 #include "messages.h"
 #ifdef COMPRESS_STARTUP_DATA_BZ2
 #include "natives.h"
@@ -398,7 +399,7 @@ enum CompressedStartupDataItems {
   kSnapshotContext,
   kLibraries,
   kExperimentalLibraries,
-#if defined(ENABLE_I18N_SUPPORT)
+#if defined(V8_I18N_SUPPORT)
   kI18NExtension,
 #endif
   kCompressedStartupDataCount
@@ -442,7 +443,7 @@ void V8::GetCompressedStartupData(StartupData* compressed_data) {
   compressed_data[kExperimentalLibraries].raw_size =
       i::ExperimentalNatives::GetRawScriptsSize();
 
-#if defined(ENABLE_I18N_SUPPORT)
+#if defined(V8_I18N_SUPPORT)
   i::Vector<const ii:byte> i18n_extension_source =
       i::I18NNatives::GetScriptsSource();
   compressed_data[kI18NExtension].data =
@@ -482,7 +483,7 @@ void V8::SetDecompressedStartupData(StartupData* decompressed_data) {
       decompressed_data[kExperimentalLibraries].raw_size);
   i::ExperimentalNatives::SetRawScriptsSource(exp_libraries_source);
 
-#if defined(ENABLE_I18N_SUPPORT)
+#if defined(V8_I18N_SUPPORT)
   ASSERT_EQ(i::I18NNatives::GetRawScriptsSize(),
             decompressed_data[kI18NExtension].raw_size);
   i::Vector<const char> i18n_extension_source(
@@ -675,6 +676,16 @@ void V8::DisposeGlobal(i::Object** obj) {
 }
 
 
+int V8::Eternalize(i::Isolate* isolate, i::Object** handle) {
+  return isolate->eternal_handles()->Create(isolate, *handle);
+}
+
+
+i::Object** V8::GetEternal(i::Isolate* isolate, int index) {
+  return isolate->eternal_handles()->Get(index).location();
+}
+
+
 // --- H a n d l e s ---
 
 
@@ -770,7 +781,6 @@ void Context::Exit() {
   i::Context* last_context =
       isolate->handle_scope_implementer()->RestoreContext();
   isolate->set_context(last_context);
-  isolate->set_context_exit_happened(true);
 }
 
 
@@ -1918,6 +1928,7 @@ Local<Script> Script::New(v8::Handle<String> source,
     i::Handle<i::Object> name_obj;
     int line_offset = 0;
     int column_offset = 0;
+    bool is_shared_cross_origin = false;
     if (origin != NULL) {
       if (!origin->ResourceName().IsEmpty()) {
         name_obj = Utils::OpenHandle(*origin->ResourceName());
@@ -1928,6 +1939,10 @@ Local<Script> Script::New(v8::Handle<String> source,
       if (!origin->ResourceColumnOffset().IsEmpty()) {
         column_offset =
             static_cast<int>(origin->ResourceColumnOffset()->Value());
+      }
+      if (!origin->ResourceIsSharedCrossOrigin().IsEmpty()) {
+        is_shared_cross_origin =
+            origin->ResourceIsSharedCrossOrigin() == v8::True();
       }
     }
     EXCEPTION_PREAMBLE(isolate);
@@ -1945,6 +1960,7 @@ Local<Script> Script::New(v8::Handle<String> source,
                            name_obj,
                            line_offset,
                            column_offset,
+                           is_shared_cross_origin,
                            isolate->global_context(),
                            NULL,
                            pre_data_impl,
@@ -2412,6 +2428,20 @@ int Message::GetEndColumn() const {
 }
 
 
+bool Message::IsSharedCrossOrigin() const {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  if (IsDeadCheck(isolate, "v8::Message::IsSharedCrossOrigin()")) return 0;
+  ENTER_V8(isolate);
+  i::HandleScope scope(isolate);
+  i::Handle<i::JSMessageObject> message =
+      i::Handle<i::JSMessageObject>::cast(Utils::OpenHandle(this));
+  i::Handle<i::JSValue> script =
+      i::Handle<i::JSValue>::cast(i::Handle<i::Object>(message->script(),
+                                                       isolate));
+  return i::Script::cast(script->value())->is_shared_cross_origin();
+}
+
+
 Local<String> Message::GetSourceLine() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   ON_BAILOUT(isolate, "v8::Message::GetSourceLine()", return Local<String>());
@@ -2584,6 +2614,29 @@ bool StackFrame::IsConstructor() const {
   i::Handle<i::JSObject> self = Utils::OpenHandle(this);
   i::Handle<i::Object> is_constructor = GetProperty(self, "isConstructor");
   return is_constructor->IsTrue();
+}
+
+
+// --- J S O N ---
+
+Local<Value> JSON::Parse(Local<String> json_string) {
+  i::Isolate* isolate = i::Isolate::Current();
+  EnsureInitializedForIsolate(isolate, "v8::JSON::Parse");
+  ENTER_V8(isolate);
+  i::HandleScope scope(isolate);
+  i::Handle<i::String> source = i::Handle<i::String>(
+      FlattenGetString(Utils::OpenHandle(*json_string)));
+  EXCEPTION_PREAMBLE(isolate);
+  i::Handle<i::Object> result;
+  if (source->IsSeqOneByteString()) {
+    result = i::JsonParser<true>::Parse(source);
+  } else {
+    result = i::JsonParser<false>::Parse(source);
+  }
+  has_pending_exception = result.is_null();
+  EXCEPTION_BAILOUT_CHECK(isolate, Local<Object>());
+  return Utils::ToLocal(
+      i::Handle<i::Object>::cast(scope.CloseAndEscape(result)));
 }
 
 
@@ -3048,6 +3101,12 @@ void v8::ArrayBuffer::CheckCast(Value* that) {
   ApiCheck(obj->IsJSArrayBuffer(),
            "v8::ArrayBuffer::Cast()",
            "Could not convert to ArrayBuffer");
+}
+
+
+void v8::ArrayBuffer::Allocator::Free(void* data) {
+  API_Fatal("v8::ArrayBuffer::Allocator::Free",
+            "Override Allocator::Free(void*, size_t)");
 }
 
 
@@ -5931,6 +5990,23 @@ i::Handle<i::String> NewExternalAsciiStringHandle(i::Isolate* isolate,
 }
 
 
+bool RedirectToExternalString(i::Isolate* isolate,
+                              i::Handle<i::String> parent,
+                              i::Handle<i::String> external) {
+  if (parent->IsConsString()) {
+    i::Handle<i::ConsString> cons = i::Handle<i::ConsString>::cast(parent);
+    cons->set_first(*external);
+    cons->set_second(isolate->heap()->empty_string());
+  } else {
+    ASSERT(parent->IsSlicedString());
+    i::Handle<i::SlicedString> slice = i::Handle<i::SlicedString>::cast(parent);
+    slice->set_parent(*external);
+    slice->set_offset(0);
+  }
+  return true;
+}
+
+
 Local<String> v8::String::NewExternal(
       v8::String::ExternalStringResource* resource) {
   i::Isolate* isolate = i::Isolate::Current();
@@ -5959,9 +6035,23 @@ bool v8::String::MakeExternal(v8::String::ExternalStringResource* resource) {
     return false;
   }
   CHECK(resource && resource->data());
-  bool result = obj->MakeExternal(resource);
-  if (result && !obj->IsInternalizedString()) {
-    isolate->heap()->external_string_table()->AddString(*obj);
+
+  bool result;
+  i::Handle<i::String> external;
+  if (isolate->heap()->old_pointer_space()->Contains(*obj)) {
+    // We do not allow external strings in the old pointer space.  Instead of
+    // converting the string in-place, we keep the cons/sliced string and
+    // point it to a newly-allocated external string.
+    external = NewExternalStringHandle(isolate, resource);
+    result = RedirectToExternalString(isolate, obj, external);
+  } else {
+    result = obj->MakeExternal(resource);
+    external = obj;
+  }
+
+  ASSERT(external->IsExternalString());
+  if (result && !external->IsInternalizedString()) {
+    isolate->heap()->external_string_table()->AddString(*external);
   }
   return result;
 }
@@ -5996,9 +6086,23 @@ bool v8::String::MakeExternal(
     return false;
   }
   CHECK(resource && resource->data());
-  bool result = obj->MakeExternal(resource);
-  if (result && !obj->IsInternalizedString()) {
-    isolate->heap()->external_string_table()->AddString(*obj);
+
+  bool result;
+  i::Handle<i::String> external;
+  if (isolate->heap()->old_pointer_space()->Contains(*obj)) {
+    // We do not allow external strings in the old pointer space.  Instead of
+    // converting the string in-place, we keep the cons/sliced string and
+    // point it to a newly-allocated external string.
+    external = NewExternalAsciiStringHandle(isolate, resource);
+    result = RedirectToExternalString(isolate, obj, external);
+  } else {
+    result = obj->MakeExternal(resource);
+    external = obj;
+  }
+
+  ASSERT(external->IsExternalString());
+  if (result && !external->IsInternalizedString()) {
+    isolate->heap()->external_string_table()->AddString(*external);
   }
   return result;
 }
@@ -6039,7 +6143,7 @@ Local<v8::Value> v8::NumberObject::New(double value) {
 }
 
 
-double v8::NumberObject::NumberValue() const {
+double v8::NumberObject::ValueOf() const {
   i::Isolate* isolate = i::Isolate::Current();
   if (IsDeadCheck(isolate, "v8::NumberObject::NumberValue()")) return 0;
   LOG_API(isolate, "NumberObject::NumberValue");
@@ -6063,7 +6167,7 @@ Local<v8::Value> v8::BooleanObject::New(bool value) {
 }
 
 
-bool v8::BooleanObject::BooleanValue() const {
+bool v8::BooleanObject::ValueOf() const {
   i::Isolate* isolate = i::Isolate::Current();
   if (IsDeadCheck(isolate, "v8::BooleanObject::BooleanValue()")) return 0;
   LOG_API(isolate, "BooleanObject::BooleanValue");
@@ -6084,7 +6188,7 @@ Local<v8::Value> v8::StringObject::New(Handle<String> value) {
 }
 
 
-Local<v8::String> v8::StringObject::StringValue() const {
+Local<v8::String> v8::StringObject::ValueOf() const {
   i::Isolate* isolate = i::Isolate::Current();
   if (IsDeadCheck(isolate, "v8::StringObject::StringValue()")) {
     return Local<v8::String>();
@@ -6108,7 +6212,7 @@ Local<v8::Value> v8::SymbolObject::New(Isolate* isolate, Handle<Symbol> value) {
 }
 
 
-Local<v8::Symbol> v8::SymbolObject::SymbolValue() const {
+Local<v8::Symbol> v8::SymbolObject::ValueOf() const {
   i::Isolate* isolate = i::Isolate::Current();
   if (IsDeadCheck(isolate, "v8::SymbolObject::SymbolValue()"))
     return Local<v8::Symbol>();
@@ -6137,7 +6241,7 @@ Local<v8::Value> v8::Date::New(double time) {
 }
 
 
-double v8::Date::NumberValue() const {
+double v8::Date::ValueOf() const {
   i::Isolate* isolate = i::Isolate::Current();
   if (IsDeadCheck(isolate, "v8::Date::NumberValue()")) return 0;
   LOG_API(isolate, "Date::NumberValue");
@@ -7373,8 +7477,6 @@ Handle<String> CpuProfileNode::GetFunctionName() const {
 
 
 int CpuProfileNode::GetScriptId() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfileNode::GetScriptId");
   const i::ProfileNode* node = reinterpret_cast<const i::ProfileNode*>(this);
   const i::CodeEntry* entry = node->entry();
   return entry->script_id();
@@ -7391,8 +7493,6 @@ Handle<String> CpuProfileNode::GetScriptResourceName() const {
 
 
 int CpuProfileNode::GetLineNumber() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfileNode::GetLineNumber");
   return reinterpret_cast<const i::ProfileNode*>(this)->entry()->line_number();
 }
 
@@ -7425,9 +7525,12 @@ double CpuProfileNode::GetSelfSamplesCount() const {
 }
 
 
+unsigned CpuProfileNode::GetHitCount() const {
+  return reinterpret_cast<const i::ProfileNode*>(this)->self_ticks();
+}
+
+
 unsigned CpuProfileNode::GetCallUid() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfileNode::GetCallUid");
   return reinterpret_cast<const i::ProfileNode*>(this)->entry()->GetCallUid();
 }
 
@@ -7438,15 +7541,11 @@ unsigned CpuProfileNode::GetNodeId() const {
 
 
 int CpuProfileNode::GetChildrenCount() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfileNode::GetChildrenCount");
   return reinterpret_cast<const i::ProfileNode*>(this)->children()->length();
 }
 
 
 const CpuProfileNode* CpuProfileNode::GetChild(int index) const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfileNode::GetChild");
   const i::ProfileNode* child =
       reinterpret_cast<const i::ProfileNode*>(this)->children()->at(index);
   return reinterpret_cast<const CpuProfileNode*>(child);
@@ -7467,8 +7566,6 @@ void CpuProfile::Delete() {
 
 
 unsigned CpuProfile::GetUid() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfile::GetUid");
   return reinterpret_cast<const i::CpuProfile*>(this)->uid();
 }
 
@@ -7483,8 +7580,6 @@ Handle<String> CpuProfile::GetTitle() const {
 
 
 const CpuProfileNode* CpuProfile::GetTopDownRoot() const {
-  i::Isolate* isolate = i::Isolate::Current();
-  IsDeadCheck(isolate, "v8::CpuProfile::GetTopDownRoot");
   const i::CpuProfile* profile = reinterpret_cast<const i::CpuProfile*>(this);
   return reinterpret_cast<const CpuProfileNode*>(profile->top_down()->root());
 }
@@ -7493,6 +7588,18 @@ const CpuProfileNode* CpuProfile::GetTopDownRoot() const {
 const CpuProfileNode* CpuProfile::GetSample(int index) const {
   const i::CpuProfile* profile = reinterpret_cast<const i::CpuProfile*>(this);
   return reinterpret_cast<const CpuProfileNode*>(profile->sample(index));
+}
+
+
+int64_t CpuProfile::GetStartTime() const {
+  const i::CpuProfile* profile = reinterpret_cast<const i::CpuProfile*>(this);
+  return profile->start_time_us();
+}
+
+
+int64_t CpuProfile::GetEndTime() const {
+  const i::CpuProfile* profile = reinterpret_cast<const i::CpuProfile*>(this);
+  return profile->end_time_us();
 }
 
 
@@ -7530,6 +7637,19 @@ void CpuProfiler::DeleteAllCpuProfiles() {
 }
 
 
+void CpuProfiler::SetIdle(bool is_idle) {
+  i::Isolate* isolate = reinterpret_cast<i::CpuProfiler*>(this)->isolate();
+  i::StateTag state = isolate->current_vm_state();
+  ASSERT(state == i::EXTERNAL || state == i::IDLE);
+  if (isolate->js_entry_sp() != NULL) return;
+  if (is_idle) {
+    isolate->set_current_vm_state(i::IDLE);
+  } else if (state == i::IDLE) {
+    isolate->set_current_vm_state(i::EXTERNAL);
+  }
+}
+
+
 static i::HeapGraphEdge* ToInternal(const HeapGraphEdge* edge) {
   return const_cast<i::HeapGraphEdge*>(
       reinterpret_cast<const i::HeapGraphEdge*>(edge));
@@ -7556,6 +7676,7 @@ Handle<Value> HeapGraphEdge::GetName() const {
           isolate->factory()->InternalizeUtf8String(edge->name()));
     case i::HeapGraphEdge::kElement:
     case i::HeapGraphEdge::kHidden:
+    case i::HeapGraphEdge::kWeak:
       return ToApiHandle<Number>(
           isolate->factory()->NewNumberFromInt(edge->index()));
     default: UNREACHABLE();

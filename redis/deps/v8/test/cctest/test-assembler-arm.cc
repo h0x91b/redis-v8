@@ -1049,6 +1049,8 @@ TEST(13) {
     double i;
     double j;
     double k;
+    uint32_t low;
+    uint32_t high;
   } T;
   T t;
 
@@ -1113,6 +1115,11 @@ TEST(13) {
     __ vmov(d22, VmovIndexHi, r2);
     __ add(r4, r0, Operand(OFFSET_OF(T, i)));
     __ vstm(ia_w, r4, d20, d22);
+    // Move d22 into low and high.
+    __ vmov(r4, VmovIndexLo, d22);
+    __ str(r4, MemOperand(r0, OFFSET_OF(T, low)));
+    __ vmov(r4, VmovIndexHi, d22);
+    __ str(r4, MemOperand(r0, OFFSET_OF(T, high)));
 
     __ ldm(ia_w, sp, r4.bit() | pc.bit());
 
@@ -1144,6 +1151,8 @@ TEST(13) {
     CHECK_EQ(14.7610017472335499, t.i);
     CHECK_EQ(16.0, t.j);
     CHECK_EQ(73.8818412254460241, t.k);
+    CHECK_EQ(372106121, t.low);
+    CHECK_EQ(1079146608, t.high);
   }
 }
 
@@ -1408,5 +1417,26 @@ TEST(16) {
   CHECK_EQ(0x00000003, t.dst3);
   CHECK_EQ(0x11121313, t.dst4);
 }
+
+
+TEST(17) {
+  // Test generating labels at high addresses.
+  // Should not assert.
+  CcTest::InitializeVM();
+  Isolate* isolate = Isolate::Current();
+  HandleScope scope(isolate);
+
+  // Generate a code segment that will be longer than 2^24 bytes.
+  Assembler assm(isolate, NULL, 0);
+  for (size_t i = 0; i < 1 << 23 ; ++i) {  // 2^23
+    __ nop();
+  }
+
+  Label target;
+  __ b(eq, &target);
+  __ bind(&target);
+  __ nop();
+}
+
 
 #undef __

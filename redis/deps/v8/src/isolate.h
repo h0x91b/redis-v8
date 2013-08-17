@@ -65,6 +65,7 @@ class CpuProfiler;
 class DeoptimizerData;
 class Deserializer;
 class EmptyStatement;
+class ExternalCallbackScope;
 class ExternalReferenceTable;
 class Factory;
 class FunctionInfoListener;
@@ -121,6 +122,15 @@ typedef ZoneList<Handle<Object> > ZoneObjectList;
     Isolate* __isolate__ = (isolate);                     \
     if (__isolate__->has_scheduled_exception()) {         \
       return __isolate__->PromoteScheduledException();    \
+    }                                                     \
+  } while (false)
+
+#define RETURN_HANDLE_IF_SCHEDULED_EXCEPTION(isolate, T)  \
+  do {                                                    \
+    Isolate* __isolate__ = (isolate);                     \
+    if (__isolate__->has_scheduled_exception()) {         \
+      __isolate__->PromoteScheduledException();           \
+      return Handle<T>::null();                           \
     }                                                     \
   } while (false)
 
@@ -270,7 +280,8 @@ class ThreadLocalTop BASE_EMBEDDED {
 #endif  // USE_SIMULATOR
 
   Address js_entry_sp_;  // the stack pointer of the bottom JS entry frame
-  Address external_callback_;  // the external callback we're currently in
+  // the external callback we're currently in
+  ExternalCallbackScope* external_callback_scope_;
   StateTag current_vm_state_;
 
   // Generated code scratch locations.
@@ -650,9 +661,9 @@ class Isolate {
   }
   inline Address* handler_address() { return &thread_local_top_.handler_; }
 
-  // Bottom JS entry (see StackTracer::Trace in sampler.cc).
-  static Address js_entry_sp(ThreadLocalTop* thread) {
-    return thread->js_entry_sp_;
+  // Bottom JS entry.
+  Address js_entry_sp() {
+    return thread_local_top_.js_entry_sp_;
   }
   inline Address* js_entry_sp_address() {
     return &thread_local_top_.js_entry_sp_;
@@ -726,6 +737,7 @@ class Isolate {
   void PrintStackTrace(FILE* out, char* thread_data);
   void PrintStack(StringStream* accumulator);
   void PrintStack(FILE* out);
+  void PrintStack();
   Handle<String> StackTraceString();
   NO_INLINE(void PushStackTraceAndDie(unsigned int magic,
                                       Object* object,
@@ -910,6 +922,8 @@ class Isolate {
 
   GlobalHandles* global_handles() { return global_handles_; }
 
+  EternalHandles* eternal_handles() { return eternal_handles_; }
+
   ThreadManager* thread_manager() { return thread_manager_; }
 
   ContextSwitcher* context_switcher() { return context_switcher_; }
@@ -1023,11 +1037,11 @@ class Isolate {
 
   static const int kJSRegexpStaticOffsetsVectorSize = 128;
 
-  Address external_callback() {
-    return thread_local_top_.external_callback_;
+  ExternalCallbackScope* external_callback_scope() {
+    return thread_local_top_.external_callback_scope_;
   }
-  void set_external_callback(Address callback) {
-    thread_local_top_.external_callback_ = callback;
+  void set_external_callback_scope(ExternalCallbackScope* scope) {
+    thread_local_top_.external_callback_scope_ = scope;
   }
 
   StateTag current_vm_state() {
@@ -1046,13 +1060,6 @@ class Isolate {
   }
   void SetTopLookupResult(LookupResult* top) {
     thread_local_top_.top_lookup_result_ = top;
-  }
-
-  bool context_exit_happened() {
-    return context_exit_happened_;
-  }
-  void set_context_exit_happened(bool context_exit_happened) {
-    context_exit_happened_ = context_exit_happened;
   }
 
   bool initialized_from_snapshot() { return initialized_from_snapshot_; }
@@ -1120,6 +1127,11 @@ class Isolate {
   void set_function_entry_hook(FunctionEntryHook function_entry_hook) {
     function_entry_hook_ = function_entry_hook;
   }
+
+  void* stress_deopt_count_address() { return &stress_deopt_count_; }
+
+  // Given an address occupied by a live code object, return that object.
+  Object* FindCodeObject(Address a);
 
  private:
   Isolate();
@@ -1278,6 +1290,7 @@ class Isolate {
   InnerPointerToCodeCache* inner_pointer_to_code_cache_;
   ConsStringIteratorOp* write_iterator_;
   GlobalHandles* global_handles_;
+  EternalHandles* eternal_handles_;
   ContextSwitcher* context_switcher_;
   ThreadManager* thread_manager_;
   RuntimeState runtime_state_;
@@ -1296,10 +1309,6 @@ class Isolate {
   DateCache* date_cache_;
   unibrow::Mapping<unibrow::Ecma262Canonicalize> interp_canonicalize_mapping_;
   CodeStubInterfaceDescriptor* code_stub_interface_descriptors_;
-
-  // The garbage collector should be a little more aggressive when it knows
-  // that a context was recently exited.
-  bool context_exit_happened_;
 
   // True if this isolate was initialized from a snapshot.
   bool initialized_from_snapshot_;
@@ -1355,6 +1364,9 @@ class Isolate {
   MarkingThread** marking_thread_;
   SweeperThread** sweeper_thread_;
   CallbackTable* callback_table_;
+
+  // Counts deopt points if deopt_every_n_times is enabled.
+  unsigned int stress_deopt_count_;
 
   friend class ExecutionAccess;
   friend class HandleScopeImplementer;

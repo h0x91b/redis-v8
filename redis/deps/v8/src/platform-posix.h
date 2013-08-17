@@ -28,16 +28,15 @@
 #ifndef V8_PLATFORM_POSIX_H_
 #define V8_PLATFORM_POSIX_H_
 
+#if !defined(ANDROID)
 #include <cxxabi.h>
+#endif
 #include <stdio.h>
 
 #include "platform.h"
 
 namespace v8 {
 namespace internal {
-
-// Used by platform implementation files during OS::PostSetUp().
-void POSIXPostSetUp();
 
 // Used by platform implementation files during OS::DumpBacktrace()
 // and OS::StackWalk().
@@ -58,10 +57,12 @@ struct POSIXBacktraceHelper {
         fprintf(stderr, "%2d: ", i);
         char mangled[201];
         if (sscanf(symbols[i], "%*[^(]%*[(]%200[^)+]", mangled) == 1) {// NOLINT
+          char* demangled = NULL;
+#if !defined(ANDROID)
           int status;
           size_t length;
-          char* demangled = abi::__cxa_demangle(
-              mangled, NULL, &length, &status);
+          demangled = abi::__cxa_demangle(mangled, NULL, &length, &status);
+#endif
           fprintf(stderr, "%s\n", demangled != NULL ? demangled : mangled);
           free(demangled);
         } else {

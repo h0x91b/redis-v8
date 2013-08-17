@@ -339,10 +339,10 @@ static void GenerateKeyNameCheck(MacroAssembler* masm,
 
   // Is the string internalized? We already know it's a string so a single
   // bit test is enough.
-  STATIC_ASSERT(kInternalizedTag != 0);
+  STATIC_ASSERT(kNotInternalizedTag != 0);
   __ testb(FieldOperand(map, Map::kInstanceTypeOffset),
-           Immediate(kIsInternalizedMask));
-  __ j(zero, not_unique);
+           Immediate(kIsNotInternalizedMask));
+  __ j(not_zero, not_unique);
 
   __ bind(&unique);
 }
@@ -570,10 +570,10 @@ void KeyedLoadIC::GenerateIndexedInterceptor(MacroAssembler* masm) {
   __ j(not_zero, &slow);
 
   // Everything is fine, call runtime.
-  __ pop(rcx);
+  __ PopReturnAddressTo(rcx);
   __ push(rdx);  // receiver
   __ push(rax);  // key
-  __ push(rcx);  // return address
+  __ PushReturnAddressFrom(rcx);
 
   // Perform tail call to the entry.
   __ TailCallExternalReference(
@@ -1369,10 +1369,10 @@ void LoadIC::GenerateMiss(MacroAssembler* masm) {
   Counters* counters = masm->isolate()->counters();
   __ IncrementCounter(counters->load_miss(), 1);
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rax);  // receiver
   __ push(rcx);  // name
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Perform tail call to the entry.
   ExternalReference ref =
@@ -1388,10 +1388,10 @@ void LoadIC::GenerateRuntimeGetProperty(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rax);  // receiver
   __ push(rcx);  // name
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Perform tail call to the entry.
   __ TailCallRuntime(Runtime::kGetProperty, 2, 1);
@@ -1408,10 +1408,10 @@ void KeyedLoadIC::GenerateMiss(MacroAssembler* masm, ICMissMode miss_mode) {
   Counters* counters = masm->isolate()->counters();
   __ IncrementCounter(counters->keyed_load_miss(), 1);
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rax);  // name
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Perform tail call to the entry.
   ExternalReference ref = miss_mode == MISS_FORCE_GENERIC
@@ -1429,10 +1429,10 @@ void KeyedLoadIC::GenerateRuntimeGetProperty(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rax);  // name
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Perform tail call to the entry.
   __ TailCallRuntime(Runtime::kKeyedGetProperty, 2, 1);
@@ -1468,11 +1468,11 @@ void StoreIC::GenerateMiss(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rcx);  // name
   __ push(rax);  // value
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Perform tail call to the entry.
   ExternalReference ref =
@@ -1512,13 +1512,13 @@ void StoreIC::GenerateRuntimeSetProperty(MacroAssembler* masm,
   //  -- rdx    : receiver
   //  -- rsp[0] : return address
   // -----------------------------------
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);
   __ push(rcx);
   __ push(rax);
   __ Push(Smi::FromInt(NONE));  // PropertyAttributes
   __ Push(Smi::FromInt(strict_mode));
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Do tail-call to runtime routine.
   __ TailCallRuntime(Runtime::kSetProperty, 5, 1);
@@ -1534,13 +1534,13 @@ void KeyedStoreIC::GenerateRuntimeSetProperty(MacroAssembler* masm,
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rcx);  // key
   __ push(rax);  // value
   __ Push(Smi::FromInt(NONE));          // PropertyAttributes
   __ Push(Smi::FromInt(strict_mode));   // Strict mode.
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Do tail-call to runtime routine.
   __ TailCallRuntime(Runtime::kSetProperty, 5, 1);
@@ -1555,11 +1555,11 @@ void StoreIC::GenerateSlow(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rcx);  // key
   __ push(rax);  // value
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Do tail-call to runtime routine.
   ExternalReference ref(IC_Utility(kStoreIC_Slow), masm->isolate());
@@ -1575,11 +1575,11 @@ void KeyedStoreIC::GenerateSlow(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rcx);  // key
   __ push(rax);  // value
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Do tail-call to runtime routine.
   ExternalReference ref(IC_Utility(kKeyedStoreIC_Slow), masm->isolate());
@@ -1595,11 +1595,11 @@ void KeyedStoreIC::GenerateMiss(MacroAssembler* masm, ICMissMode miss_mode) {
   //  -- rsp[0] : return address
   // -----------------------------------
 
-  __ pop(rbx);
+  __ PopReturnAddressTo(rbx);
   __ push(rdx);  // receiver
   __ push(rcx);  // key
   __ push(rax);  // value
-  __ push(rbx);  // return address
+  __ PushReturnAddressFrom(rbx);
 
   // Do tail-call to runtime routine.
   ExternalReference ref = miss_mode == MISS_FORCE_GENERIC
@@ -1607,55 +1607,6 @@ void KeyedStoreIC::GenerateMiss(MacroAssembler* masm, ICMissMode miss_mode) {
                         masm->isolate())
     : ExternalReference(IC_Utility(kKeyedStoreIC_Miss), masm->isolate());
   __ TailCallExternalReference(ref, 3, 1);
-}
-
-
-void KeyedStoreIC::GenerateTransitionElementsSmiToDouble(MacroAssembler* masm) {
-  // ----------- S t a t e -------------
-  //  -- rbx    : target map
-  //  -- rdx    : receiver
-  //  -- rsp[0] : return address
-  // -----------------------------------
-  // Must return the modified receiver in eax.
-  if (!FLAG_trace_elements_transitions) {
-    Label fail;
-    AllocationSiteMode mode = AllocationSite::GetMode(FAST_SMI_ELEMENTS,
-                                                      FAST_DOUBLE_ELEMENTS);
-    ElementsTransitionGenerator::GenerateSmiToDouble(masm, mode, &fail);
-    __ movq(rax, rdx);
-    __ Ret();
-    __ bind(&fail);
-  }
-
-  __ pop(rbx);
-  __ push(rdx);
-  __ push(rbx);  // return address
-  __ TailCallRuntime(Runtime::kTransitionElementsSmiToDouble, 1, 1);
-}
-
-
-void KeyedStoreIC::GenerateTransitionElementsDoubleToObject(
-    MacroAssembler* masm) {
-  // ----------- S t a t e -------------
-  //  -- rbx    : target map
-  //  -- rdx    : receiver
-  //  -- rsp[0] : return address
-  // -----------------------------------
-  // Must return the modified receiver in eax.
-  if (!FLAG_trace_elements_transitions) {
-    Label fail;
-    AllocationSiteMode mode = AllocationSite::GetMode(FAST_DOUBLE_ELEMENTS,
-                                                      FAST_ELEMENTS);
-    ElementsTransitionGenerator::GenerateDoubleToObject(masm, mode, &fail);
-    __ movq(rax, rdx);
-    __ Ret();
-    __ bind(&fail);
-  }
-
-  __ pop(rbx);
-  __ push(rdx);
-  __ push(rbx);  // return address
-  __ TailCallRuntime(Runtime::kTransitionElementsDoubleToObject, 1, 1);
 }
 
 

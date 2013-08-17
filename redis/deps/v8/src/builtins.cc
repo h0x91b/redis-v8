@@ -211,15 +211,15 @@ static MaybeObject* ArrayCodeGenericCommon(Arguments* args,
     MaybeObject* maybe_array = array->Initialize(0);
     if (maybe_array->IsFailure()) return maybe_array;
 
-    AllocationSiteInfo* info = AllocationSiteInfo::FindForJSObject(array);
-    if (info != NULL && info->IsValid()) {
-      AllocationSite* site = info->GetAllocationSite();
+    AllocationMemento* memento = AllocationMemento::FindForJSObject(array);
+    if (memento != NULL && memento->IsValid()) {
+      AllocationSite* site = memento->GetAllocationSite();
       ElementsKind to_kind = site->GetElementsKind();
       if (IsMoreGeneralElementsKindTransition(array->GetElementsKind(),
                                               to_kind)) {
         // We have advice that we should change the elements kind
         if (FLAG_trace_track_allocation_sites) {
-          PrintF("AllocationSiteInfo: pre-transitioning array %p(%s->%s)\n",
+          PrintF("AllocationSite: pre-transitioning array %p(%s->%s)\n",
                  reinterpret_cast<void*>(array),
                  ElementsKindToString(array->GetElementsKind()),
                  ElementsKindToString(to_kind));
@@ -1550,15 +1550,6 @@ static void Generate_KeyedStoreIC_NonStrictArguments(MacroAssembler* masm) {
   KeyedStoreIC::GenerateNonStrictArguments(masm);
 }
 
-
-static void Generate_TransitionElementsSmiToDouble(MacroAssembler* masm) {
-  KeyedStoreIC::GenerateTransitionElementsSmiToDouble(masm);
-}
-
-
-static void Generate_TransitionElementsDoubleToObject(MacroAssembler* masm) {
-  KeyedStoreIC::GenerateTransitionElementsDoubleToObject(masm);
-}
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
 static void Generate_LoadIC_DebugBreak(MacroAssembler* masm) {

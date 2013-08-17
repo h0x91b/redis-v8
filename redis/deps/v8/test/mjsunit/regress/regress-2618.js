@@ -38,8 +38,7 @@ function f() {
 }
 
 f();
-assertTrue(%GetOptimizationStatus(f) != 2);
-
+assertTrue(%GetOptimizationCount(f) > 0 || %GetOptimizationStatus(f) == 4);
 
 function g() {
   for (var i = 0; i < 1; i++) { }
@@ -70,5 +69,4 @@ function g() {
 }
 
 g();
-assertTrue(%GetOptimizationStatus(g) != 2);
-
+assertTrue(%GetOptimizationCount(g) > 0 || %GetOptimizationStatus(g) == 4);

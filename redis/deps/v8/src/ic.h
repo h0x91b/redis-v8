@@ -649,8 +649,6 @@ class KeyedStoreIC: public StoreIC {
                                          StrictModeFlag strict_mode);
   static void GenerateGeneric(MacroAssembler* masm, StrictModeFlag strict_mode);
   static void GenerateNonStrictArguments(MacroAssembler* masm);
-  static void GenerateTransitionElementsSmiToDouble(MacroAssembler* masm);
-  static void GenerateTransitionElementsDoubleToObject(MacroAssembler* masm);
 
  protected:
   virtual Code::Kind kind() const { return Code::KEYED_STORE_IC; }
@@ -713,14 +711,6 @@ class KeyedStoreIC: public StoreIC {
                                      KeyedAccessStoreMode store_mode);
 
   friend class IC;
-};
-
-
-class UnaryOpIC: public IC {
- public:
-  explicit UnaryOpIC(Isolate* isolate) : IC(EXTRA_CALL_FRAME, isolate) { }
-
-  MUST_USE_RESULT MaybeObject* Transition(Handle<Object> object);
 };
 
 

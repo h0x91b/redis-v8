@@ -110,18 +110,8 @@ class TickSampleEventRecord {
   // The parameterless constructor is used when we dequeue data from
   // the ticks buffer.
   TickSampleEventRecord() { }
-  explicit TickSampleEventRecord(unsigned order)
-      : filler(1),
-        order(order) {
-    ASSERT(filler != SamplingCircularQueue::kClear);
-  }
+  explicit TickSampleEventRecord(unsigned order) : order(order) { }
 
-  // The first machine word of a TickSampleEventRecord must not ever
-  // become equal to SamplingCircularQueue::kClear.  As both order and
-  // TickSample's first field are not reliable in this sense (order
-  // can overflow, TickSample can have all fields reset), we are
-  // forced to use an artificial filler field.
-  int filler;
   unsigned order;
   TickSample sample;
 
@@ -183,18 +173,18 @@ class ProfilerEventsProcessor : public Thread {
 };
 
 
-#define PROFILE(IsolateGetter, Call)                                   \
-  do {                                                                 \
-    Isolate* cpu_profiler_isolate = (IsolateGetter);                   \
-    LOG_CODE_EVENT(cpu_profiler_isolate, Call);                        \
-    CpuProfiler* cpu_profiler = cpu_profiler_isolate->cpu_profiler();  \
-    if (cpu_profiler->is_profiling()) {                                \
-      cpu_profiler->Call;                                              \
-    }                                                                  \
+#define PROFILE(IsolateGetter, Call)                                        \
+  do {                                                                      \
+    Isolate* cpu_profiler_isolate = (IsolateGetter);                        \
+    v8::internal::Logger* logger = cpu_profiler_isolate->logger();          \
+    CpuProfiler* cpu_profiler = cpu_profiler_isolate->cpu_profiler();       \
+    if (logger->is_logging_code_events() || cpu_profiler->is_profiling()) { \
+      logger->Call;                                                         \
+    }                                                                       \
   } while (false)
 
 
-class CpuProfiler {
+class CpuProfiler : public CodeEventListener {
  public:
   explicit CpuProfiler(Isolate* isolate);
 
@@ -203,7 +193,7 @@ class CpuProfiler {
               ProfileGenerator* test_generator,
               ProfilerEventsProcessor* test_processor);
 
-  ~CpuProfiler();
+  virtual ~CpuProfiler();
 
   void StartProfiling(const char* title, bool record_samples = false);
   void StartProfiling(String* title, bool record_samples);
@@ -219,30 +209,30 @@ class CpuProfiler {
 
   // Must be called via PROFILE macro, otherwise will crash when
   // profiling is not enabled.
-  void CallbackEvent(Name* name, Address entry_point);
-  void CodeCreateEvent(Logger::LogEventsAndTags tag,
-                       Code* code, const char* comment);
-  void CodeCreateEvent(Logger::LogEventsAndTags tag,
-                       Code* code, Name* name);
-  void CodeCreateEvent(Logger::LogEventsAndTags tag,
-                       Code* code,
-                       SharedFunctionInfo* shared,
-                       CompilationInfo* info,
-                       Name* name);
-  void CodeCreateEvent(Logger::LogEventsAndTags tag,
-                       Code* code,
-                       SharedFunctionInfo* shared,
-                       CompilationInfo* info,
-                       String* source, int line);
-  void CodeCreateEvent(Logger::LogEventsAndTags tag,
-                       Code* code, int args_count);
-  void CodeMovingGCEvent() {}
-  void CodeMoveEvent(Address from, Address to);
-  void CodeDeleteEvent(Address from);
-  void GetterCallbackEvent(Name* name, Address entry_point);
-  void RegExpCodeCreateEvent(Code* code, String* source);
-  void SetterCallbackEvent(Name* name, Address entry_point);
-  void SharedFunctionInfoMoveEvent(Address from, Address to);
+  virtual void CallbackEvent(Name* name, Address entry_point);
+  virtual void CodeCreateEvent(Logger::LogEventsAndTags tag,
+                               Code* code, const char* comment);
+  virtual void CodeCreateEvent(Logger::LogEventsAndTags tag,
+                               Code* code, Name* name);
+  virtual void CodeCreateEvent(Logger::LogEventsAndTags tag,
+                               Code* code,
+                               SharedFunctionInfo* shared,
+                               CompilationInfo* info,
+                               Name* name);
+  virtual void CodeCreateEvent(Logger::LogEventsAndTags tag,
+                               Code* code,
+                               SharedFunctionInfo* shared,
+                               CompilationInfo* info,
+                               Name* source, int line);
+  virtual void CodeCreateEvent(Logger::LogEventsAndTags tag,
+                               Code* code, int args_count);
+  virtual void CodeMovingGCEvent() {}
+  virtual void CodeMoveEvent(Address from, Address to);
+  virtual void CodeDeleteEvent(Address from);
+  virtual void GetterCallbackEvent(Name* name, Address entry_point);
+  virtual void RegExpCodeCreateEvent(Code* code, String* source);
+  virtual void SetterCallbackEvent(Name* name, Address entry_point);
+  virtual void SharedFunctionInfoMoveEvent(Address from, Address to);
 
   INLINE(bool is_profiling() const) { return is_profiling_; }
   bool* is_profiling_address() {
@@ -251,6 +241,7 @@ class CpuProfiler {
 
   ProfileGenerator* generator() const { return generator_; }
   ProfilerEventsProcessor* processor() const { return processor_; }
+  Isolate* isolate() const { return isolate_; }
 
  private:
   void StartProcessorIfNotStarted();
@@ -268,7 +259,6 @@ class CpuProfiler {
   bool need_to_stop_sampler_;
   bool is_profiling_;
 
- private:
   DISALLOW_COPY_AND_ASSIGN(CpuProfiler);
 };
 

@@ -1,3 +1,151 @@
+2013-08-14: Version 3.20.17
+
+        Fixed Math.round/floor that had bogus Smi representation
+        (Chromium issue 272564)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-08-13: Version 3.20.16
+
+        Fixed bug in HPhi::SimplifyConstantInput (Chromium issue 269679)
+
+        Fixed gcmole bugs in i18n code (issue 2745)
+
+        ia32: Calls to the TranscendentalCacheStub must ensure that esi is
+        set (issue 2827)
+
+        Made sure polymorphic element access creates non-replaying
+        phis. (issue 2815)
+
+        Allowed HPhis to have an invalid merge index. (issue 2815)
+
+        Fixed smi-based math floor. (Chromium issue 270268)
+
+        Deprecated self and total time getters and total sample count
+        getter on CpuProfileNode. (Chromium issue 267595)
+
+        Fixed Object.freeze, Object.observe wrt CountOperation and
+        CompoundAssignment. (issue 2774,2779)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-08-07: Version 3.20.14
+
+        Exposed eternal handle api.
+
+        Bugfix to solve issues with enabling V8 typed arrays in Blink.
+
+        Fixed Array index dehoisting.  (Chromium issue 264203)
+
+        Updated Array Iterator to use numeric indexes (issue 2818)
+
+        Return start/end profiling time in microseconds instead of milliseconds
+        (issue 2824)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-08-06: Version 3.20.14
+
+        Added new Harmony methods to Array.prototype object.
+        (issue 2776,v8:2777)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-08-01: Version 3.20.12
+
+        Removed buggy ToNumber truncation (partial fix for issue 2813)
+
+        Calling Map etc without new should throw TypeError (issue 2819)
+
+        Fixed a crash for large code objects on ARM (Chromium issue 2736)
+
+        Fixed stale unhandlified value in JSObject::SetPropertyForResult.
+        (Chromium issue 265894)
+
+        Added new Harmony methods to String.prototype object.
+        (issue 2796,v8:2797,v8:2798,v8:2799)
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-30: Version 3.20.11
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-29: Version 3.20.10
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-26: Version 3.20.9
+
+        Check that ExternalString objects get aligned resources.
+
+        Fixed JSArray-specific length lookup in polymorphic array handling
+        (Chromium issues 263276, 263905).
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-24: Version 3.20.8
+
+        Deprecated v8::V8::Pause/ResumeProfiler.
+
+        Fixed Chromium issues 247688, 258519 and 260203.
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-22: Version 3.20.7
+
+        Deprecated some debugger methods.
+
+        Fixed wrong bailout id in polymorphic stores (Chromium issue 259787).
+
+        Fixed data race in SamplingCircularQueue (Chromium issue 251218).
+
+        Fixed type feedback in presence of negative lookups
+        (Chromium issue 252797).
+
+        Do not materialize context-allocated values for debug-evaluate
+        (Chromium issue 259300).
+
+        Synchronized Compare-Literal behavior in FullCodegen and Hydrogen
+        (Chromium issue 260345).
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-17: Version 3.20.6
+
+        Try to remove invalidated stubs before falling back to checking the
+        constant state (Chromium issue 260585).
+
+        Fixed gyp_v8 to work with use_system_icu=1 (issue 2475).
+
+        Fixed sloppy-mode 'const' under Harmony flag (Chromium issue 173361).
+
+        Use internal array as API function cache  (Chromium issue 260106).
+
+        Fixed possible stack overflow in range analysis
+        (Chromium issue 259452).
+
+        Performance and stability improvements on all platforms.
+
+
+2013-07-15: Version 3.20.5
+
+        Ensured that the length of frozen arrays is immutable
+        (issue 2711, Chromium issue 259548).
+
+        Performance and stability improvements on all platforms.
+
+
 2013-07-10: Version 3.20.4
 
         Fixed garbage-collection issue that causes a crash on ARM

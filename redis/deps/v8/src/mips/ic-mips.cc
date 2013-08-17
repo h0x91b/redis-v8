@@ -330,9 +330,9 @@ static void GenerateKeyNameCheck(MacroAssembler* masm,
   // bit test is enough.
   // map: key map
   __ lbu(hash, FieldMemOperand(map, Map::kInstanceTypeOffset));
-  STATIC_ASSERT(kInternalizedTag != 0);
-  __ And(at, hash, Operand(kIsInternalizedMask));
-  __ Branch(not_unique, eq, at, Operand(zero_reg));
+  STATIC_ASSERT(kInternalizedTag == 0);
+  __ And(at, hash, Operand(kIsNotInternalizedMask));
+  __ Branch(not_unique, ne, at, Operand(zero_reg));
 
   __ bind(&unique);
 }
@@ -1483,51 +1483,6 @@ void KeyedStoreIC::GenerateSlow(MacroAssembler* masm) {
       ExternalReference(IC_Utility(kKeyedStoreIC_Slow), masm->isolate());
 
   __ TailCallExternalReference(ref, 3, 1);
-}
-
-
-void KeyedStoreIC::GenerateTransitionElementsSmiToDouble(MacroAssembler* masm) {
-  // ---------- S t a t e --------------
-  //  -- a2     : receiver
-  //  -- a3     : target map
-  //  -- ra     : return address
-  // -----------------------------------
-  // Must return the modified receiver in v0.
-  if (!FLAG_trace_elements_transitions) {
-    Label fail;
-    AllocationSiteMode mode = AllocationSite::GetMode(FAST_SMI_ELEMENTS,
-                                                      FAST_DOUBLE_ELEMENTS);
-    ElementsTransitionGenerator::GenerateSmiToDouble(masm, mode, &fail);
-    __ Ret(USE_DELAY_SLOT);
-    __ mov(v0, a2);
-    __ bind(&fail);
-  }
-
-  __ push(a2);
-  __ TailCallRuntime(Runtime::kTransitionElementsSmiToDouble, 1, 1);
-}
-
-
-void KeyedStoreIC::GenerateTransitionElementsDoubleToObject(
-    MacroAssembler* masm) {
-  // ---------- S t a t e --------------
-  //  -- a2     : receiver
-  //  -- a3     : target map
-  //  -- ra     : return address
-  // -----------------------------------
-  // Must return the modified receiver in v0.
-  if (!FLAG_trace_elements_transitions) {
-    Label fail;
-    AllocationSiteMode mode = AllocationSite::GetMode(FAST_DOUBLE_ELEMENTS,
-                                                      FAST_ELEMENTS);
-    ElementsTransitionGenerator::GenerateDoubleToObject(masm, mode, &fail);
-    __ Ret(USE_DELAY_SLOT);
-    __ mov(v0, a2);
-    __ bind(&fail);
-  }
-
-  __ push(a2);
-  __ TailCallRuntime(Runtime::kTransitionElementsDoubleToObject, 1, 1);
 }
 
 
