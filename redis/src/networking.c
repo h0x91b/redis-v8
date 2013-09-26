@@ -29,6 +29,7 @@
 
 #include "redis.h"
 #include <sys/uio.h>
+#include <math.h>
 
 static void setProtocolError(redisClient *c, int pos);
 
@@ -38,6 +39,17 @@ static void setProtocolError(redisClient *c, int pos);
  * returned pointer), so we use this helper function. */
 size_t zmalloc_size_sds(sds s) {
     return zmalloc_size(s-sizeof(struct sdshdr));
+}
+
+/* Return the amount of memory used by the sds string at object->ptr
+ * for a string object. */
+size_t getStringObjectSdsUsedMemory(robj *o) {
+    redisAssertWithInfo(NULL,o,o->type == REDIS_STRING);
+    switch(o->encoding) {
+    case REDIS_ENCODING_RAW: return zmalloc_size_sds(o->ptr);
+    case REDIS_ENCODING_EMBSTR: return sdslen(o->ptr);
+    default: return 0; /* Just integer encoding for now. */
+    }
 }
 
 void *dupClientReplyValue(void *o) {
@@ -183,12 +195,13 @@ void _addReplyObjectToList(redisClient *c, robj *o) {
     if (listLength(c->reply) == 0) {
         incrRefCount(o);
         listAddNodeTail(c->reply,o);
-        c->reply_bytes += zmalloc_size_sds(o->ptr);
+        c->reply_bytes += getStringObjectSdsUsedMemory(o);
     } else {
         tail = listNodeValue(listLast(c->reply));
 
         /* Append to this object when possible. */
         if (tail->ptr != NULL &&
+            tail->encoding == REDIS_ENCODING_RAW &&
             sdslen(tail->ptr)+sdslen(o->ptr) <= REDIS_REPLY_CHUNK_BYTES)
         {
             c->reply_bytes -= zmalloc_size_sds(tail->ptr);
@@ -198,7 +211,7 @@ void _addReplyObjectToList(redisClient *c, robj *o) {
         } else {
             incrRefCount(o);
             listAddNodeTail(c->reply,o);
-            c->reply_bytes += zmalloc_size_sds(o->ptr);
+            c->reply_bytes += getStringObjectSdsUsedMemory(o);
         }
     }
     asyncCloseClientOnOutputBufferLimitReached(c);
@@ -221,7 +234,7 @@ void _addReplySdsToList(redisClient *c, sds s) {
         tail = listNodeValue(listLast(c->reply));
 
         /* Append to this object when possible. */
-        if (tail->ptr != NULL &&
+        if (tail->ptr != NULL && tail->encoding == REDIS_ENCODING_RAW &&
             sdslen(tail->ptr)+sdslen(s) <= REDIS_REPLY_CHUNK_BYTES)
         {
             c->reply_bytes -= zmalloc_size_sds(tail->ptr);
@@ -246,12 +259,12 @@ void _addReplyStringToList(redisClient *c, char *s, size_t len) {
         robj *o = createStringObject(s,len);
 
         listAddNodeTail(c->reply,o);
-        c->reply_bytes += zmalloc_size_sds(o->ptr);
+        c->reply_bytes += getStringObjectSdsUsedMemory(o);
     } else {
         tail = listNodeValue(listLast(c->reply));
 
         /* Append to this object when possible. */
-        if (tail->ptr != NULL &&
+        if (tail->ptr != NULL && tail->encoding == REDIS_ENCODING_RAW &&
             sdslen(tail->ptr)+len <= REDIS_REPLY_CHUNK_BYTES)
         {
             c->reply_bytes -= zmalloc_size_sds(tail->ptr);
@@ -262,7 +275,7 @@ void _addReplyStringToList(redisClient *c, char *s, size_t len) {
             robj *o = createStringObject(s,len);
 
             listAddNodeTail(c->reply,o);
-            c->reply_bytes += zmalloc_size_sds(o->ptr);
+            c->reply_bytes += getStringObjectSdsUsedMemory(o);
         }
     }
     asyncCloseClientOnOutputBufferLimitReached(c);
@@ -283,7 +296,7 @@ void addReply(redisClient *c, robj *obj) {
      * If the encoding is RAW and there is room in the static buffer
      * we'll be able to send the object to the client without
      * messing with its page. */
-    if (obj->encoding == REDIS_ENCODING_RAW) {
+    if (sdsEncodedObject(obj)) {
         if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != REDIS_OK)
             _addReplyObjectToList(c,obj);
     } else if (obj->encoding == REDIS_ENCODING_INT) {
@@ -395,6 +408,7 @@ void setDeferredMultiBulkLength(redisClient *c, void *node, long length) {
 
     len = listNodeValue(ln);
     len->ptr = sdscatprintf(sdsempty(),"*%ld\r\n",length);
+    len->encoding = REDIS_ENCODING_RAW; /* in case it was an EMBSTR. */
     c->reply_bytes += zmalloc_size_sds(len->ptr);
     if (ln->next != NULL) {
         next = listNodeValue(ln->next);
@@ -402,7 +416,7 @@ void setDeferredMultiBulkLength(redisClient *c, void *node, long length) {
         /* Only glue when the next node is non-NULL (an sds in this case) */
         if (next->ptr != NULL) {
             c->reply_bytes -= zmalloc_size_sds(len->ptr);
-            c->reply_bytes -= zmalloc_size_sds(next->ptr);
+            c->reply_bytes -= getStringObjectSdsUsedMemory(next);
             len->ptr = sdscatlen(len->ptr,next->ptr,sdslen(next->ptr));
             c->reply_bytes += zmalloc_size_sds(len->ptr);
             listDelNode(c->reply,ln->next);
@@ -415,9 +429,15 @@ void setDeferredMultiBulkLength(redisClient *c, void *node, long length) {
 void addReplyDouble(redisClient *c, double d) {
     char dbuf[128], sbuf[128];
     int dlen, slen;
-    dlen = snprintf(dbuf,sizeof(dbuf),"%.17g",d);
-    slen = snprintf(sbuf,sizeof(sbuf),"$%d\r\n%s\r\n",dlen,dbuf);
-    addReplyString(c,sbuf,slen);
+    if (isinf(d)) {
+        /* Libc in odd systems (Hi Solaris!) will format infinite in a
+         * different way, so better to handle it in an explicit way. */
+        addReplyBulkCString(c, d > 0 ? "inf" : "-inf");
+    } else {
+        dlen = snprintf(dbuf,sizeof(dbuf),"%.17g",d);
+        slen = snprintf(sbuf,sizeof(sbuf),"$%d\r\n%s\r\n",dlen,dbuf);
+        addReplyString(c,sbuf,slen);
+    }
 }
 
 /* Add a long long as integer reply or bulk len / multi bulk count.
@@ -454,14 +474,17 @@ void addReplyLongLong(redisClient *c, long long ll) {
 }
 
 void addReplyMultiBulkLen(redisClient *c, long length) {
-    addReplyLongLongWithPrefix(c,length,'*');
+    if (length < REDIS_SHARED_BULKHDR_LEN)
+        addReply(c,shared.mbulkhdr[length]);
+    else
+        addReplyLongLongWithPrefix(c,length,'*');
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
 void addReplyBulkLen(redisClient *c, robj *obj) {
     size_t len;
 
-    if (obj->encoding == REDIS_ENCODING_RAW) {
+    if (sdsEncodedObject(obj)) {
         len = sdslen(obj->ptr);
     } else {
         long n = (long)obj->ptr;
@@ -476,7 +499,11 @@ void addReplyBulkLen(redisClient *c, robj *obj) {
             len++;
         }
     }
-    addReplyLongLongWithPrefix(c,len,'$');
+
+    if (len < REDIS_SHARED_BULKHDR_LEN)
+        addReply(c,shared.bulkhdr[len]);
+    else
+        addReplyLongLongWithPrefix(c,len,'$');
 }
 
 /* Add a Redis Object as a bulk reply */
@@ -681,8 +708,10 @@ void freeClient(redisClient *c) {
     /* Master/slave cleanup.
      * Case 1: we lost the connection with a slave. */
     if (c->flags & REDIS_SLAVE) {
-        if (c->replstate == REDIS_REPL_SEND_BULK && c->repldbfd != -1)
-            close(c->repldbfd);
+        if (c->replstate == REDIS_REPL_SEND_BULK) {
+            if (c->repldbfd != -1) close(c->repldbfd);
+            if (c->replpreamble) sdsfree(c->replpreamble);
+        }
         list *l = (c->flags & REDIS_MONITOR) ? server.monitors : server.slaves;
         ln = listSearchKey(l,c);
         redisAssert(ln != NULL);
@@ -758,10 +787,11 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
         } else {
             o = listNodeValue(listFirst(c->reply));
             objlen = sdslen(o->ptr);
-            objmem = zmalloc_size_sds(o->ptr);
+            objmem = getStringObjectSdsUsedMemory(o);
 
             if (objlen == 0) {
                 listDelNode(c->reply,listFirst(c->reply));
+                c->reply_bytes -= objmem;
                 continue;
             }
 
@@ -826,7 +856,7 @@ void resetClient(redisClient *c) {
 int processInlineBuffer(redisClient *c) {
     char *newline = strstr(c->querybuf,"\r\n");
     int argc, j;
-    sds *argv;
+    sds *argv, aux;
     size_t querylen;
 
     /* Nothing to do without a \r\n */
@@ -840,10 +870,12 @@ int processInlineBuffer(redisClient *c) {
 
     /* Split the input buffer up to the \r\n */
     querylen = newline-(c->querybuf);
-    argv = sdssplitlen(c->querybuf,querylen," ",1,&argc);
+    aux = sdsnewlen(c->querybuf,querylen);
+    argv = sdssplitargs(aux,&argc);
+    sdsfree(aux);
 
     /* Leave data after the first line of the query in the buffer */
-    c->querybuf = sdsrange(c->querybuf,querylen+2,-1);
+    sdsrange(c->querybuf,querylen+2,-1);
 
     /* Setup argv array on client structure */
     if (c->argv) zfree(c->argv);
@@ -872,7 +904,7 @@ static void setProtocolError(redisClient *c, int pos) {
         sdsfree(client);
     }
     c->flags |= REDIS_CLOSE_AFTER_REPLY;
-    c->querybuf = sdsrange(c->querybuf,pos,-1);
+    sdsrange(c->querybuf,pos,-1);
 }
 
 int processMultibulkBuffer(redisClient *c) {
@@ -910,7 +942,7 @@ int processMultibulkBuffer(redisClient *c) {
 
         pos = (newline-c->querybuf)+2;
         if (ll <= 0) {
-            c->querybuf = sdsrange(c->querybuf,pos,-1);
+            sdsrange(c->querybuf,pos,-1);
             return REDIS_OK;
         }
 
@@ -955,15 +987,19 @@ int processMultibulkBuffer(redisClient *c) {
 
             pos += newline-(c->querybuf+pos)+2;
             if (ll >= REDIS_MBULK_BIG_ARG) {
+                size_t qblen;
+
                 /* If we are going to read a large object from network
                  * try to make it likely that it will start at c->querybuf
-                 * boundary so that we can optimized object creation
+                 * boundary so that we can optimize object creation
                  * avoiding a large copy of data. */
-                c->querybuf = sdsrange(c->querybuf,pos,-1);
+                sdsrange(c->querybuf,pos,-1);
                 pos = 0;
+                qblen = sdslen(c->querybuf);
                 /* Hint the sds library about the amount of bytes this string is
                  * going to contain. */
-                c->querybuf = sdsMakeRoomFor(c->querybuf,ll+2);
+                if (qblen < ll+2)
+                    c->querybuf = sdsMakeRoomFor(c->querybuf,ll+2-qblen);
             }
             c->bulklen = ll;
         }
@@ -998,7 +1034,7 @@ int processMultibulkBuffer(redisClient *c) {
     }
 
     /* Trim to pos */
-    if (pos) c->querybuf = sdsrange(c->querybuf,pos,-1);
+    if (pos) sdsrange(c->querybuf,pos,-1);
 
     /* We're done when c->multibulk == 0 */
     if (c->multibulklen == 0) return REDIS_OK;

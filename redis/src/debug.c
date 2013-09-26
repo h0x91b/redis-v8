@@ -296,6 +296,29 @@ void debugCommand(redisClient *c) {
             (void*)val, val->refcount,
             strenc, (long long) rdbSavedObjectLen(val),
             val->lru, estimateObjectIdleTime(val));
+    } else if (!strcasecmp(c->argv[1]->ptr,"sdslen") && c->argc == 3) {
+        dictEntry *de;
+        robj *val;
+        sds key;
+
+        if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
+            addReply(c,shared.nokeyerr);
+            return;
+        }
+        val = dictGetVal(de);
+        key = dictGetKey(de);
+
+        if (val->type != REDIS_STRING || !sdsEncodedObject(val)) {
+            addReplyError(c,"Not an sds encoded string.");
+        } else {
+            addReplyStatusFormat(c,
+                "key_sds_len:%lld, key_sds_avail:%lld, "
+                "val_sds_len:%lld, val_sds_avail:%lld",
+                (long long) sdslen(key),
+                (long long) sdsavail(key),
+                (long long) sdslen(val->ptr),
+                (long long) sdsavail(val->ptr));
+        }
     } else if (!strcasecmp(c->argv[1]->ptr,"populate") && c->argc == 3) {
         long keys, j;
         robj *key, *val;
@@ -373,9 +396,7 @@ void _redisAssertPrintClientInfo(redisClient *c) {
         char buf[128];
         char *arg;
 
-        if (c->argv[j]->type == REDIS_STRING &&
-            c->argv[j]->encoding == REDIS_ENCODING_RAW)
-        {
+        if (c->argv[j]->type == REDIS_STRING && sdsEncodedObject(c->argv[j])) {
             arg = (char*) c->argv[j]->ptr;
         } else {
             snprintf(buf,sizeof(buf),"Object type: %d, encoding: %d",
@@ -391,7 +412,7 @@ void redisLogObjectDebugInfo(robj *o) {
     redisLog(REDIS_WARNING,"Object type: %d", o->type);
     redisLog(REDIS_WARNING,"Object encoding: %d", o->encoding);
     redisLog(REDIS_WARNING,"Object refcount: %d", o->refcount);
-    if (o->type == REDIS_STRING && o->encoding == REDIS_ENCODING_RAW) {
+    if (o->type == REDIS_STRING && sdsEncodedObject(o)) {
         redisLog(REDIS_WARNING,"Object raw string len: %zu", sdslen(o->ptr));
         if (sdslen(o->ptr) < 4096) {
             sds repr = sdscatrepr(sdsempty(),o->ptr,sdslen(o->ptr));

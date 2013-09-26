@@ -74,8 +74,6 @@
 #define REDIS_MAXIDLETIME       0       /* default client timeout: infinite */
 #define REDIS_DEFAULT_DBNUM     16
 #define REDIS_CONFIGLINE_MAX    1024
-#define REDIS_EXPIRELOOKUPS_PER_CRON    10 /* lookup 10 expires per loop */
-#define REDIS_EXPIRELOOKUPS_TIME_PERC   25 /* CPU max % for keys collection */
 #define REDIS_DBCRON_DBS_PER_CALL 16
 #define REDIS_MAX_WRITE_PER_EVENT (1024*64)
 #define REDIS_SHARED_SELECT_CMDS 10
@@ -123,6 +121,12 @@
 #define REDIS_IP_STR_LEN INET6_ADDRSTRLEN
 #define REDIS_PEER_ID_LEN (REDIS_IP_STR_LEN+32) /* Must be enough for ip:port */
 #define REDIS_BINDADDR_MAX 16
+
+#define ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP 20 /* Loopkups per loop. */
+#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000 /* Microseconds */
+#define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25 /* CPU max % for keys collection */
+#define ACTIVE_EXPIRE_CYCLE_SLOW 0
+#define ACTIVE_EXPIRE_CYCLE_FAST 1
 
 /* Protocol and I/O related defines */
 #define REDIS_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
@@ -174,6 +178,7 @@
 #define REDIS_ENCODING_ZIPLIST 5 /* Encoded as ziplist */
 #define REDIS_ENCODING_INTSET 6  /* Encoded as intset */
 #define REDIS_ENCODING_SKIPLIST 7  /* Encoded as skiplist */
+#define REDIS_ENCODING_EMBSTR 8  /* Embedded sds string encoding */
 
 /* Defines related to the dump file format. To store 32 bits lengths for short
  * keys requires a lot of space, so we check the most significant 2 bits of
@@ -395,6 +400,7 @@ typedef struct redisDb {
     dict *ready_keys;           /* Blocked keys that received a PUSH */
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
     int id;
+    long long avg_ttl;          /* Average TTL, just for stats */
 } redisDb;
 
 /* Client MULTI/EXEC state */
@@ -464,6 +470,7 @@ typedef struct redisClient {
     int repldbfd;           /* replication DB file descriptor */
     long repldboff;         /* replication DB file offset */
     off_t repldbsize;       /* replication DB file size */
+    sds replpreamble;       /* replication DB preamble. */
     long long reploff;      /* replication offset if this is our master */
     long long repl_ack_off; /* replication ack offset, if this is a slave */
     long long repl_ack_time;/* replication ack time, if this is a slave */
@@ -607,6 +614,7 @@ struct clusterNodeFailReport {
 } typedef clusterNodeFailReport;
 
 struct clusterNode {
+    time_t ctime;   /* Node object creation time. */
     char name[REDIS_CLUSTER_NAMELEN]; /* Node name, hex string, sha1-size */
     int flags;      /* REDIS_NODE_... */
     unsigned char slots[REDIS_CLUSTER_SLOTS/8]; /* slots handled by this node */
@@ -696,6 +704,9 @@ typedef struct {
     uint32_t totlen;    /* Total length of this message */
     uint16_t type;      /* Message type */
     uint16_t count;     /* Only used for some kind of messages. */
+    uint64_t time;      /* Time at which this request was sent (in milliseconds),
+                           this field is copied in reply messages so that the
+                           original sender knows how old the reply is. */
     char sender[REDIS_CLUSTER_NAMELEN]; /* Name of the sender node */
     unsigned char myslots[REDIS_CLUSTER_SLOTS/8];
     char slaveof[REDIS_CLUSTER_NAMELEN];
@@ -753,6 +764,7 @@ struct redisServer {
     off_t loading_total_bytes;
     off_t loading_loaded_bytes;
     time_t loading_start_time;
+    off_t loading_process_events_interval_bytes;
     /* Fast pointers to often looked up command */
     struct redisCommand *delCommand, *multiCommand, *lpushCommand, *lpopCommand,
                         *rpopCommand;
@@ -900,7 +912,8 @@ struct redisServer {
     size_t set_max_intset_entries;
     size_t zset_max_ziplist_entries;
     size_t zset_max_ziplist_value;
-    time_t unixtime;        /* Unix time sampled every second. */
+    time_t unixtime;        /* Unix time sampled every cron cycle. */
+    long long mstime;       /* Like 'unixtime' but with milliseconds resolution. */
     /* Pubsub */
     dict *pubsub_channels;  /* Map channels to list of subscribed clients */
     list *pubsub_patterns;  /* A list of pubsub_patterns */
@@ -1087,6 +1100,7 @@ int getClientLimitClassByName(char *name);
 char *getClientLimitClassName(int class);
 void flushSlavesOutputBuffers(void);
 void disconnectSlaves(void);
+int listenToPort(int port, int *fds, int *count);
 
 #ifdef __GNUC__
 void addReplyErrorFormat(redisClient *c, const char *fmt, ...)
@@ -1137,6 +1151,8 @@ void freeZsetObject(robj *o);
 void freeHashObject(robj *o);
 robj *createObject(int type, void *ptr);
 robj *createStringObject(char *ptr, size_t len);
+robj *createRawStringObject(char *ptr, size_t len);
+robj *createEmbeddedStringObject(char *ptr, size_t len);
 robj *dupStringObject(robj *o);
 int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
 robj *tryObjectEncoding(robj *o);
@@ -1163,6 +1179,7 @@ int compareStringObjects(robj *a, robj *b);
 int collateStringObjects(robj *a, robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long estimateObjectIdleTime(robj *o);
+#define sdsEncodedObject(objptr) (objptr->encoding == REDIS_ENCODING_RAW || objptr->encoding == REDIS_ENCODING_EMBSTR)
 
 /* Synchronous I/O with timeout */
 ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout);

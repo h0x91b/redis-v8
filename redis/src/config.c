@@ -558,8 +558,8 @@ void loadServerConfig(char *filename, char *options) {
 void configSetCommand(redisClient *c) {
     robj *o;
     long long ll;
-    redisAssertWithInfo(c,c->argv[2],c->argv[2]->encoding == REDIS_ENCODING_RAW);
-    redisAssertWithInfo(c,c->argv[2],c->argv[3]->encoding == REDIS_ENCODING_RAW);
+    redisAssertWithInfo(c,c->argv[2],sdsEncodedObject(c->argv[2]));
+    redisAssertWithInfo(c,c->argv[3],sdsEncodedObject(c->argv[3]));
     o = c->argv[3];
 
     if (!strcasecmp(c->argv[2]->ptr,"dbfilename")) {
@@ -934,7 +934,7 @@ void configGetCommand(redisClient *c) {
     char *pattern = o->ptr;
     char buf[128];
     int matches = 0;
-    redisAssertWithInfo(c,o,o->encoding == REDIS_ENCODING_RAW);
+    redisAssertWithInfo(c,o,sdsEncodedObject(o));
 
     /* String values */
     config_get_string_field("dbfilename",server.rdb_filename);
@@ -1126,6 +1126,14 @@ void configGetCommand(redisClient *c) {
         decrRefCount(flagsobj);
         matches++;
     }
+    if (stringmatch(pattern,"bind",0)) {
+        sds aux = sdsjoin(server.bindaddr,server.bindaddr_count," ");
+
+        addReplyBulkCString(c,"bind");
+        addReplyBulkCString(c,aux);
+        sdsfree(aux);
+        matches++;
+    }
     
     if (stringmatch(pattern,"js-dir",0)) {
         char *js_dir = config_get_js_dir();
@@ -1160,14 +1168,6 @@ void configGetCommand(redisClient *c) {
         matches++;
     }
     
-    if (stringmatch(pattern,"bind",0)) {
-        sds aux = sdsjoin(server.bindaddr,server.bindaddr_count," ");
-
-        addReplyBulkCString(c,"bind");
-        addReplyBulkCString(c,aux);
-        sdsfree(aux);
-        matches++;
-    }
     setDeferredMultiBulkLength(c,replylen,matches*2);
 }
 

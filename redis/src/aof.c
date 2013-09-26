@@ -591,7 +591,7 @@ int rioWriteBulkObject(rio *r, robj *obj) {
      * in a child process when this function is called). */
     if (obj->encoding == REDIS_ENCODING_INT) {
         return rioWriteBulkLongLong(r,(long)obj->ptr);
-    } else if (obj->encoding == REDIS_ENCODING_RAW) {
+    } else if (sdsEncodedObject(obj)) {
         return rioWriteBulkString(r,obj->ptr,sdslen(obj->ptr));
     } else {
         redisPanic("Unknown string encoding");
@@ -970,7 +970,7 @@ int rewriteAppendOnlyFileBackground(void) {
 
             if (private_dirty) {
                 redisLog(REDIS_NOTICE,
-                    "AOF rewrite: %lu MB of memory used by copy-on-write",
+                    "AOF rewrite: %zu MB of memory used by copy-on-write",
                     private_dirty/(1024*1024));
             }
             exitFromChild(0);

@@ -56,7 +56,7 @@ static inline size_t sdsavail(const sds s) {
 
 sds sdsnewlen(const void *init, size_t initlen);
 sds sdsnew(const char *init);
-sds sdsempty();
+sds sdsempty(void);
 size_t sdslen(const sds s);
 sds sdsdup(const sds s);
 void sdsfree(sds s);
@@ -77,7 +77,7 @@ sds sdscatprintf(sds s, const char *fmt, ...);
 #endif
 
 sds sdstrim(sds s, const char *cset);
-sds sdsrange(sds s, int start, int end);
+void sdsrange(sds s, int start, int end);
 void sdsupdatelen(sds s);
 void sdsclear(sds s);
 int sdscmp(const sds s1, const sds s2);
