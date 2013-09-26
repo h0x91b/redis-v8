@@ -15,7 +15,7 @@
 CC=gcc
 CC=clang
 
-V8_LIBS_LOCATION=../deps/v8/out/native/libv8_{base.x64,snapshot}.a
+V8_LIBS_LOCATION=../deps/v8/out/native/libv8_{base.x64,snapshot}.a ../deps/v8/out/native/lib{icudata,icui18n,icuuc}.a
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
@@ -34,7 +34,6 @@ INSTALL=install
 # Default allocator
 ifeq ($(uname_S),Linux)
 	MALLOC=jemalloc
-	V8_LIBS_LOCATION=../deps/v8/out/native/obj.target/tools/gyp/libv8_{base.x64,snapshot}.a
 else
 	MALLOC=libc
 endif
