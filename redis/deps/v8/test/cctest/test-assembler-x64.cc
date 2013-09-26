@@ -90,14 +90,13 @@ static const v8::internal::Register arg2 = rsi;
 
 
 TEST(AssemblerX64ReturnOperation) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that copies argument 2 and returns it.
   __ movq(rax, arg2);
@@ -113,14 +112,13 @@ TEST(AssemblerX64ReturnOperation) {
 
 
 TEST(AssemblerX64StackOperations) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that copies argument 2 and returns it.
   // We compile without stack frame pointers, so the gdb debugger shows
@@ -146,14 +144,13 @@ TEST(AssemblerX64StackOperations) {
 
 
 TEST(AssemblerX64ArithmeticOperations) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that adds arguments returning the sum.
   __ movq(rax, arg2);
@@ -169,14 +166,13 @@ TEST(AssemblerX64ArithmeticOperations) {
 
 
 TEST(AssemblerX64ImulOperation) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that multiplies arguments returning the high
   // word.
@@ -198,14 +194,13 @@ TEST(AssemblerX64ImulOperation) {
 
 
 TEST(AssemblerX64MemoryOperands) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that copies argument 2 and returns it.
   __ push(rbp);
@@ -233,14 +228,13 @@ TEST(AssemblerX64MemoryOperands) {
 
 
 TEST(AssemblerX64ControlFlow) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
 
   // Assemble a simple function that copies argument 1 and returns it.
   __ push(rbp);
@@ -263,14 +257,13 @@ TEST(AssemblerX64ControlFlow) {
 
 
 TEST(AssemblerX64LoopImmediates) {
-  OS::SetUp();
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
                                                  &actual_size,
                                                  true));
   CHECK(buffer);
-  Assembler assm(Isolate::Current(), buffer, static_cast<int>(actual_size));
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
   // Assemble two loops using rax as counter, and verify the ending counts.
   Label Fail;
   __ movq(rax, Immediate(-3));
@@ -360,7 +353,7 @@ TEST(AssemblerX64LabelChaining) {
   // Test chaining of label usages within instructions (issue 1644).
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
-  Assembler assm(Isolate::Current(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), NULL, 0);
 
   Label target;
   __ j(equal, &target);
@@ -374,7 +367,7 @@ TEST(AssemblerMultiByteNop) {
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   v8::internal::byte buffer[1024];
-  Isolate* isolate = Isolate::Current();
+  Isolate* isolate = CcTest::i_isolate();
   Assembler assm(isolate, buffer, sizeof(buffer));
   __ push(rbx);
   __ push(rcx);
@@ -440,7 +433,6 @@ TEST(AssemblerMultiByteNop) {
 #define ELEMENT_COUNT 4
 
 void DoSSE2(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   v8::internal::byte buffer[1024];
 
@@ -448,7 +440,7 @@ void DoSSE2(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Local<v8::Array> vec = v8::Local<v8::Array>::Cast(args[0]);
   CHECK_EQ(ELEMENT_COUNT, vec->Length());
 
-  Isolate* isolate = Isolate::Current();
+  Isolate* isolate = CcTest::i_isolate();
   Assembler assm(isolate, buffer, sizeof(buffer));
 
   // Remove return address from the stack for fix stack frame alignment.
@@ -490,9 +482,10 @@ void DoSSE2(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 
 TEST(StackAlignmentForSSE2) {
+  CcTest::InitializeVM();
   CHECK_EQ(0, OS::ActivationFrameAlignment() % 16);
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Isolate* isolate = CcTest::isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Handle<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
   global_template->Set(v8_str("do_sse2"), v8::FunctionTemplate::New(DoSSE2));

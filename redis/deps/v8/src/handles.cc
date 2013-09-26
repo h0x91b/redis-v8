@@ -285,35 +285,6 @@ Handle<Object> LookupSingleCharacterStringFromCode(Isolate* isolate,
 }
 
 
-Handle<String> SubString(Handle<String> str,
-                         int start,
-                         int end,
-                         PretenureFlag pretenure) {
-  CALL_HEAP_FUNCTION(str->GetIsolate(),
-                     str->SubString(start, end, pretenure), String);
-}
-
-
-Handle<JSObject> Copy(Handle<JSObject> obj) {
-  Isolate* isolate = obj->GetIsolate();
-  CALL_HEAP_FUNCTION(isolate,
-                     isolate->heap()->CopyJSObject(*obj), JSObject);
-}
-
-
-Handle<JSObject> DeepCopy(Handle<JSObject> obj) {
-  Isolate* isolate = obj->GetIsolate();
-  CALL_HEAP_FUNCTION(isolate,
-                     obj->DeepCopy(isolate),
-                     JSObject);
-}
-
-
-Handle<Object> SetAccessor(Handle<JSObject> obj, Handle<AccessorInfo> info) {
-  CALL_HEAP_FUNCTION(obj->GetIsolate(), obj->DefineAccessor(*info), Object);
-}
-
-
 // Wrappers for scripts are kept alive and cached in weak global
 // handles referred from foreign objects held by the scripts as long as
 // they are used. When they are not used anymore, the garbage
@@ -532,8 +503,9 @@ v8::Handle<v8::Array> GetKeysForNamedInterceptor(Handle<JSReceiver> receiver,
       args(isolate, interceptor->data(), *receiver, *object);
   v8::Handle<v8::Array> result;
   if (!interceptor->enumerator()->IsUndefined()) {
-    v8::NamedPropertyEnumerator enum_fun =
-        v8::ToCData<v8::NamedPropertyEnumerator>(interceptor->enumerator());
+    v8::NamedPropertyEnumeratorCallback enum_fun =
+        v8::ToCData<v8::NamedPropertyEnumeratorCallback>(
+            interceptor->enumerator());
     LOG(isolate, ApiObjectAccess("interceptor-named-enum", *object));
     result = args.Call(enum_fun);
   }
@@ -554,8 +526,9 @@ v8::Handle<v8::Array> GetKeysForIndexedInterceptor(Handle<JSReceiver> receiver,
       args(isolate, interceptor->data(), *receiver, *object);
   v8::Handle<v8::Array> result;
   if (!interceptor->enumerator()->IsUndefined()) {
-    v8::IndexedPropertyEnumerator enum_fun =
-        v8::ToCData<v8::IndexedPropertyEnumerator>(interceptor->enumerator());
+    v8::IndexedPropertyEnumeratorCallback enum_fun =
+        v8::ToCData<v8::IndexedPropertyEnumeratorCallback>(
+            interceptor->enumerator());
     LOG(isolate, ApiObjectAccess("interceptor-indexed-enum", *object));
     result = args.Call(enum_fun);
 #if ENABLE_EXTRA_CHECKS
@@ -618,8 +591,12 @@ Handle<FixedArray> GetKeysInFixedArrayFor(Handle<JSReceiver> object,
     if (p->IsJSProxy()) {
       Handle<JSProxy> proxy(JSProxy::cast(*p), isolate);
       Handle<Object> args[] = { proxy };
-      Handle<Object> names = Execution::Call(
-          isolate->proxy_enumerate(), object, ARRAY_SIZE(args), args, threw);
+      Handle<Object> names = Execution::Call(isolate,
+                                             isolate->proxy_enumerate(),
+                                             object,
+                                             ARRAY_SIZE(args),
+                                             args,
+                                             threw);
       if (*threw) return content;
       content = AddKeysFromJSArray(content, Handle<JSArray>::cast(names));
       break;

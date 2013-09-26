@@ -404,14 +404,59 @@ TEST(HeapSnapshotSlicedString) {
   const v8::HeapGraphNode* child_string =
       GetProperty(global, v8::HeapGraphEdge::kProperty, "child_string");
   CHECK_NE(NULL, child_string);
+  CHECK_EQ(v8::HeapGraphNode::kSlicedString, child_string->GetType());
   const v8::HeapGraphNode* parent =
       GetProperty(child_string, v8::HeapGraphEdge::kInternal, "parent");
   CHECK_EQ(parent_string, parent);
+  heap_profiler->DeleteAllHeapSnapshots();
 }
 
 
+TEST(HeapSnapshotConsString) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
+  global_template->SetInternalFieldCount(1);
+  LocalContext env(NULL, global_template);
+  v8::Handle<v8::Object> global_proxy = env->Global();
+  v8::Handle<v8::Object> global = global_proxy->GetPrototype().As<v8::Object>();
+  CHECK_EQ(1, global->InternalFieldCount());
+
+  i::Factory* factory = CcTest::i_isolate()->factory();
+  i::Handle<i::String> first =
+      factory->NewStringFromAscii(i::CStrVector("0123456789"));
+  i::Handle<i::String> second =
+      factory->NewStringFromAscii(i::CStrVector("0123456789"));
+  i::Handle<i::String> cons_string = factory->NewConsString(first, second);
+
+  global->SetInternalField(0, v8::ToApiHandle<v8::String>(cons_string));
+
+  v8::HeapProfiler* heap_profiler = isolate->GetHeapProfiler();
+  const v8::HeapSnapshot* snapshot =
+      heap_profiler->TakeHeapSnapshot(v8_str("cons_strings"));
+  CHECK(ValidateSnapshot(snapshot));
+  const v8::HeapGraphNode* global_node = GetGlobalObject(snapshot);
+
+  const v8::HeapGraphNode* string_node =
+      GetProperty(global_node, v8::HeapGraphEdge::kInternal, "0");
+  CHECK_NE(NULL, string_node);
+  CHECK_EQ(v8::HeapGraphNode::kConsString, string_node->GetType());
+
+  const v8::HeapGraphNode* first_node =
+      GetProperty(string_node, v8::HeapGraphEdge::kInternal, "first");
+  CHECK_EQ(v8::HeapGraphNode::kString, first_node->GetType());
+
+  const v8::HeapGraphNode* second_node =
+      GetProperty(string_node, v8::HeapGraphEdge::kInternal, "second");
+  CHECK_EQ(v8::HeapGraphNode::kString, second_node->GetType());
+
+  heap_profiler->DeleteAllHeapSnapshots();
+}
+
+
+
 TEST(HeapSnapshotInternalReferences) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Isolate* isolate = CcTest::isolate();
   v8::HandleScope scope(isolate);
   v8::Local<v8::ObjectTemplate> global_template = v8::ObjectTemplate::New();
   global_template->SetInternalFieldCount(2);
@@ -460,7 +505,7 @@ TEST(HeapSnapshotAddressReuse) {
   CompileRun(
       "for (var i = 0; i < 10000; ++i)\n"
       "  a[i] = new A();\n");
-  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+  CcTest::heap()->CollectAllGarbage(i::Heap::kNoGCFlags);
 
   const v8::HeapSnapshot* snapshot2 =
       heap_profiler->TakeHeapSnapshot(v8_str("snapshot2"));
@@ -504,7 +549,7 @@ TEST(HeapEntryIdsAndArrayShift) {
       "for (var i = 0; i < 1; ++i)\n"
       "  a.shift();\n");
 
-  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+  CcTest::heap()->CollectAllGarbage(i::Heap::kNoGCFlags);
 
   const v8::HeapSnapshot* snapshot2 =
       heap_profiler->TakeHeapSnapshot(v8_str("s2"));
@@ -549,7 +594,7 @@ TEST(HeapEntryIdsAndGC) {
       heap_profiler->TakeHeapSnapshot(s1_str);
   CHECK(ValidateSnapshot(snapshot1));
 
-  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+  CcTest::heap()->CollectAllGarbage(i::Heap::kNoGCFlags);
 
   const v8::HeapSnapshot* snapshot2 =
       heap_profiler->TakeHeapSnapshot(s2_str);
@@ -856,7 +901,7 @@ TEST(HeapSnapshotObjectsStats) {
   // We have to call GC 6 times. In other case the garbage will be
   // the reason of flakiness.
   for (int i = 0; i < 6; ++i) {
-    HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+    CcTest::heap()->CollectAllGarbage(i::Heap::kNoGCFlags);
   }
 
   v8::SnapshotObjectId initial_id;
@@ -1201,11 +1246,11 @@ TEST(HeapSnapshotRetainedObjectInfo) {
   heap_profiler->SetWrapperClassInfoProvider(
       2, TestRetainedObjectInfo::WrapperInfoCallback);
   v8::Persistent<v8::String> p_AAA(isolate, v8_str("AAA"));
-  p_AAA.SetWrapperClassId(isolate, 1);
+  p_AAA.SetWrapperClassId(1);
   v8::Persistent<v8::String> p_BBB(isolate, v8_str("BBB"));
-  p_BBB.SetWrapperClassId(isolate, 1);
+  p_BBB.SetWrapperClassId(1);
   v8::Persistent<v8::String> p_CCC(isolate, v8_str("CCC"));
-  p_CCC.SetWrapperClassId(isolate, 2);
+  p_CCC.SetWrapperClassId(2);
   CHECK_EQ(0, TestRetainedObjectInfo::instances.length());
   const v8::HeapSnapshot* snapshot =
       heap_profiler->TakeHeapSnapshot(v8_str("retained"));
@@ -1437,7 +1482,7 @@ TEST(NoHandleLeaks) {
   CompileRun("document = { URL:\"abcdefgh\" };");
 
   v8::Handle<v8::String> name(v8_str("leakz"));
-  i::Isolate* isolate = i::Isolate::Current();
+  i::Isolate* isolate = CcTest::i_isolate();
   int count_before = i::HandleScope::NumberOfHandles(isolate);
   heap_profiler->TakeHeapSnapshot(name);
   int count_after = i::HandleScope::NumberOfHandles(isolate);
@@ -1693,7 +1738,7 @@ bool HasWeakEdge(const v8::HeapGraphNode* node) {
 
 
 bool HasWeakGlobalHandle() {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Isolate* isolate = CcTest::isolate();
   v8::HeapProfiler* heap_profiler = isolate->GetHeapProfiler();
   const v8::HeapSnapshot* snapshot =
       heap_profiler->TakeHeapSnapshot(v8_str("weaks"));
@@ -1711,7 +1756,7 @@ bool HasWeakGlobalHandle() {
 static void PersistentHandleCallback(v8::Isolate* isolate,
                                      v8::Persistent<v8::Value>* handle,
                                      void*) {
-  handle->Dispose(isolate);
+  handle->Dispose();
 }
 
 
@@ -1755,7 +1800,7 @@ TEST(NoDebugObjectInSnapshot) {
   v8::HandleScope scope(env->GetIsolate());
   v8::HeapProfiler* heap_profiler = env->GetIsolate()->GetHeapProfiler();
 
-  v8::internal::Isolate::Current()->debug()->Load();
+  CcTest::i_isolate()->debug()->Load();
   CompileRun("foo = {};");
   const v8::HeapSnapshot* snapshot =
       heap_profiler->TakeHeapSnapshot(v8_str("snapshot"));

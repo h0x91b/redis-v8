@@ -60,11 +60,11 @@ class CompilationInfo {
   CompilationInfo(Handle<JSFunction> closure, Zone* zone);
   virtual ~CompilationInfo();
 
-  Isolate* isolate() {
-    ASSERT(Isolate::Current() == isolate_);
+  Isolate* isolate() const {
     return isolate_;
   }
   Zone* zone() { return zone_; }
+  bool is_osr() const { return !osr_ast_id_.IsNone(); }
   bool is_lazy() const { return IsLazy::decode(flags_); }
   bool is_eval() const { return IsEval::decode(flags_); }
   bool is_global() const { return IsGlobal::decode(flags_); }
@@ -86,6 +86,7 @@ class CompilationInfo {
   ScriptDataImpl* pre_parse_data() const { return pre_parse_data_; }
   Handle<Context> context() const { return context_; }
   BailoutId osr_ast_id() const { return osr_ast_id_; }
+  uint32_t osr_pc_offset() const { return osr_pc_offset_; }
   int opt_count() const { return opt_count_; }
   int num_parameters() const;
   int num_heap_slots() const;
@@ -235,9 +236,10 @@ class CompilationInfo {
   // Determines whether or not to insert a self-optimization header.
   bool ShouldSelfOptimize();
 
-  // Disable all optimization attempts of this info for the rest of the
-  // current compilation pipeline.
-  void AbortOptimization();
+  // Reset code to the unoptimized version when optimization is aborted.
+  void AbortOptimization() {
+    SetCode(handle(shared_info()->code()));
+  }
 
   void set_deferred_handles(DeferredHandles* deferred_handles) {
     ASSERT(deferred_handles_ == NULL);
@@ -307,6 +309,14 @@ class CompilationInfo {
     return abort_due_to_dependency_;
   }
 
+  void set_osr_pc_offset(uint32_t pc_offset) {
+    osr_pc_offset_ = pc_offset;
+  }
+
+  bool HasSameOsrEntry(Handle<JSFunction> function, uint32_t pc_offset) {
+    return osr_pc_offset_ == pc_offset && function.is_identical_to(closure_);
+  }
+
  protected:
   CompilationInfo(Handle<Script> script,
                   Zone* zone);
@@ -334,7 +344,7 @@ class CompilationInfo {
   void Initialize(Isolate* isolate, Mode mode, Zone* zone);
 
   void SetMode(Mode mode) {
-    ASSERT(V8::UseCrankshaft());
+    ASSERT(isolate()->use_crankshaft());
     mode_ = mode;
   }
 
@@ -401,6 +411,9 @@ class CompilationInfo {
   // Compilation mode flag and whether deoptimization is allowed.
   Mode mode_;
   BailoutId osr_ast_id_;
+  // The pc_offset corresponding to osr_ast_id_ in unoptimized code.
+  // We can look this up in the back edge table, but cache it for quick access.
+  uint32_t osr_pc_offset_;
 
   // Flag whether compilation needs to be aborted due to dependency change.
   bool abort_due_to_dependency_;
@@ -493,16 +506,13 @@ class LChunk;
 // fail, bail-out to the full code generator or succeed.  Apart from
 // their return value, the status of the phase last run can be checked
 // using last_status().
-class OptimizingCompiler: public ZoneObject {
+class RecompileJob: public ZoneObject {
  public:
-  explicit OptimizingCompiler(CompilationInfo* info)
+  explicit RecompileJob(CompilationInfo* info)
       : info_(info),
         graph_builder_(NULL),
         graph_(NULL),
         chunk_(NULL),
-        time_taken_to_create_graph_(0),
-        time_taken_to_optimize_(0),
-        time_taken_to_codegen_(0),
         last_status_(FAILED) { }
 
   enum Status {
@@ -523,15 +533,23 @@ class OptimizingCompiler: public ZoneObject {
     return SetLastStatus(BAILED_OUT);
   }
 
+  void WaitForInstall() {
+    ASSERT(!info_->osr_ast_id().IsNone());
+    awaiting_install_ = true;
+  }
+
+  bool IsWaitingForInstall() { return awaiting_install_; }
+
  private:
   CompilationInfo* info_;
   HOptimizedGraphBuilder* graph_builder_;
   HGraph* graph_;
   LChunk* chunk_;
-  int64_t time_taken_to_create_graph_;
-  int64_t time_taken_to_optimize_;
-  int64_t time_taken_to_codegen_;
+  TimeDelta time_taken_to_create_graph_;
+  TimeDelta time_taken_to_optimize_;
+  TimeDelta time_taken_to_codegen_;
   Status last_status_;
+  bool awaiting_install_;
 
   MUST_USE_RESULT Status SetLastStatus(Status status) {
     last_status_ = status;
@@ -540,18 +558,19 @@ class OptimizingCompiler: public ZoneObject {
   void RecordOptimizationStats();
 
   struct Timer {
-    Timer(OptimizingCompiler* compiler, int64_t* location)
-        : compiler_(compiler),
-          start_(OS::Ticks()),
-          location_(location) { }
-
-    ~Timer() {
-      *location_ += (OS::Ticks() - start_);
+    Timer(RecompileJob* job, TimeDelta* location)
+        : job_(job), location_(location) {
+      ASSERT(location_ != NULL);
+      timer_.Start();
     }
 
-    OptimizingCompiler* compiler_;
-    int64_t start_;
-    int64_t* location_;
+    ~Timer() {
+      *location_ += timer_.Elapsed();
+    }
+
+    RecompileJob* job_;
+    ElapsedTimer timer_;
+    TimeDelta* location_;
   };
 };
 
@@ -600,7 +619,8 @@ class Compiler : public AllStatic {
   // success and false if the compilation resulted in a stack overflow.
   static bool CompileLazy(CompilationInfo* info);
 
-  static void RecompileParallel(Handle<JSFunction> function);
+  static bool RecompileConcurrent(Handle<JSFunction> function,
+                                  uint32_t osr_pc_offset = 0);
 
   // Compile a shared function info object (the function is possibly lazily
   // compiled).
@@ -613,7 +633,7 @@ class Compiler : public AllStatic {
                               bool is_toplevel,
                               Handle<Script> script);
 
-  static void InstallOptimizedCode(OptimizingCompiler* info);
+  static Handle<Code> InstallOptimizedCode(RecompileJob* job);
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   static bool MakeCodeForLiveEdit(CompilationInfo* info);
@@ -643,7 +663,7 @@ class CompilationPhase BASE_EMBEDDED {
   CompilationInfo* info_;
   Zone zone_;
   unsigned info_zone_start_allocation_size_;
-  int64_t start_ticks_;
+  ElapsedTimer timer_;
 
   DISALLOW_COPY_AND_ASSIGN(CompilationPhase);
 };

@@ -255,12 +255,6 @@ Handle<Object> GetProperty(Isolate* isolate,
 Handle<Object> LookupSingleCharacterStringFromCode(Isolate* isolate,
                                                    uint32_t index);
 
-Handle<JSObject> Copy(Handle<JSObject> obj);
-
-Handle<JSObject> DeepCopy(Handle<JSObject> obj);
-
-Handle<Object> SetAccessor(Handle<JSObject> obj, Handle<AccessorInfo> info);
-
 Handle<FixedArray> AddKeysFromJSArray(Handle<FixedArray>,
                                       Handle<JSArray> array);
 
@@ -304,11 +298,6 @@ Handle<FixedArray> GetEnumPropertyKeys(Handle<JSObject> object,
 // Used for implementing "for (n in object) { }"
 Handle<FixedArray> UnionOfKeys(Handle<FixedArray> first,
                                Handle<FixedArray> second);
-
-Handle<String> SubString(Handle<String> str,
-                         int start,
-                         int end,
-                         PretenureFlag pretenure = NOT_TENURED);
 
 // Sets the expected number of properties for the function's instances.
 void SetExpectedNofProperties(Handle<JSFunction> func, int nof);

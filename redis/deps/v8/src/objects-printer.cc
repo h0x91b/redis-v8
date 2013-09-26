@@ -985,6 +985,8 @@ void AccessorPair::AccessorPairPrint(FILE* out) {
   getter()->ShortPrint(out);
   PrintF(out, "\n - setter: ");
   setter()->ShortPrint(out);
+  PrintF(out, "\n - flag: ");
+  access_flags()->ShortPrint(out);
 }
 
 
@@ -1068,6 +1070,8 @@ void ObjectTemplateInfo::ObjectTemplateInfoPrint(FILE* out) {
   tag()->ShortPrint(out);
   PrintF(out, "\n - property_list: ");
   property_list()->ShortPrint(out);
+  PrintF(out, "\n - property_accessors: ");
+  property_accessors()->ShortPrint(out);
   PrintF(out, "\n - constructor: ");
   constructor()->ShortPrint(out);
   PrintF(out, "\n - internal_field_count: ");
@@ -1096,9 +1100,11 @@ void AllocationSite::AllocationSitePrint(FILE* out) {
   HeapObject::PrintHeader(out, "AllocationSite");
   PrintF(out, " - weak_next: ");
   weak_next()->ShortPrint(out);
-  PrintF(out, "\n");
-
-  PrintF(out, " - transition_info: ");
+  PrintF(out, "\n - dependent code: ");
+  dependent_code()->ShortPrint(out);
+  PrintF(out, "\n - nested site: ");
+  nested_site()->ShortPrint(out);
+  PrintF(out, "\n - transition_info: ");
   if (transition_info()->IsCell()) {
     Cell* cell = Cell::cast(transition_info());
     Object* cell_contents = cell->value();

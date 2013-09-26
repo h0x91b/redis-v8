@@ -183,6 +183,7 @@ const IntelDoubleRegister double_register_4 = { 4 };
 const IntelDoubleRegister double_register_5 = { 5 };
 const IntelDoubleRegister double_register_6 = { 6 };
 const IntelDoubleRegister double_register_7 = { 7 };
+const IntelDoubleRegister no_double_reg = { -1 };
 
 
 struct XMMRegister : IntelDoubleRegister {
@@ -227,6 +228,7 @@ struct XMMRegister : IntelDoubleRegister {
 #define xmm5 (static_cast<const XMMRegister&>(double_register_5))
 #define xmm6 (static_cast<const XMMRegister&>(double_register_6))
 #define xmm7 (static_cast<const XMMRegister&>(double_register_7))
+#define no_xmm_reg (static_cast<const XMMRegister&>(no_double_reg))
 
 
 struct X87Register : IntelDoubleRegister {
@@ -537,7 +539,6 @@ class CpuFeatures : public AllStatic {
     if (f == SSE3 && !FLAG_enable_sse3) return false;
     if (f == SSE4_1 && !FLAG_enable_sse4_1) return false;
     if (f == CMOV && !FLAG_enable_cmov) return false;
-    if (f == RDTSC && !FLAG_enable_rdtsc) return false;
     return (supported_ & (static_cast<uint64_t>(1) << f)) != 0;
   }
 
@@ -560,6 +561,7 @@ class CpuFeatures : public AllStatic {
   static uint64_t found_by_runtime_probing_only_;
 
   friend class ExternalReference;
+  friend class PlatformFeatureScope;
   DISALLOW_COPY_AND_ASSIGN(CpuFeatures);
 };
 
@@ -851,7 +853,7 @@ class Assembler : public AssemblerBase {
   void test(Register reg, const Operand& op);
   void test_b(Register reg, const Operand& op);
   void test(const Operand& op, const Immediate& imm);
-  void test_b(Register reg, uint8_t imm8) { test_b(Operand(reg), imm8); }
+  void test_b(Register reg, uint8_t imm8);
   void test_b(const Operand& op, uint8_t imm8);
 
   void xor_(Register dst, int32_t imm32);
@@ -870,7 +872,6 @@ class Assembler : public AssemblerBase {
   void hlt();
   void int3();
   void nop();
-  void rdtsc();
   void ret(int imm16);
 
   // Label operations & relative jumps (PPUM Appendix D)
@@ -929,6 +930,7 @@ class Assembler : public AssemblerBase {
   void fld_d(const Operand& adr);
 
   void fstp_s(const Operand& adr);
+  void fst_s(const Operand& adr);
   void fstp_d(const Operand& adr);
   void fst_d(const Operand& adr);
 
@@ -955,10 +957,13 @@ class Assembler : public AssemblerBase {
   void fninit();
 
   void fadd(int i);
+  void fadd_i(int i);
   void fsub(int i);
+  void fsub_i(int i);
   void fmul(int i);
   void fmul_i(int i);
   void fdiv(int i);
+  void fdiv_i(int i);
 
   void fisub_s(const Operand& adr);
 

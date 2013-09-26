@@ -89,6 +89,7 @@ class CpuFeatures : public AllStatic {
   static unsigned cache_line_size_;
 
   friend class ExternalReference;
+  friend class PlatformFeatureScope;
   DISALLOW_COPY_AND_ASSIGN(CpuFeatures);
 };
 
@@ -117,7 +118,8 @@ class CpuFeatures : public AllStatic {
 // Core register
 struct Register {
   static const int kNumRegisters = 16;
-  static const int kMaxNumAllocatableRegisters = 8;
+  static const int kMaxNumAllocatableRegisters =
+      FLAG_enable_ool_constant_pool ? 7 : 8;
   static const int kSizeInBytes = 4;
 
   inline static int NumAllocatableRegisters();
@@ -200,6 +202,7 @@ const Register r3  = { kRegister_r3_Code };
 const Register r4  = { kRegister_r4_Code };
 const Register r5  = { kRegister_r5_Code };
 const Register r6  = { kRegister_r6_Code };
+// Used as constant pool pointer register if FLAGS_enable_ool_constant_pool.
 const Register r7  = { kRegister_r7_Code };
 // Used as context register.
 const Register r8  = { kRegister_r8_Code };
@@ -748,10 +751,6 @@ class Assembler : public AssemblerBase {
   // Manages the jump elimination optimization if the second parameter is true.
   int branch_offset(Label* L, bool jump_elimination_allowed);
 
-  // Puts a labels target address at the given position.
-  // The high 8 bits are set to zero.
-  void label_at_put(Label* L, int at_offset);
-
   // Return the address in the constant pool of the code target address used by
   // the branch/call instruction at pc, or the object in a mov.
   INLINE(static Address target_pointer_address_at(Address pc));
@@ -902,6 +901,10 @@ class Assembler : public AssemblerBase {
   void mov(Register dst, Register src, SBit s = LeaveCC, Condition cond = al) {
     mov(dst, Operand(src), s, cond);
   }
+
+  // Load the position of the label relative to the generated code object
+  // pointer in a register.
+  void mov_label_offset(Register dst, Label* label);
 
   // ARMv7 instructions for loading a 32 bit immediate in two instructions.
   // This may actually emit a different mov instruction, but on an ARMv7 it
@@ -1561,7 +1564,6 @@ class Assembler : public AssemblerBase {
   void RecordRelocInfo(double data);
   void RecordRelocInfoConstantPoolEntryHelper(const RelocInfo& rinfo);
 
-  friend class RegExpMacroAssemblerARM;
   friend class RelocInfo;
   friend class CodePatcher;
   friend class BlockConstPoolScope;
