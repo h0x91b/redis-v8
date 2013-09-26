@@ -42,7 +42,8 @@
 
 using namespace v8;
 
-v8::Handle<v8::Context> v8_context;
+Persistent<Context> persistent_v8_context;
+v8::Isolate* isolate;
 
 const char* ToCString(const v8::String::Utf8Value& value);
 void *single_thread_function_for_slow_run_js(void *param);
@@ -124,20 +125,10 @@ v8::Handle<v8::Value> parse_string(char *replyPtr){
 		memcpy(bufForString,replyPtr,strlength);
 		replyPtr+=strlength+2;
 		bufForString[strlength]='\0';
-		// if(strlen(bufForString)!=strlength){
-		// 	//binary data, TODO (v8::ArrayBuffer::New)
-		// 	v8::Local<v8::Array> ret = v8::Array::New(strlength);
-		// 	for(int i=0;i<strlength;i++){
-		// 		ret->Set(v8::Number::New(i), v8::Number::New((unsigned char)bufForString[i]));
-		// 	}
-		// 	return ret;
-		// }
-		//printf("line is '%s'\n",buff);
 		redisReply = replyPtr;
 		if(special_minus_one) return v8::Null();
 		v8::Local<v8::String> ret = v8::String::New(bufForString,strlength);
 		return ret;
-		//return V8BinaryString((const unsigned char *)bufForString,strlength);
 	}
 	char *buff= (char*)zmallocPtr(strlength+1);
 	memcpy(buff,replyPtr,strlength);
@@ -312,8 +303,10 @@ void raw_incrby(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 void run(const v8::FunctionCallbackInfo<v8::Value>& args) {
-	v8::Isolate* isolate = v8_context->GetIsolate();
-	Locker v8Locker(isolate);
+	v8::Locker locker(isolate);
+	v8::Isolate::Scope isolateScope(isolate);
+	HandleScope handle_scope(isolate);
+	v8::Local<v8::Context> v8_context = v8::Local<v8::Context>::New(isolate, persistent_v8_context);
 	int argc = args.Length();
 	redisCommand *cmd;
 	robj **argv;
@@ -323,7 +316,7 @@ void run(const v8::FunctionCallbackInfo<v8::Value>& args) {
 	argv = (robj**)zmallocPtr(sizeof(robj*)*argc);
 	
 	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope;
+		HandleScope handle_scope(isolate);
 		v8::String::Utf8Value str(args[i]);
 		argv[i] = createStringObjectPtr((char*)*str,str.length());
 	}
@@ -407,7 +400,10 @@ void initV8(){
 	
 	pthread_create(&thread_id_for_single_thread_check, NULL, single_thread_function_for_slow_run_js, (void*)NULL);
 	
-	v8::HandleScope handle_scope;
+	isolate = v8::Isolate::GetCurrent();
+	v8::Locker locker(isolate);
+	v8::Isolate::Scope isolateScope(isolate);
+	HandleScope handle_scope(isolate);
 	
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	v8::Handle<v8::ObjectTemplate> redis = v8::ObjectTemplate::New();
@@ -420,10 +416,9 @@ void initV8(){
 	global->Set(v8::String::New("redis"), redis);
 	
 	// Create a new context.
-	v8::Isolate* isolate = v8::Isolate::GetCurrent();
-	v8_context = v8::Context::New(isolate,NULL,global);
+	v8::Handle<v8::Context> v8_context = v8::Context::New(isolate,NULL,global);
 	
-	Locker v8Locker(isolate);
+	persistent_v8_context.Reset(isolate, v8_context);
 	
 	// Enter the created context for compiling and running
 	v8::Context::Scope context_scope(v8_context);
@@ -446,9 +441,10 @@ struct RUN_JS_RETURN {
 RUN_JS_RETURN run_js_return;
 
 RUN_JS_RETURN *run_js(char *code, bool async_call=false){
-	v8::Isolate* isolate = v8_context->GetIsolate();
-	Locker v8Locker(isolate);
-	v8::HandleScope handle_scope;
+	v8::Locker locker(isolate);
+	v8::Isolate::Scope isolateScope(isolate);
+	HandleScope handle_scope(isolate);
+	v8::Local<v8::Context> v8_context = v8::Local<v8::Context>::New(isolate, persistent_v8_context);
 	v8::Context::Scope context_scope(v8_context);
 	int code_length = strlen(code);
 	if(wrapcodebuf==NULL){
@@ -485,8 +481,6 @@ RUN_JS_RETURN *run_js(char *code, bool async_call=false){
 		run_js_return.len = exception_str.length();
 		return &run_js_return;
 	}
-	
-	//v8::Locker::StartPreemption(100);
 	
 	v8::Handle<v8::Value> result = script->Run();
 	
@@ -529,9 +523,10 @@ RUN_JS_RETURN *run_js(char *code, bool async_call=false){
 
 
 RUN_JS_RETURN *call_js(redisClient *c){
-	v8::Isolate* isolate = v8_context->GetIsolate();
-	Locker v8Locker(isolate);
-	v8::HandleScope handle_scope;
+	v8::Locker locker(isolate);
+	v8::Isolate::Scope isolateScope(isolate);
+	HandleScope handle_scope(isolate);
+	v8::Local<v8::Context> v8_context = v8::Local<v8::Context>::New(isolate, persistent_v8_context);
 	v8::Context::Scope context_scope(v8_context);
 	
 	Handle<v8::Object> global = v8_context->Global();
@@ -586,9 +581,11 @@ RUN_JS_RETURN *call_js(redisClient *c){
 }
 
 void load_user_script(char *file){
-	v8::Isolate* isolate = v8_context->GetIsolate();
-	Locker v8Locker(isolate);
-	v8::HandleScope handle_scope;
+	v8::Locker locker(isolate);
+	v8::Isolate::Scope isolateScope(isolate);
+	HandleScope handle_scope(isolate);
+	v8::Local<v8::Context> v8_context = v8::Local<v8::Context>::New(isolate, persistent_v8_context);
+
 	v8::Context::Scope context_scope(v8_context);
 	char* core = file_get_contents(file);
 	v8::Handle<v8::String> source = v8::String::New(core);
@@ -655,10 +652,11 @@ void *setTimeoutExec(void *param)
 {
 	while(1){
 		usleep(50000); //50ms
-		
-		v8::Isolate* isolate = v8_context->GetIsolate();
+		v8::Locker locker(isolate);
+		v8::Isolate::Scope isolateScope(isolate);
+		HandleScope handle_scope(isolate);
+		v8::Local<v8::Context> v8_context = v8::Local<v8::Context>::New(isolate, persistent_v8_context);
 		Locker v8Locker(isolate);
-		v8::HandleScope handle_scope;
 		v8::Context::Scope context_scope(v8_context);
 		v8::Handle<v8::String> source = v8::String::New("redis._runtimeouts()");
 		v8::TryCatch trycatch;
@@ -788,7 +786,7 @@ extern "C"
 	
 	void v8_reload(redisClient *c){
 		v8::V8::TerminateExecution();
-		v8::V8::Dispose();
+		persistent_v8_context.Dispose();
 		pthread_cancel(thread_id_for_single_thread_check);
 		initV8();
 		redisLogRawPtr(REDIS_NOTICE, (char*)"V8 core loaded");
