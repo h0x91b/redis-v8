@@ -1,7 +1,7 @@
 redis-v8 alpha
 ==============
 
-Redis (2.9.9) with built in google V8 JS engine
+Redis (2.9.11) with built in google V8 JS engine (3.22.2)
 
 Currently tested on Mac OS X and CentOS 6.3
 
