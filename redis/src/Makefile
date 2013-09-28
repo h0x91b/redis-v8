@@ -16,6 +16,7 @@ CC=gcc
 CC=clang
 
 V8_LIBS_LOCATION=../deps/v8/out/native/libv8_{base.x64,snapshot}.a ../deps/v8/out/native/lib{icudata,icui18n,icuuc}.a
+V8_EXTRA_COMPILE_FLAGS=
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
@@ -34,6 +35,8 @@ INSTALL=install
 # Default allocator
 ifeq ($(uname_S),Linux)
 	MALLOC=jemalloc
+	V8_LIBS_LOCATION=../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/v8/out/native/obj.target/tools/gyp/libv8_{base.x64,snapshot}.a ../deps/v8/out/native/obj.target/third_party/icu/lib{icudata,icui18n,icuuc}.a 
+	V8_EXTRA_COMPILE_FLAGS=../deps/v8/out/native/obj.target/icudata/third_party/icu/linux/icudt46l_dat.o -lrt
 else
 	MALLOC=libc
 endif
@@ -169,10 +172,10 @@ endif
 CXX=g++
 CXX=clang++
 # CC=g++
-CXXFLAGS= -g -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src
+CXXFLAGS= -g -ggdb -Wno-write-strings -lrt -I../deps/v8/src -I../deps/lua/src
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	clang++ -g -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src   -c -o v8scripting.o v8scripting.cc
-	clang++ -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(V8_LIBS_LOCATION) $(FINAL_LIBS) -lpthread
+	clang++ -g -ggdb -Wno-write-strings -I../deps/v8/src -I../deps/lua/src -c -o v8scripting.o v8scripting.cc
+	clang++ -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(V8_LIBS_LOCATION) $(FINAL_LIBS) -lpthread $(V8_EXTRA_COMPILE_FLAGS)
 
 # redis-sentinel
 $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)
