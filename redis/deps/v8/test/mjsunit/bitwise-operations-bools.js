@@ -25,22 +25,70 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Tests timer milliseconds granularity.
+// Test bitwise operations with booleans.
 
-(function run() {
-  var start_test = Date.now();
-  // Let the retry run for maximum 100ms to reduce flakiness.
-  for (var start = Date.now(); start - start_test < 100; start = Date.now()) {
-    var end = Date.now();
-    while (end - start == 0) {
-      end = Date.now();
-    }
-    if (end - start == 1) {
-      // Found milliseconds granularity.
-      return;
-    } else {
-      print("Timer difference too big: " + (end - start) + "ms");
-    }
-  }
-  assertTrue(false);
-})()
+var t = 1;
+
+function testFalseLeftHandSide() {
+  var b;
+  if (t) b = false;
+  assertEquals(b | 1, 1);
+  assertEquals(b & 1, 0);
+  assertEquals(b ^ 1, 1);
+  assertEquals(b << 1, 0);
+  assertEquals(b >> 1, 0);
+  assertEquals(b >>> 1, 0);
+}
+
+function testFalseRightHandSide() {
+  if (t) b = false;
+  assertEquals(1 |   b, 1);
+  assertEquals(1 &   b, 0);
+  assertEquals(1 ^   b, 1);
+  assertEquals(1 <<  b, 1);
+  assertEquals(1 >>  b, 1);
+  assertEquals(1 >>> b, 1);
+}
+
+function testTrueLeftHandSide() {
+  if (t) b = true;
+  assertEquals(b | 1, 1);
+  assertEquals(b & 1, 1);
+  assertEquals(b ^ 1, 0);
+  assertEquals(b << 1, 2);
+  assertEquals(b >> 1, 0);
+  assertEquals(b >>> 1, 0);
+}
+
+function testTrueRightHandSide() {
+  if (t) b = true;
+  assertEquals(1 |   b, 1);
+  assertEquals(1 &   b, 1);
+  assertEquals(1 ^   b, 0);
+  assertEquals(1 <<  b, 2);
+  assertEquals(1 >>  b, 0);
+  assertEquals(1 >>> b, 0);
+}
+
+function testBothSides() {
+  if (t) a = true;
+  if (t) b = false;
+  assertEquals(a |   b, 1);
+  assertEquals(a &   b, 0);
+  assertEquals(a ^   b, 1);
+  assertEquals(a <<  b, 1);
+  assertEquals(a >>  b, 1);
+  assertEquals(a >>> b, 1);
+}
+
+
+testFalseLeftHandSide();
+testFalseRightHandSide();
+testTrueLeftHandSide();
+testTrueRightHandSide();
+testFalseLeftHandSide();
+testFalseRightHandSide();
+testTrueLeftHandSide();
+testTrueRightHandSide();
+testBothSides();
+testBothSides();

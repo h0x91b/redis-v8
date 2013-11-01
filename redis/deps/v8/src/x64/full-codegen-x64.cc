@@ -140,10 +140,9 @@ void FullCodeGenerator::Generate() {
     Label ok;
     __ testq(rcx, rcx);
     __ j(zero, &ok, Label::kNear);
-    // +1 for return address.
-    int receiver_offset = (info->scope()->num_parameters() + 1) * kPointerSize;
+    StackArgumentsAccessor args(rsp, info->scope()->num_parameters());
     __ LoadRoot(kScratchRegister, Heap::kUndefinedValueRootIndex);
-    __ movq(Operand(rsp, receiver_offset), kScratchRegister);
+    __ movq(args.GetReceiverOperand(), kScratchRegister);
     __ bind(&ok);
   }
 
@@ -153,10 +152,7 @@ void FullCodeGenerator::Generate() {
   FrameScope frame_scope(masm_, StackFrame::MANUAL);
 
   info->set_prologue_offset(masm_->pc_offset());
-  __ push(rbp);  // Caller's frame pointer.
-  __ movq(rbp, rsp);
-  __ push(rsi);  // Callee's context.
-  __ push(rdi);  // Callee's JS Function.
+  __ Prologue(BUILD_FUNCTION_FRAME);
   info->AddNoFrameRange(0, masm_->pc_offset());
 
   { Comment cmnt(masm_, "[ Allocate locals");
@@ -678,7 +674,8 @@ MemOperand FullCodeGenerator::StackOperand(Variable* var) {
   int offset = -var->index() * kPointerSize;
   // Adjust by a (parameter or local) base offset.
   if (var->IsParameter()) {
-    offset += (info_->scope()->num_parameters() + 1) * kPointerSize;
+    offset += kFPOnStackSize + kPCOnStackSize +
+              (info_->scope()->num_parameters() - 1) * kPointerSize;
   } else {
     offset += JavaScriptFrameConstants::kLocal0Offset;
   }
@@ -1129,7 +1126,7 @@ void FullCodeGenerator::VisitForInStatement(ForInStatement* stmt) {
       Handle<Object>(Smi::FromInt(TypeFeedbackCells::kForInFastCaseMarker),
                      isolate()));
   RecordTypeFeedbackCell(stmt->ForInFeedbackId(), cell);
-  __ LoadHeapObject(rbx, cell);
+  __ Move(rbx, cell);
   __ Move(FieldOperand(rbx, Cell::kValueOffset),
           Smi::FromInt(TypeFeedbackCells::kForInSlowCaseMarker));
 
@@ -2632,7 +2629,8 @@ void FullCodeGenerator::EmitResolvePossiblyDirectEval(int arg_count) {
   }
 
   // Push the receiver of the enclosing function and do runtime call.
-  __ push(Operand(rbp, (2 + info_->scope()->num_parameters()) * kPointerSize));
+  StackArgumentsAccessor args(rbp, info_->scope()->num_parameters());
+  __ push(args.GetReceiverOperand());
 
   // Push the language mode.
   __ Push(Smi::FromInt(language_mode()));

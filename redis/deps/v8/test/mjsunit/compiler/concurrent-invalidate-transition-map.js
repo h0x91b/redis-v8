@@ -26,7 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Flags: --track-fields --track-double-fields --allow-natives-syntax
-// Flags: --concurrent-recompilation --concurrent-recompilation-delay=100
+// Flags: --concurrent-recompilation --block-concurrent-recompilation
 
 if (!%IsConcurrentRecompilationSupported()) {
   print("Concurrent recompilation is disabled. Skipping this test.");
@@ -49,9 +49,13 @@ add_field(new_object());
 %OptimizeFunctionOnNextCall(add_field, "concurrent");
 
 var o = new_object();
-// Trigger optimization in the background thread.
+// Kick off recompilation.
 add_field(o);
-// Invalidate transition map while optimization is underway.
+// Invalidate transition map after compile graph has been created.
 o.c = 2.2;
+// In the mean time, concurrent recompiling is still blocked.
+assertUnoptimized(add_field, "no sync");
+// Let concurrent recompilation proceed.
+%UnblockConcurrentRecompilation();
 // Sync with background thread to conclude optimization that bailed out.
 assertUnoptimized(add_field, "sync");

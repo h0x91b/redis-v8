@@ -25,65 +25,38 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "marking-thread.h"
+// Flags: --allow-natives-syntax
 
-#include "v8.h"
+// Test the performance.now() function of d8.  This test only makes sense with
+// d8.
 
-#include "isolate.h"
-#include "v8threads.h"
+// Don't run this test in gc stress mode. Time differences may be long
+// due to garbage collections.
+%SetFlags("--gc-interval=-1");
+%SetFlags("--nostress-compaction");
 
-namespace v8 {
-namespace internal {
-
-MarkingThread::MarkingThread(Isolate* isolate)
-     : Thread("MarkingThread"),
-       isolate_(isolate),
-       heap_(isolate->heap()),
-       start_marking_semaphore_(0),
-       end_marking_semaphore_(0),
-       stop_semaphore_(0) {
-  NoBarrier_Store(&stop_thread_, static_cast<AtomicWord>(false));
-  id_ = NoBarrier_AtomicIncrement(&id_counter_, 1);
-}
-
-
-Atomic32 MarkingThread::id_counter_ = -1;
-
-
-void MarkingThread::Run() {
-  Isolate::SetIsolateThreadLocals(isolate_, NULL);
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
-
-  while (true) {
-    start_marking_semaphore_.Wait();
-
-    if (Acquire_Load(&stop_thread_)) {
-      stop_semaphore_.Signal();
-      return;
+if (this.performance && performance.now) {
+  (function run() {
+    var start_test = performance.now();
+    // Let the retry run for maximum 100ms to reduce flakiness.
+    for (var start = performance.now();
+        start - start_test < 100;
+        start = performance.now()) {
+      var end = performance.now();
+      assertTrue(start >= start_test);
+      assertTrue(end >= start);
+      while (end - start == 0) {
+        var next = performance.now();
+        assertTrue(next >= end);
+        end = next;
+      }
+      if (end - start <= 1) {
+        // Found (sub-)millisecond granularity.
+        return;
+      } else {
+        print("Timer difference too big: " + (end - start) + "ms");
+      }
     }
-
-    end_marking_semaphore_.Signal();
-  }
+    assertTrue(false);
+  })()
 }
-
-
-void MarkingThread::Stop() {
-  Release_Store(&stop_thread_, static_cast<AtomicWord>(true));
-  start_marking_semaphore_.Signal();
-  stop_semaphore_.Wait();
-  Join();
-}
-
-
-void MarkingThread::StartMarking() {
-  start_marking_semaphore_.Signal();
-}
-
-
-void MarkingThread::WaitForMarkingThread() {
-  end_marking_semaphore_.Wait();
-}
-
-} }  // namespace v8::internal

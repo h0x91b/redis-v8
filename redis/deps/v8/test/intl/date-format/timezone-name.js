@@ -25,30 +25,29 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Flags: --allow-natives-syntax
-// Flags: --concurrent-recompilation --concurrent-recompilation-delay=50
+// Tests time zone names.
 
-if (!%IsConcurrentRecompilationSupported()) {
-  print("Concurrent recompilation is disabled. Skipping this test.");
-  quit();
-}
+// Winter date (PST).
+var winter = new Date(2013, 1, 12, 14, 42, 53, 0);
 
-function f(foo) { return foo.bar(); }
+// Summer date (PDT).
+var summer = new Date(2013, 7, 12, 14, 42, 53, 0);
 
-var o = {};
-o.__proto__ = { __proto__: { bar: function() { return 1; } } };
+// Common flags for both formatters.
+var flags = {
+  year: 'numeric', month: 'long', day: 'numeric',
+  hour : '2-digit', minute : '2-digit', second : '2-digit',
+  timeZone: 'America/Los_Angeles'
+};
 
-assertEquals(1, f(o));
-assertEquals(1, f(o));
+flags.timeZoneName = "short";
+var dfs = new Intl.DateTimeFormat('en-US', flags);
 
-// Mark for concurrent optimization.
-%OptimizeFunctionOnNextCall(f, "concurrent");
-// Trigger optimization in the background thread.
-assertEquals(1, f(o));
-// While concurrent recompilation is running, optimization not yet done.
-assertUnoptimized(f, "no sync");
-// Change the prototype chain during optimization to trigger map invalidation.
-o.__proto__.__proto__ = { bar: function() { return 2; } };
-// Optimization eventually bails out due to map dependency.
-assertUnoptimized(f, "sync");
-assertEquals(2, f(o));
+assertTrue(dfs.format(winter).indexOf('PST') !== -1);
+assertTrue(dfs.format(summer).indexOf('PDT') !== -1);
+
+flags.timeZoneName = "long";
+var dfl = new Intl.DateTimeFormat('en-US', flags);
+
+assertTrue(dfl.format(winter).indexOf('Pacific Standard Time') !== -1);
+assertTrue(dfl.format(summer).indexOf('Pacific Daylight Time') !== -1);

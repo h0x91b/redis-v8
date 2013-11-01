@@ -25,32 +25,30 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef V8_HYDROGEN_DEOPTIMIZING_MARK_H_
-#define V8_HYDROGEN_DEOPTIMIZING_MARK_H_
+#ifndef V8_V8_DEFAULTS_H_
+#define V8_V8_DEFAULTS_H_
 
-#include "hydrogen.h"
+#include "v8.h"
 
+/**
+ * Default configuration support for the V8 JavaScript engine.
+ */
 namespace v8 {
-namespace internal {
+
+/**
+ * Configures the constraints with reasonable default values based on the
+ * capabilities of the current device the VM is running on.
+ */
+bool V8_EXPORT ConfigureResourceConstraintsForCurrentPlatform(
+    ResourceConstraints* constraints);
 
 
-// Mark all blocks that are dominated by an unconditional soft deoptimize to
-// prevent code motion across those blocks.
-class HPropagateDeoptimizingMarkPhase : public HPhase {
- public:
-  explicit HPropagateDeoptimizingMarkPhase(HGraph* graph)
-      : HPhase("H_Propagate deoptimizing mark", graph) { }
+/**
+ * Convience function which performs SetResourceConstraints with the settings
+ * returned by ConfigureResourceConstraintsForCurrentPlatform.
+ */
+bool V8_EXPORT SetDefaultResourceConstraintsForCurrentPlatform();
 
-  void Run();
+}  // namespace v8
 
- private:
-  void MarkAsDeoptimizing();
-  void NullifyUnreachableInstructions();
-
-  DISALLOW_COPY_AND_ASSIGN(HPropagateDeoptimizingMarkPhase);
-};
-
-
-} }  // namespace v8::internal
-
-#endif  // V8_HYDROGEN_DEOPTIMIZING_MARK_H_
+#endif  // V8_V8_DEFAULTS_H_

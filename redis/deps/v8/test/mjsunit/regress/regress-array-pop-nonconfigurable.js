@@ -25,12 +25,7 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Utility methods for date testing.
+var a = [];
+Object.defineProperty(a, 0, {});
+assertThrows(function() { a.pop(); });
 
-/**
- * Returns date with timezone info forced into PDT.
- */
-function usePDT(dateString) {
-  var removedTZ = dateString.replace(/(\+|-)\d{4}/, '-0007');
-  return removedTZ.replace(/\(.*?\)/, '(PDT)');
-}

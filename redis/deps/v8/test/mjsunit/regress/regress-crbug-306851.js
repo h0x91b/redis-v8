@@ -1,4 +1,4 @@
-// Copyright 2010 the V8 project authors. All rights reserved.
+// Copyright 2013 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -25,15 +25,28 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <windows.h>
+// Flags: --allow-natives-syntax
 
-#include "../include/v8-preparser.h"
+function Counter() {
+  this.value = 0;
+};
 
-extern "C" {
-BOOL WINAPI DllMain(HANDLE hinstDLL,
-                    DWORD dwReason,
-                    LPVOID lpvReserved) {
-  // Do nothing.
-  return TRUE;
+Object.defineProperty(Counter.prototype, 'count', {
+  get: function() { return this.value; },
+  set: function(value) { this.value = value; }
+});
+
+var obj = new Counter();
+
+function bummer() {
+  obj.count++;
+  return obj.count;
 }
-}
+
+assertEquals(1, bummer());
+assertEquals(2, bummer());
+assertEquals(3, bummer());
+%OptimizeFunctionOnNextCall(bummer);
+assertEquals(4, bummer());
+assertEquals(5, bummer());
+assertEquals(6, bummer());

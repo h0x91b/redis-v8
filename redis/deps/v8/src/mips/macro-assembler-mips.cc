@@ -35,6 +35,7 @@
 #include "codegen.h"
 #include "cpu-profiler.h"
 #include "debug.h"
+#include "isolate-inl.h"
 #include "runtime.h"
 
 namespace v8 {
@@ -248,10 +249,6 @@ void MacroAssembler::RecordWrite(Register object,
                                  SmiCheck smi_check) {
   ASSERT(!AreAliased(object, address, value, t8));
   ASSERT(!AreAliased(object, address, value, t9));
-  // The compiled code assumes that record write doesn't change the
-  // context register, so we check that none of the clobbered
-  // registers are cp.
-  ASSERT(!address.is(cp) && !value.is(cp));
 
   if (emit_debug_code()) {
     lw(at, MemOperand(address));
@@ -4136,7 +4133,8 @@ void MacroAssembler::SubuAndCheckForOverflow(Register dst,
 
 
 void MacroAssembler::CallRuntime(const Runtime::Function* f,
-                                 int num_arguments) {
+                                 int num_arguments,
+                                 SaveFPRegsMode save_doubles) {
   // All parameters are on the stack. v0 has the return value after call.
 
   // If the expected number of arguments of the runtime function is
@@ -4153,22 +4151,8 @@ void MacroAssembler::CallRuntime(const Runtime::Function* f,
   // smarter.
   PrepareCEntryArgs(num_arguments);
   PrepareCEntryFunction(ExternalReference(f, isolate()));
-  CEntryStub stub(1);
+  CEntryStub stub(1, save_doubles);
   CallStub(&stub);
-}
-
-
-void MacroAssembler::CallRuntimeSaveDoubles(Runtime::FunctionId id) {
-  const Runtime::Function* function = Runtime::FunctionForId(id);
-  PrepareCEntryArgs(function->nargs);
-  PrepareCEntryFunction(ExternalReference(function, isolate()));
-  CEntryStub stub(1, kSaveFPRegs);
-  CallStub(&stub);
-}
-
-
-void MacroAssembler::CallRuntime(Runtime::FunctionId fid, int num_arguments) {
-  CallRuntime(Runtime::FunctionForId(fid), num_arguments);
 }
 
 
@@ -4599,6 +4583,40 @@ void MacroAssembler::LoadNumberAsInt32(Register object,
   // Fall through.
 
   bind(&done);
+}
+
+
+void MacroAssembler::Prologue(PrologueFrameMode frame_mode) {
+  if (frame_mode == BUILD_STUB_FRAME) {
+    Push(ra, fp, cp);
+    Push(Smi::FromInt(StackFrame::STUB));
+    // Adjust FP to point to saved FP.
+    Addu(fp, sp, Operand(2 * kPointerSize));
+  } else {
+    PredictableCodeSizeScope predictible_code_size_scope(
+      this, kNoCodeAgeSequenceLength * Assembler::kInstrSize);
+    // The following three instructions must remain together and unmodified
+    // for code aging to work properly.
+    if (isolate()->IsCodePreAgingActive()) {
+      // Pre-age the code.
+      Code* stub = Code::GetPreAgedCodeAgeStub(isolate());
+      nop(Assembler::CODE_AGE_MARKER_NOP);
+      // Save the function's original return address
+      // (it will be clobbered by Call(t9))
+      mov(at, ra);
+      // Load the stub address to t9 and call it
+      li(t9,
+         Operand(reinterpret_cast<uint32_t>(stub->instruction_start())));
+      Call(t9);
+      // Record the stub address in the empty space for GetCodeAgeAndParity()
+      dd(reinterpret_cast<uint32_t>(stub->instruction_start()));
+    } else {
+      Push(ra, fp, cp, a1);
+      nop(Assembler::CODE_AGE_SEQUENCE_NOP);
+      // Adjust fp to point to caller's fp.
+      Addu(fp, sp, Operand(2 * kPointerSize));
+    }
+  }
 }
 
 
@@ -5587,23 +5605,24 @@ void MacroAssembler::ClampDoubleToUint8(Register result_reg,
 void MacroAssembler::TestJSArrayForAllocationMemento(
     Register receiver_reg,
     Register scratch_reg,
+    Label* no_memento_found,
     Condition cond,
     Label* allocation_memento_present) {
-  Label no_memento_available;
   ExternalReference new_space_start =
       ExternalReference::new_space_start(isolate());
   ExternalReference new_space_allocation_top =
       ExternalReference::new_space_allocation_top_address(isolate());
   Addu(scratch_reg, receiver_reg,
        Operand(JSArray::kSize + AllocationMemento::kSize - kHeapObjectTag));
-  Branch(&no_memento_available, lt, scratch_reg, Operand(new_space_start));
+  Branch(no_memento_found, lt, scratch_reg, Operand(new_space_start));
   li(at, Operand(new_space_allocation_top));
   lw(at, MemOperand(at));
-  Branch(&no_memento_available, gt, scratch_reg, Operand(at));
+  Branch(no_memento_found, gt, scratch_reg, Operand(at));
   lw(scratch_reg, MemOperand(scratch_reg, -AllocationMemento::kSize));
-  Branch(allocation_memento_present, cond, scratch_reg,
-         Operand(isolate()->factory()->allocation_memento_map()));
-  bind(&no_memento_available);
+  if (allocation_memento_present) {
+    Branch(allocation_memento_present, cond, scratch_reg,
+           Operand(isolate()->factory()->allocation_memento_map()));
+  }
 }
 
 

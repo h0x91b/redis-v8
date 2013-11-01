@@ -595,9 +595,7 @@ int OS::GetUserTime(uint32_t* secs,  uint32_t* usecs) {
 // Returns current time as the number of milliseconds since
 // 00:00:00 UTC, January 1, 1970.
 double OS::TimeCurrentMillis() {
-  Win32Time t;
-  t.SetToCurrentTime();
-  return t.ToJSTime();
+  return Time::Now().ToJsTime();
 }
 
 
@@ -1268,6 +1266,18 @@ void OS::LogSharedLibraryAddresses(Isolate* isolate) {
 
 
 void OS::SignalCodeMovingGC() {
+}
+
+
+uint64_t OS::TotalPhysicalMemory() {
+  MEMORYSTATUSEX memory_info;
+  memory_info.dwLength = sizeof(memory_info);
+  if (!GlobalMemoryStatusEx(&memory_info)) {
+    UNREACHABLE();
+    return 0;
+  }
+
+  return static_cast<uint64_t>(memory_info.ullTotalPhys);
 }
 
 

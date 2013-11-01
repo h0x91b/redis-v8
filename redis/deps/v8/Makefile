@@ -76,10 +76,10 @@ ifeq ($(snapshot), off)
 endif
 # extrachecks=on/off
 ifeq ($(extrachecks), on)
-  GYPFLAGS += -Dv8_enable_extra_checks=1
+  GYPFLAGS += -Dv8_enable_extra_checks=1 -Dv8_enable_handle_zapping=1
 endif
 ifeq ($(extrachecks), off)
-  GYPFLAGS += -Dv8_enable_extra_checks=0
+  GYPFLAGS += -Dv8_enable_extra_checks=0 -Dv8_enable_handle_zapping=0
 endif
 # gdbjit=on/off
 ifeq ($(gdbjit), on)
@@ -129,6 +129,10 @@ ifeq ($(i18nsupport), off)
   GYPFLAGS += -Dv8_enable_i18n_support=0
   TESTFLAGS += --noi18n
 endif
+# deprecation_warnings=on
+ifeq ($(deprecationwarnings), on)
+  GYPFLAGS += -Dv8_deprecation_warnings=1
+endif 
 # arm specific flags.
 # armv7=false/true
 ifeq ($(armv7), false)
@@ -218,8 +222,8 @@ NACL_ARCHES = nacl_ia32 nacl_x64
 
 # List of files that trigger Makefile regeneration:
 GYPFILES = build/all.gyp build/features.gypi build/standalone.gypi \
-	   build/toolchain.gypi preparser/preparser.gyp samples/samples.gyp \
-	   src/d8.gyp test/cctest/cctest.gyp tools/gyp/v8.gyp
+           build/toolchain.gypi samples/samples.gyp src/d8.gyp \
+           test/cctest/cctest.gyp tools/gyp/v8.gyp
 
 # If vtunejit=on, the v8vtune.gyp will be appended.
 ifeq ($(vtunejit), on)
@@ -324,7 +328,7 @@ $(addsuffix .check, $(ANDROID_BUILDS)): $$(basename $$@).sync
 	@tools/run-tests.py $(TESTJOBS) --outdir=$(OUTDIR) \
 	     --arch-and-mode=$(basename $@) \
 	     --timeout=600 \
-	     --command-prefix="tools/android-run.py"
+	     --command-prefix="tools/android-run.py" $(TESTFLAGS)
 
 $(addsuffix .check, $(ANDROID_ARCHES)): \
                 $(addprefix $$(basename $$@).,$(MODES)).check

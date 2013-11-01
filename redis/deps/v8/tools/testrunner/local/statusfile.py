@@ -35,6 +35,7 @@ TIMEOUT = "TIMEOUT"
 CRASH = "CRASH"
 SLOW = "SLOW"
 FLAKY = "FLAKY"
+NO_VARIANTS = "NO_VARIANTS"
 # These are just for the status files and are mapped below in DEFS:
 FAIL_OK = "FAIL_OK"
 PASS_OR_FAIL = "PASS_OR_FAIL"
@@ -43,7 +44,7 @@ ALWAYS = "ALWAYS"
 
 KEYWORDS = {}
 for key in [SKIP, FAIL, PASS, OKAY, TIMEOUT, CRASH, SLOW, FLAKY, FAIL_OK,
-            PASS_OR_FAIL, ALWAYS]:
+            NO_VARIANTS, PASS_OR_FAIL, ALWAYS]:
   KEYWORDS[key] = key
 
 DEFS = {FAIL_OK: [FAIL, OKAY],
@@ -52,12 +53,17 @@ DEFS = {FAIL_OK: [FAIL, OKAY],
 # Support arches, modes to be written as keywords instead of strings.
 VARIABLES = {ALWAYS: True}
 for var in ["debug", "release", "android_arm", "android_ia32", "arm", "ia32",
-            "mipsel", "x64", "nacl_ia32", "nacl_x64", "macos", "windows"]:
+            "mipsel", "x64", "nacl_ia32", "nacl_x64", "macos", "windows",
+            "linux"]:
   VARIABLES[var] = var
 
 
 def DoSkip(outcomes):
   return SKIP in outcomes or SLOW in outcomes
+
+
+def OnlyStandardVariant(outcomes):
+  return NO_VARIANTS in outcomes
 
 
 def IsFlaky(outcomes):
