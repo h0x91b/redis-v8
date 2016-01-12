@@ -37,6 +37,8 @@ distclean:
 	-(cd linenoise && $(MAKE) clean) > /dev/null || true
 	-(cd lua && $(MAKE) clean) > /dev/null || true
 	-(cd jemalloc && [ -f Makefile ] && $(MAKE) distclean) > /dev/null || true
+	-(rm .gclient)
+	-(cd v8 && $(MAKE) clean)
 	-(rm -f .make-*)
 
 .PHONY: distclean
@@ -71,6 +73,17 @@ lua: .make-prerequisites
 	cd lua/src && $(MAKE) all CFLAGS="$(LUA_CFLAGS)" MYLDFLAGS="$(LUA_LDFLAGS)" AR="$(AR) $(ARFLAGS)"
 
 .PHONY: lua
+
+CURDIR = $(shell pwd)
+
+v8: .make-prerequisites
+	PATH=$(CURDIR)/depot_tools:$(PATH) make v8-with-path
+
+v8-with-path: .make-prerequisites
+	-(echo "Compiling V8, please be patient its takes time")
+	#test -f .gclient || fetch --no-history v8 && cd v8 && gclient sync -v --jobs 16 --no-history --shallow
+	gclient sync -v --jobs 16 --no-history --shallow
+	cd v8 && $(MAKE) native $(V8) CFLAGS="$(V8_CFLAGS)" LDFLAGS="$(V8_LDFLAGS)"
 
 JEMALLOC_CFLAGS= -std=gnu99 -Wall -pipe -g3 -O3 -funroll-loops $(CFLAGS)
 JEMALLOC_LDFLAGS= $(LDFLAGS)
